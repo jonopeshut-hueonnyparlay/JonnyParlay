@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>v7 Engine Gap Analysis — picksbyjonny</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: #0a0a0f; color: #e0e0e8; line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+  h1 { font-size: 2rem; color: #fff; margin-bottom: 8px; }
+  .subtitle { color: #8a8a9a; font-size: 1.05rem; margin-bottom: 40px; }
+  .section { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 28px; margin-bottom: 24px; }
+  .section h2 { font-size: 1.3rem; color: #fff; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+  .section h3 { font-size: 1.05rem; color: #c0c0d0; margin: 18px 0 10px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .badge-red { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+  .badge-yellow { background: rgba(234,179,8,0.15); color: #eab308; border: 1px solid rgba(234,179,8,0.3); }
+  .badge-green { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
+  .badge-blue { background: rgba(59,130,246,0.15); color: #3b82f6; border: 1px solid rgba(59,130,246,0.3); }
+  .gap-item { background: #0e0e16; border: 1px solid #1a1a2a; border-radius: 8px; padding: 18px; margin-bottom: 14px; }
+  .gap-item .title { font-weight: 600; color: #fff; font-size: 1rem; margin-bottom: 6px; }
+  .gap-item .detail { color: #a0a0b0; font-size: 0.92rem; }
+  .gap-item .impact { margin-top: 10px; font-size: 0.85rem; color: #8a8a9a; }
+  .gap-item .impact strong { color: #c0c0d0; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin: 16px 0; }
+  .stat-card { background: #0e0e16; border: 1px solid #1a1a2a; border-radius: 8px; padding: 16px; text-align: center; }
+  .stat-card .value { font-size: 1.6rem; font-weight: 700; color: #fff; }
+  .stat-card .label { font-size: 0.8rem; color: #8a8a9a; margin-top: 4px; }
+  .stat-green .value { color: #22c55e; }
+  .stat-red .value { color: #ef4444; }
+  .stat-yellow .value { color: #eab308; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #1a1a2a; font-size: 0.9rem; }
+  th { color: #8a8a9a; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { color: #c0c0d0; }
+  .priority-tag { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-red { background: #ef4444; }
+  .dot-yellow { background: #eab308; }
+  .dot-green { background: #22c55e; }
+  .divider { height: 1px; background: #1e1e2e; margin: 24px 0; }
+  code { background: #1a1a2a; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #a78bfa; }
+  .recommendation { border-left: 3px solid #3b82f6; padding-left: 14px; margin: 12px 0; }
+  .recommendation.high { border-color: #ef4444; }
+  .recommendation.medium { border-color: #eab308; }
+  .recommendation.low { border-color: #22c55e; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>v7 Engine Gap Analysis</h1>
+<p class="subtitle">NBA & NCAAB ML Projection System — March 28, 2026</p>
+
+<!-- ═══ CURRENT STATE ═══ -->
+<div class="section">
+  <h2>Current State</h2>
+  <div class="stats-grid">
+    <div class="stat-card stat-green"><div class="value">56.2%</div><div class="label">NBA Win Rate (18-14)</div></div>
+    <div class="stat-card stat-green"><div class="value">+2.00u</div><div class="label">NBA Units</div></div>
+    <div class="stat-card"><div class="value">52.9%</div><div class="label">NCAAB Win Rate (18-16)</div></div>
+    <div class="stat-card"><div class="value">+0.83u</div><div class="label">NCAAB Units</div></div>
+    <div class="stat-card"><div class="value">21</div><div class="label">NBA Features</div></div>
+    <div class="stat-card"><div class="value">13</div><div class="label">NCAAB Features</div></div>
+    <div class="stat-card"><div class="value">17,709</div><div class="label">NBA Training Games</div></div>
+    <div class="stat-card"><div class="value">18,854</div><div class="label">NCAAB Training Games</div></div>
+  </div>
+</div>
+
+<!-- ═══ ARCHITECTURE GAPS ═══ -->
+<div class="section">
+  <h2><span class="badge badge-red">Critical</span> Architecture Gaps</h2>
+
+  <div class="gap-item">
+    <div class="title">1. NBA Favorite Compression Still Unsolved</div>
+    <div class="detail">
+      The model compresses predictions toward the mean at extreme spreads. At 18+ point spreads, the model predicts an avg margin of 5.4 vs actual 25.5 — a <strong>79% compression rate</strong>. The linear margin correction (<code>slope=1.172</code>) helps but can't fix a fundamentally non-linear problem. The current bandaid is <code>SPREAD_CAP=15</code>, which just avoids the worst zone rather than fixing it.
+    </div>
+    <div class="impact"><strong>Impact:</strong> Losing edge on all games with large spreads. Today's MIL/SAS game (spread 18.5) gets pred_margin of -11.2 — the model literally can't see blowouts coming.</div>
+    <div class="recommendation high">
+      <strong>Fix:</strong> Train a separate "blowout model" for spreads &gt;12, or use a quantile regression approach that explicitly models the tails. Alternatively, use the log-transform trick: predict <code>sign(margin) * log(1 + |margin|)</code> during training and reverse at inference.
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">2. Model R² is Only 0.14 (NBA) / 0.10 (NCAAB)</div>
+    <div class="detail">
+      These are honest numbers and the market shrinkage system correctly accounts for them. But 0.14 means the model explains only 14% of variance — the market already prices 86%+ of what the model knows. This caps the maximum possible edge at ~2-3% on most games, making volume (not conviction) the main lever.
+    </div>
+    <div class="impact"><strong>Impact:</strong> The shrinkage function (<code>market_shrink_edge</code>) aggressively discounts edges when the model disagrees with the market by more than ~5 pts. This is correct behavior given R²=0.14, but it means the model rarely outputs high-confidence plays.</div>
+    <div class="recommendation high">
+      <strong>Fix:</strong> The V8 play-by-play features and lineup-level prediction are the right path. Also consider: (a) adding a "model confidence" feature from the ensemble disagreement, (b) training separate models for different game contexts (B2B, rest advantages, divisional games) where the model may have higher local R².
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">3. NCAAB Uses Season-Level Barttorvik Ratings (Stale by March)</div>
+    <div class="detail">
+      NCAAB features come from Barttorvik season-level snapshots. By late March, these are 4-5 months of aggregated data — they can't capture a team that's on a recent hot/cold streak within the season. The v7.5 rolling_margin_diff feature (<code>r=0.457</code>) partially addresses this, but the core 10 Barttorvik features are still season-level.
+    </div>
+    <div class="impact"><strong>Impact:</strong> March Madness is where this hurts most. Tournament teams are peaking/declining, but the model sees only their season-long profile. The NCAAB 1-5 collapse on March 20 likely reflects this staleness.</div>
+    <div class="recommendation high">
+      <strong>Fix:</strong> Pull Barttorvik data more frequently (daily scrape → store timestamped ratings → use the most recent pre-game snapshot). This is the single highest-ROI improvement for NCAAB during March Madness.
+    </div>
+  </div>
+</div>
+
+<!-- ═══ FEATURE ENGINEERING GAPS ═══ -->
+<div class="section">
+  <h2><span class="badge badge-yellow">Important</span> Feature Engineering Gaps</h2>
+
+  <div class="gap-item">
+    <div class="title">4. No Home/Away Splits in Features</div>
+    <div class="detail">
+      The model has <code>home_team_hca</code> (rolling L20 home margin) but doesn't capture how specific teams perform differently home vs away in key stats. Some teams shoot 5% better eFG at home. The features treat a team's L10 offensive rating the same regardless of where those games were played.
+    </div>
+    <div class="impact"><strong>Impact:</strong> Moderate. Home/away eFG% split, home/away pace split, and home/away defensive rating could each add incremental signal, especially for extreme home-court teams (Denver, Utah).</div>
+    <div class="recommendation medium">
+      <strong>Fix:</strong> Add <code>home_efg_diff_ha</code> = (team's eFG% in home games L10) - (team's eFG% in away games L10). Same for pace and defensive rating. 3 new features, minimal risk.
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">5. Injury Feature Uses Stale Data (Shifted by 1 Game)</div>
+    <div class="detail">
+      The training pipeline correctly shifts injury data by 1 game to prevent train/serve skew. But at prediction time, the <code>injury_scraper.py</code> pulls the actual real-time injury report. This means training sees "who was missing last game" while prediction sees "who is missing tonight" — a systematic mismatch.
+    </div>
+    <div class="impact"><strong>Impact:</strong> The model learned injury impact from stale signals, so it may underweight real-time injury data. The RAPM-based impact values are good, but the model's learned coefficients are trained on weaker (shifted) signals.</div>
+    <div class="recommendation medium">
+      <strong>Fix:</strong> Two options: (a) At live prediction time, also use "previous game" injuries for consistency with training, then add real-time injuries as a separate additive adjustment outside the model. (b) Retrain with a two-column approach: <code>baseline_injury_diff</code> (shifted, for model) + <code>realtime_injury_diff</code> (current, weighted lower because model hasn't learned from it).
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">6. No Play-by-Play Features (V8 Plan Exists But Not Implemented)</div>
+    <div class="detail">
+      The V8 architecture plan identifies transition rate, clutch performance, second chance rate, turnover quality, and paint scoring as key PBP features. The data is available via nba_api for all 15 seasons. This was estimated as "+1-3% Brier, 2-3 days effort" but hasn't been built yet.
+    </div>
+    <div class="impact"><strong>Impact:</strong> These features capture HOW teams score, not just how much. Two teams with identical offensive ratings but one scores in transition and the other in half-court will perform very differently against different defensive styles.</div>
+    <div class="recommendation medium">
+      <strong>Fix:</strong> Start with just 2 PBP features to validate the signal: <code>transition_pts_L10_diff</code> and <code>paint_pts_L10_diff</code>. If they improve Brier skill by &gt;0.5%, add the rest.
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">7. NCAAB Missing Injury Feature Entirely</div>
+    <div class="detail">
+      NBA has RAPM-based injury impact as a feature. NCAAB has an <code>injury_scraper.py</code> that was added March 27, but the NCAAB feature set (13 features) has NO injury feature. The scraper exists but isn't wired into the feature pipeline or model.
+    </div>
+    <div class="impact"><strong>Impact:</strong> In March Madness, injuries to key players (like a team's leading scorer being questionable) massively shift game outcomes. The model is blind to this.</div>
+    <div class="recommendation medium">
+      <strong>Fix:</strong> Wire <code>get_ncaab_injury_impact()</code> into the NCAAB live features builder. Add <code>injury_impact_diff</code> as feature 14. Retrain on all data (the historical training data will have 0 for this feature since we don't have historical NCAAB injury data, but the model will learn to use it when it's non-zero at prediction time).
+    </div>
+  </div>
+</div>
+
+<!-- ═══ DECISION LAYER GAPS ═══ -->
+<div class="section">
+  <h2><span class="badge badge-yellow">Important</span> Decision Layer & Bet Selection Gaps</h2>
+
+  <div class="gap-item">
+    <div class="title">8. Contrarian/Motivation Boosts Aren't Validated</div>
+    <div class="detail">
+      The system adds +1% edge for contrarian plays (fading public teams) and +1.5% for motivation mismatches (eliminated vs playoff-bound). These are research-informed but the values are hardcoded, not calibrated to YOUR model's actual performance in these spots.
+    </div>
+    <div class="impact"><strong>Impact:</strong> If the +1% contrarian boost is wrong, it's pushing marginal plays over the threshold and adding losing volume. The boosts should be validated against your own results, not general research.</div>
+    <div class="recommendation medium">
+      <strong>Fix:</strong> Track contrarian and motivation tags in pick logs (already happening). After 100+ tagged picks, compute actual win rate in tagged vs untagged spots. If tagged picks don't outperform, remove the boost.
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">9. Totals Model Has Huge Sigma (19.57) — Edge Is Thin</div>
+    <div class="detail">
+      The totals model uses sigma=19.57, meaning the standard deviation of total-point prediction error is ~20 points. With only 8 features and such high noise, the model can rarely generate edges above the 4% threshold. The 0.75 Kelly haircut further reduces sizing.
+    </div>
+    <div class="impact"><strong>Impact:</strong> Very few totals picks are being generated. The ones that pass are likely noisy. Totals in NBA have lower market efficiency than sides, so there IS edge to capture — just not with 8 features.</div>
+    <div class="recommendation medium">
+      <strong>Fix:</strong> Add more features to the totals model: four factors differentials, rest/B2B (huge impact on totals), defensive matchup quality, and referee pace tendencies. Aim for 14-16 features. Also investigate whether the sigma is inflated by outlier games (overtime, etc.) — trimming OT games from calibration may give a more accurate sigma.
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">10. Line Shopping Logic Doesn't Consider Actual Available Books</div>
+    <div class="detail">
+      The <code>best_home_spread</code> / <code>best_away_ml</code> fields take the best number across ALL books from the Odds API. But you may be limited or restricted at some of those books. The system doesn't know which books you can actually bet at.
+    </div>
+    <div class="impact"><strong>Impact:</strong> Picks show "best line" that may not be available to you. Edge calculations using consensus lines may overstate actual edge on your available books.</div>
+    <div class="recommendation low">
+      <strong>Fix:</strong> Add a <code>HEALTHY_BOOKS</code> config list. Filter <code>all_spreads</code> and <code>all_ml</code> to only include books you can actually bet at. This is 10 lines of code in <code>pull_odds()</code>.
+    </div>
+  </div>
+</div>
+
+<!-- ═══ DATA & INFRASTRUCTURE GAPS ═══ -->
+<div class="section">
+  <h2><span class="badge badge-blue">Infrastructure</span> Data Pipeline Gaps</h2>
+
+  <div class="gap-item">
+    <div class="title">11. NBA Data Refresh Is Manual</div>
+    <div class="detail">
+      <code>v7_daily.py refresh</code> must be run manually to update team_game_logs, Elo, etc. There's no automated daily pipeline. If you forget to refresh before running picks, you're predicting with stale features.
+    </div>
+    <div class="recommendation low">
+      <strong>Fix:</strong> Add a <code>refresh</code> step at the top of <code>run_picks()</code> — before pulling odds, check if the database has today's date. If not, auto-run the refresh. Alternatively, set up a Windows Task Scheduler job.
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">12. No Automated Grading Pipeline in v7</div>
+    <div class="detail">
+      The memory doc says "v7 grading pipeline (not yet implemented in v7)" — grading appears to happen but it's unclear if results are systematically logged with enough detail for model health monitoring. The <code>model_health.py</code> tool exists but depends on graded picks having <code>result</code> fields.
+    </div>
+    <div class="recommendation low">
+      <strong>Fix:</strong> Ensure every pick log gets a matching result log with win/loss, actual score, CLV, and units +/-. The <code>model_health.py</code> tool is good — just needs to run automatically weekly.
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">13. NCAAB Name Mapping Is Fragile</div>
+    <div class="detail">
+      190+ manual name mappings between ESPN and Barttorvik, plus fuzzy matching for the rest. The <code>MANUAL</code> dict is duplicated in both <code>build_ncaab_training_data()</code> and <code>build_ncaab_live_features()</code>. A mismatch between training and live means the model sees different teams.
+    </div>
+    <div class="recommendation low">
+      <strong>Fix:</strong> Consolidate all name maps into a single <code>name_map_bart.json</code> file (one already exists at <code>ncaab/models/name_map_bart.json</code>). Load from that file in both functions. Add a validation step that checks: for every team in tonight's games, does a mapping exist?
+    </div>
+  </div>
+</div>
+
+<!-- ═══ NEURAL MODEL STATUS ═══ -->
+<div class="section">
+  <h2><span class="badge badge-blue">Experimental</span> Neural v8 Shadow Model Status</h2>
+
+  <div class="gap-item">
+    <div class="title">14. Neural Model Dramatically Disagrees with XGBoost</div>
+    <div class="detail">
+      Shadow logs show the neural LSTM predicts much tighter margins (avg 1.2 pts, stdev 2.2) vs XGBoost (avg 3.3 pts, stdev 10.3). They disagree on the pick side in ~70% of games. This level of disagreement suggests either (a) the neural model is severely underfit, or (b) XGBoost is overfit on certain patterns.
+    </div>
+    <div class="impact"><strong>Impact:</strong> The planned 0.6 XGB + 0.4 Neural ensemble won't work well if one model is fundamentally miscalibrated. Ensembling two miscalibrated models doesn't fix calibration.</div>
+    <div class="recommendation medium">
+      <strong>Fix:</strong> Before ensembling, separately evaluate neural model Brier skill on the same holdout set as XGBoost. If neural Brier skill is &lt;5%, it's underfit and needs (a) more training data (currently only 4 seasons for neural vs 15 for XGB), (b) better normalization, or (c) architectural changes. The within-sequence normalization in <code>neural_shadow.py</code> may be destroying signal — try normalizing against global means instead of per-sequence.
+    </div>
+  </div>
+
+  <div class="gap-item">
+    <div class="title">15. Neural Static Features Are Mostly Placeholder Zeros</div>
+    <div class="detail">
+      The neural model's 5 static features are: <code>elo_diff</code> (real), <code>pace_matchup=0</code>, <code>rest_advantage=0</code>, <code>injury_impact_diff=0</code>, <code>home_team_hca=1.0</code>. Three of five are hardcoded zeros or constants. The model is making predictions mostly from sequences alone, without matchup context.
+    </div>
+    <div class="recommendation medium">
+      <strong>Fix:</strong> Fill in the static features from the same data sources XGBoost uses. The feat_df already has rest_advantage, injury_impact_diff, pace_matchup, and home_team_hca — just pipe them through to the neural model's static input.
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PRIORITY MATRIX ═══ -->
+<div class="section">
+  <h2>Priority Matrix</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Gap</th><th>Sport</th><th>Impact</th><th>Effort</th><th>Priority</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>3</td><td>NCAAB stale Barttorvik ratings</td><td>NCAAB</td><td>High</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-red"></span> Do Now</span></td></tr>
+      <tr><td>7</td><td>NCAAB missing injury feature</td><td>NCAAB</td><td>High</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-red"></span> Do Now</span></td></tr>
+      <tr><td>6</td><td>No PBP features (NBA)</td><td>NBA</td><td>Medium-High</td><td>Medium</td><td><span class="priority-tag"><span class="dot dot-red"></span> Do Now</span></td></tr>
+      <tr><td>1</td><td>Favorite compression at extreme spreads</td><td>NBA</td><td>High</td><td>Medium</td><td><span class="priority-tag"><span class="dot dot-yellow"></span> Next Sprint</span></td></tr>
+      <tr><td>5</td><td>Injury train/serve skew</td><td>NBA</td><td>Medium</td><td>Medium</td><td><span class="priority-tag"><span class="dot dot-yellow"></span> Next Sprint</span></td></tr>
+      <tr><td>4</td><td>No home/away splits in features</td><td>Both</td><td>Medium</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-yellow"></span> Next Sprint</span></td></tr>
+      <tr><td>9</td><td>Totals model thin features</td><td>NBA</td><td>Medium</td><td>Medium</td><td><span class="priority-tag"><span class="dot dot-yellow"></span> Next Sprint</span></td></tr>
+      <tr><td>14</td><td>Neural model miscalibration</td><td>NBA</td><td>Medium</td><td>High</td><td><span class="priority-tag"><span class="dot dot-yellow"></span> Next Sprint</span></td></tr>
+      <tr><td>15</td><td>Neural static features placeholder</td><td>NBA</td><td>Medium</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-yellow"></span> Next Sprint</span></td></tr>
+      <tr><td>8</td><td>Contrarian/motivation boost unvalidated</td><td>NBA</td><td>Low-Med</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-green"></span> When Ready</span></td></tr>
+      <tr><td>2</td><td>Low R² caps maximum edge</td><td>Both</td><td>High</td><td>Very High</td><td><span class="priority-tag"><span class="dot dot-green"></span> Ongoing</span></td></tr>
+      <tr><td>10</td><td>Line shopping ignores book health</td><td>Both</td><td>Low</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-green"></span> When Ready</span></td></tr>
+      <tr><td>11</td><td>Manual data refresh</td><td>NBA</td><td>Low</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-green"></span> When Ready</span></td></tr>
+      <tr><td>12</td><td>No automated grading</td><td>Both</td><td>Low</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-green"></span> When Ready</span></td></tr>
+      <tr><td>13</td><td>NCAAB name mapping fragile</td><td>NCAAB</td><td>Low</td><td>Low</td><td><span class="priority-tag"><span class="dot dot-green"></span> When Ready</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ═══ WHAT'S WORKING WELL ═══ -->
+<div class="section">
+  <h2><span class="badge badge-green">Strengths</span> What's Working Well</h2>
+  <div class="gap-item">
+    <div class="detail">
+      <strong>Raw margin regression architecture</strong> — the core v7 decision to predict raw margin (not residual vs Vegas) is validated by both research and your results. Don't change this.
+    </div>
+  </div>
+  <div class="gap-item">
+    <div class="detail">
+      <strong>Market shrinkage (Baker-McHale)</strong> — the <code>market_shrink_edge()</code> function is sophisticated and correctly accounts for model limitations. This prevents phantom edges from large disagreements.
+    </div>
+  </div>
+  <div class="gap-item">
+    <div class="detail">
+      <strong>Power devig</strong> — using power method instead of multiplicative devig is the right call. Most systems use multiplicative, which overestimates longshot fair probability by 1-2%.
+    </div>
+  </div>
+  <div class="gap-item">
+    <div class="detail">
+      <strong>Dog outperformance</strong> — NBA dogs at 13.2% avg edge vs favorites at 7.8% confirms the model finds real value on underdogs. The underdog filters (ML_DOG_CEILING=200, ML_DOG_MIN_EDGE=8%) are working.
+    </div>
+  </div>
+  <div class="gap-item">
+    <div class="detail">
+      <strong>Walk-forward validation discipline</strong> — never using in-sample testing, 70/15/15 temporal splits, and paper-tracking before real money. This is the right methodology.
+    </div>
+  </div>
+  <div class="gap-item">
+    <div class="detail">
+      <strong>Sport-specific edge thresholds</strong> — NBA 5%/6% vs NCAAB 3%/4% correctly reflects that the NBA market is sharper. Most amateur models use the same threshold for both.
+    </div>
+  </div>
+  <div class="gap-item">
+    <div class="detail">
+      <strong>Smoothed isotonic calibrator</strong> — the custom <code>SmoothedIsotonicCalibrator</code> that interpolates between isotonic steps is a clever fix for the resolution-loss problem. Well-engineered.
+    </div>
+  </div>
+</div>
+
+<!-- ═══ QUICK WINS ═══ -->
+<div class="section">
+  <h2>Recommended Next 3 Actions</h2>
+  <div class="gap-item">
+    <div class="title">1. Wire NCAAB injuries into the feature pipeline (Gap #7)</div>
+    <div class="detail">The scraper exists. The model has a slot. You just need to connect them. 30 minutes of work, immediate impact for remaining March Madness games.</div>
+  </div>
+  <div class="gap-item">
+    <div class="title">2. Add daily Barttorvik scrape for NCAAB (Gap #3)</div>
+    <div class="detail">Store timestamped ratings (date, team, adj_off, adj_def, etc.) and use the most recent pre-game snapshot. This turns stale season-level features into near-real-time features. 2-3 hours of work.</div>
+  </div>
+  <div class="gap-item">
+    <div class="title">3. Add 2 PBP features to NBA (Gap #6)</div>
+    <div class="detail">Start with transition points per game and paint scoring rate. Both are available from nba_api play-by-play. Add as features 22-23, retrain, and check if Brier skill improves. Half a day of work.</div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# 7‑Email Launch Sequence
+
+1) **Problem & Possibility** — Paint the before/after tied to "Test 12 ad angles, find 2–3 winners, and build a repeatable UGC pipeline that scales."
+2) **Credibility & Proof** — Case studies, mini‑wins, process overview
+3) **Value Lesson** — Send a free mini‑lesson + worksheet
+4) **Offer Deep Dive** — Syllabus + what makes this different
+5) **Objection Buster** — Time, cost, skill level; guarantee details
+6) **Social Proof & Bonuses** — Early‑bird bonus list; deadline reminder
+7) **Last Call** — Urgency, FAQ, clear CTA
+
+**PS Templates:** Short reminders with a single link.

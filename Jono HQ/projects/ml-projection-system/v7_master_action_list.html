@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>v7 Engine — Master Action List</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: #0a0a0f; color: #e0e0e8; line-height: 1.7; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 40px 24px; }
+  h1 { font-size: 2rem; color: #fff; margin-bottom: 6px; }
+  .subtitle { color: #8a8a9a; font-size: 1.05rem; margin-bottom: 12px; }
+  .summary-bar { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 36px; }
+  .summary-pill { background: #12121a; border: 1px solid #1e1e2e; border-radius: 10px; padding: 14px 20px; display: flex; align-items: center; gap: 10px; }
+  .summary-pill .num { font-size: 1.5rem; font-weight: 700; }
+  .summary-pill .lbl { font-size: 0.82rem; color: #8a8a9a; }
+  .num-red { color: #ef4444; }
+  .num-yellow { color: #eab308; }
+  .num-green { color: #22c55e; }
+  .num-blue { color: #3b82f6; }
+
+  .section { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 28px; margin-bottom: 24px; }
+  .section h2 { font-size: 1.25rem; color: #fff; margin-bottom: 18px; display: flex; align-items: center; gap: 10px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .badge-red { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+  .badge-yellow { background: rgba(234,179,8,0.15); color: #eab308; border: 1px solid rgba(234,179,8,0.3); }
+  .badge-green { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
+  .badge-blue { background: rgba(59,130,246,0.15); color: #3b82f6; border: 1px solid rgba(59,130,246,0.3); }
+  .badge-purple { background: rgba(168,85,247,0.15); color: #a855f7; border: 1px solid rgba(168,85,247,0.3); }
+
+  .item { background: #0e0e16; border: 1px solid #1a1a2a; border-radius: 8px; padding: 20px; margin-bottom: 14px; }
+  .item-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .item .title { font-weight: 600; color: #fff; font-size: 1rem; flex: 1; }
+  .item .detail { color: #a0a0b0; font-size: 0.92rem; margin-bottom: 10px; }
+  .item .fix { color: #c0c0d0; font-size: 0.9rem; border-left: 3px solid #3b82f6; padding-left: 12px; margin-top: 10px; }
+  .item .fix.high { border-color: #ef4444; }
+  .item .fix.med { border-color: #eab308; }
+  .item .fix.low { border-color: #22c55e; }
+  .meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.72rem; font-weight: 500; background: #1a1a2a; color: #8a8a9a; }
+  .tag-file { color: #a78bfa; }
+  .tag-sport { color: #60a5fa; }
+  .tag-effort { color: #34d399; }
+
+  code { background: #1a1a2a; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #a78bfa; }
+
+  .root-cause-section { margin-top: 32px; }
+  .root-cause { background: #0e0e16; border: 1px solid #1a1a2a; border-radius: 8px; padding: 18px; margin-bottom: 12px; }
+  .root-cause .rc-title { font-weight: 600; color: #fff; margin-bottom: 6px; }
+  .root-cause .rc-detail { color: #a0a0b0; font-size: 0.9rem; }
+  .rc-items { color: #8a8a9a; font-size: 0.85rem; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>v7 Master Action List</h1>
+<p class="subtitle">Gaps + Bandaids — Deduplicated & Prioritized — March 28, 2026</p>
+
+<div class="summary-bar">
+  <div class="summary-pill"><span class="num num-red">7</span><span class="lbl">Critical /<br>Do Now</span></div>
+  <div class="summary-pill"><span class="num num-yellow">9</span><span class="lbl">Next<br>Sprint</span></div>
+  <div class="summary-pill"><span class="num num-green">8</span><span class="lbl">When<br>Ready</span></div>
+  <div class="summary-pill"><span class="num num-blue">5</span><span class="lbl">Root<br>Causes</span></div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- CRITICAL / DO NOW -->
+<!-- ════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="badge badge-red">Critical</span> Do Now</h2>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">1. NCAAB Injury Feature Not Wired Into Model</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail">The <code>injury_scraper.py</code> for NCAAB was added March 27, but the 13-feature NCAAB pipeline has no injury feature. The scraper exists, the model has capacity for more features, they're just not connected. During March Madness, a key player being questionable massively shifts outcomes and the model is blind to it.</div>
+    <div class="fix high"><strong>Fix:</strong> Wire <code>get_ncaab_injury_impact()</code> into the NCAAB live features builder. Add <code>injury_impact_diff</code> as feature 14. Historical training rows will have 0 for this feature — the model will learn to use it when non-zero at prediction time. ~30 min.</div>
+    <div class="meta">
+      <span class="tag tag-file">ncaab/features.py</span>
+      <span class="tag tag-sport">NCAAB</span>
+      <span class="tag tag-effort">30 min</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">2. NCAAB Barttorvik Ratings Are Season-Level (Stale by March)</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail">All 10 core Barttorvik features are season-level snapshots. By late March, these represent 4-5 months of aggregated data and can't capture a team that's peaking or declining into the tournament. The <code>rolling_margin_diff</code> feature (r=0.457) partially compensates, but the primary feature set is stale. The NCAAB 1-5 collapse on March 20 likely reflects this.</div>
+    <div class="fix high"><strong>Fix:</strong> Daily Barttorvik scrape → store timestamped ratings (date, team, adj_off, adj_def, barthag, etc.) → at prediction time, use the most recent pre-game snapshot instead of season-level. ~2-3 hours.</div>
+    <div class="meta">
+      <span class="tag tag-file">ncaab/features.py</span>
+      <span class="tag tag-sport">NCAAB</span>
+      <span class="tag tag-effort">2-3 hours</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">3. Neural Static Features Are Placeholder Zeros</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail">The LSTM's 5 static features: <code>elo_diff</code> (real), <code>pace_matchup=0</code>, <code>rest_advantage=0</code>, <code>injury_impact_diff=0</code>, <code>home_team_hca=1.0</code>. Four of five are hardcoded placeholders. The model makes predictions from sequences alone with no matchup context. You can't evaluate whether the neural ensemble is worth promoting while it's running crippled.</div>
+    <div class="fix high"><strong>Fix:</strong> The feat_df already computes rest_advantage, injury_impact_diff, pace_matchup, and home_team_hca for XGBoost. Pipe them through to the neural model's static input in <code>neural_shadow.py</code>. ~30 min.</div>
+    <div class="meta">
+      <span class="tag tag-file">shared/neural_shadow.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">30 min</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">4. NCAAB Name Mapping Fragile + Duplicated</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail">190+ manual ESPN→Barttorvik name mappings in a <code>MANUAL</code> dict, copy-pasted into both <code>build_ncaab_training_data()</code> and <code>build_ncaab_live_features()</code>. If mappings diverge, training and live see different teams. If a mapping is missing, the game is silently dropped with no warning. One missing team = one missed +EV opportunity you never know about.</div>
+    <div class="fix high"><strong>Fix:</strong> Consolidate into a single <code>name_map_bart.json</code> (one already exists at <code>ncaab/models/name_map_bart.json</code>). Load from that file in both functions. Add a validation check: for every team in tonight's games, does a mapping exist? Log a warning if not. Add fuzzy-match fallback. ~1 hour.</div>
+    <div class="meta">
+      <span class="tag tag-file">ncaab/features.py</span>
+      <span class="tag tag-sport">NCAAB</span>
+      <span class="tag tag-effort">1 hour</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">5. Add Play-by-Play Features to NBA</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail">V8 architecture plan identifies transition rate, clutch performance, second chance rate, turnover quality, and paint scoring as key PBP features. Estimated +1-3% Brier improvement. Data available via nba_api for all 15 training seasons. Two teams with identical offensive ratings but different scoring profiles perform very differently against different defensive styles.</div>
+    <div class="fix high"><strong>Fix:</strong> Start with 2 PBP features: <code>transition_pts_L10_diff</code> and <code>paint_pts_L10_diff</code>. Add as features 22-23, retrain, check Brier improvement. If >0.5%, add the rest (clutch, second chance, TOV quality). ~half day.</div>
+    <div class="meta">
+      <span class="tag tag-file">nba/features.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">Half day</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">6. Margin Correction & Sigma Never Re-Estimated on Retrain</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail"><code>MARGIN_CORRECTION = {"nba": (1.172, -0.45, 12.7)}</code> and <code>SPORT_SIGMA = {"nba": 11.5}</code> are hardcoded constants calibrated once and frozen. XGBoost's compression behavior changes with each retrain as the training data shifts. These should be recomputed from the calibration fold every time you retrain, not treated as permanent constants.</div>
+    <div class="fix high"><strong>Fix:</strong> In <code>train_and_save()</code>, after fitting XGBoost on the train fold, compute slope/intercept from calibration fold residuals via OLS. Store in model metadata alongside the .json model file. Same for sigma — compute from calibration fold prediction errors. ~10-15 lines of code.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">1 hour</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">7. 20+ Fallback Defaults Silently Masking Missing Data</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail">Across features.py and totals_engine.py, missing stats are silently replaced with league averages: PPG→110, pace→98, eFG%→52, TOV%→13, FTR→27, OREB→10, HCA→3.0. The blanket <code>fillna(median)</code> in training does the same. This treats "data missing" as "perfectly average team" — a covariate shift that corrupts predictions without any visibility. No logging of which games used fallback data.</div>
+    <div class="fix high"><strong>Fix:</strong> (a) Add a <code>data_quality</code> column that counts how many features used fallback values per game. (b) Log a warning when >2 features are fallback. (c) Consider skipping games where critical features (net_rating, elo, four_factors) are all missing. (d) At minimum, track fallback usage in pick logs so you can audit. ~2 hours across all files.</div>
+    <div class="meta">
+      <span class="tag tag-file">nba/features.py, ncaab/features.py, totals_engine.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">2 hours</span>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- NEXT SPRINT -->
+<!-- ════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="badge badge-yellow">Important</span> Next Sprint</h2>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">8. Favorite Compression at Extreme Spreads</div>
+      <span class="badge badge-red">Gap</span>&nbsp;<span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail">XGBoost predicts avg margin of 5.4 at 18+ point spreads vs actual 25.5 — a 79% compression rate. The current patches: <code>SPREAD_CAP=15</code> (avoids the worst zone), <code>MARGIN_CORRECTION slope=1.172</code> (linear stretch), and the removed market shrinkage. These are three separate bandaids on the same root cause. The linear correction can't fix a fundamentally non-linear problem.</div>
+    <div class="fix med"><strong>Fix:</strong> (a) Train a separate "blowout model" for spreads >12, or (b) use quantile regression for the tails, or (c) predict <code>sign(margin) * log(1 + |margin|)</code> during training and reverse at inference. Option (c) is simplest — 5 lines in <code>train_margin_model()</code>. Then remove the SPREAD_CAP and static margin correction.</div>
+    <div class="meta">
+      <span class="tag tag-file">shared/engine.py, v7_daily.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">Half day</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">9. Favorite Sizing Haircuts Masking Calibration Problem</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail">After favorites went 4W-7L, three patches were added: <code>FAV_SIZE_HAIRCUT=0.75</code> (25% Kelly reduction for all favorites), <code>FAV_SPREAD_MIN_EDGE=0.02</code> (extra 2% edge requirement), and <code>sz = min(sz, 0.25)</code> (hard cap dog exposure). These treat the symptom — favorites losing — by throttling sizing. If the model's favorite calibration improves (or was just on a variance run), these patches actively cost you money on correct favorite picks.</div>
+    <div class="fix med"><strong>Fix:</strong> Investigate the root cause: is the model overestimating favorite win probability, or was 4W-7L variance? Run a calibration check on favorites specifically — plot predicted win% vs actual win% for favorites only. If calibrated correctly, remove the haircuts. If miscalibrated, fix calibration (isotonic/Platt on favorites bucket) rather than penalizing at sizing time.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">2-3 hours</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">10. Injury Train/Serve Skew</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail">Training uses injury data shifted by 1 game (to prevent leakage). Live prediction uses real-time injury reports (tonight's actual status). The model learned injury impact from a weaker, delayed signal but receives a stronger, current signal at inference. Systematic mismatch in what the model learned vs what it sees.</div>
+    <div class="fix med"><strong>Fix:</strong> Two options: (a) At prediction time, use "previous game" injuries for consistency with training, then add real-time injuries as a separate additive adjustment outside the model. (b) Retrain with two columns: <code>baseline_injury_diff</code> (shifted) + <code>realtime_injury_diff</code> (current, weighted lower). Option (a) is safer.</div>
+    <div class="meta">
+      <span class="tag tag-file">nba/features.py, nba/injury_scraper.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">2-3 hours</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">11. No Home/Away Splits in Features</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail">The model has <code>home_team_hca</code> (rolling L20 home margin) but doesn't capture how specific teams perform differently home vs away in key stats. Some teams shoot 5% better eFG at home. Features treat L10 offensive rating the same regardless of venue.</div>
+    <div class="fix med"><strong>Fix:</strong> Add <code>home_efg_diff_ha</code>, <code>home_pace_diff_ha</code>, <code>home_def_rating_diff_ha</code>. Three new features, minimal risk, computed from data already in the pipeline.</div>
+    <div class="meta">
+      <span class="tag tag-file">nba/features.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">1-2 hours</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">12. Totals Model Underpowered (8 Features, Sigma 19.57)</div>
+      <span class="badge badge-red">Gap</span>&nbsp;<span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail">Only 8 features with sigma=19.57 means the model can rarely clear the 4% edge threshold. The hardcoded <code>totals_r2=0.12</code> is a guess, not computed from holdout data. The 0.75 Kelly haircut further throttles sizing. Totals in NBA have lower market efficiency than sides — there's edge to capture but not with this feature set.</div>
+    <div class="fix med"><strong>Fix:</strong> (a) Add features: four factors diffs, rest/B2B, defensive matchup quality, ref pace tendencies → target 14-16 features. (b) Compute totals_r2 from actual holdout residuals during training. (c) Investigate if sigma is inflated by OT games — trim from calibration. (d) Remove the 0.75 haircut once calibration is honest.</div>
+    <div class="meta">
+      <span class="tag tag-file">shared/totals_engine.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">Half day</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">13. Neural Model Severely Disagrees with XGBoost</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail">Shadow logs: neural LSTM predicts avg margin 1.2 pts (stdev 2.2) vs XGBoost 3.3 pts (stdev 10.3). They disagree on pick side ~70% of games. This isn't a useful ensemble — it's two models that see different things. The per-sequence normalization in <code>neural_shadow.py</code> may be destroying cross-game signal.</div>
+    <div class="fix med"><strong>Fix:</strong> (a) Evaluate neural Brier skill on the same holdout set as XGBoost — if <5%, it's underfit. (b) Try normalizing against global means instead of per-sequence. (c) Train on more data (currently only 4 seasons vs XGB's 15). (d) Fix static features first (#3 above) before re-evaluating.</div>
+    <div class="meta">
+      <span class="tag tag-file">shared/neural_shadow.py, nba_neural_model.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">1-2 days</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">14. Silent Error Swallowing Across Pipeline</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail">Six separate <code>except Exception</code> blocks catch all errors (including bugs) and continue with degraded data: totals import, neural shadow import, neural shadow execution, timezone parsing (bare <code>except:</code>), injury loading, elo loading. When something breaks, you don't know — the pipeline produces picks that look normal but are based on zeroed-out features.</div>
+    <div class="fix med"><strong>Fix:</strong> (a) Replace bare <code>except:</code> with specific exception types (<code>ImportError</code>, <code>ValueError</code>, <code>FileNotFoundError</code>). (b) Add a <code>warnings</code> list that gets printed in the pick summary: "This run used fallback data for: injuries, elo, totals." (c) For the neural shadow, log the full traceback, not just the message. ~1 hour.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py, nba/features.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">1 hour</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">15. Probability Clipping Hides Calibration Issues</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail"><code>np.clip(probs, 0.01, 0.99)</code> applied in three places: isotonic fitting, smoothed isotonic output, and Venn-ABERS output. This prevents log(0) errors but also silently caps any prediction the model is highly confident about. The 0.75u Kelly cap (<code>min(..., 0.75)</code>) does the same at the sizing level. If calibration is correct, these caps cost you money on your best plays.</div>
+    <div class="fix med"><strong>Fix:</strong> (a) Use a tighter but justified bound like [0.02, 0.98] based on your actual calibration curve — check if ANY of your predictions should genuinely be >98%. (b) For Kelly cap, replace fixed 0.75u with a bankroll-percentage-based max (e.g., 2% of bankroll) that scales naturally.</div>
+    <div class="meta">
+      <span class="tag tag-file">shared/engine.py, v7_daily.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">30 min</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div name="item-header">
+      <div class="title">16. XGBoost Eval Set Uses Random Sampling (Not Temporal)</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail">Code comment explains: temporal early stopping is biased because the most recent games have the highest decay weights, so they'd dominate the eval set. The workaround is random sampling with <code>RandomState(42)</code>. This leaks future information into early stopping — games from 2025 can influence when training on 2020 data stops.</div>
+    <div class="fix med"><strong>Fix:</strong> Use temporal early stopping but weight the eval set by the same sample weights used in training. This preserves temporal integrity while avoiding the "recent games dominate" problem. Alternatively, use a fixed time window (e.g., last 60 days before the calibration fold) as the eval set.</div>
+    <div class="meta">
+      <span class="tag tag-file">shared/engine.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">1 hour</span>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- WHEN READY -->
+<!-- ════════════════════════════════════════════ -->
+<div class="section">
+  <h2><span class="badge badge-green">Maintenance</span> When Ready</h2>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">17. Contrarian/Motivation Boosts Unvalidated</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail"><code>CONTRARIAN_EDGE_BOOST=0.01</code> (+1% for fading public teams), <code>MOTIVATION_EDGE_BOOST=0.015</code> (+1.5% for motivation mismatches), <code>ELIM_WIN_PCT_THRESHOLD=0.350</code>, <code>CLINCH_WIN_PCT_THRESHOLD=0.700</code>, <code>LATE_SEASON_GAME_THRESHOLD=60</code>. All hardcoded, none backtested against your own results.</div>
+    <div class="fix low"><strong>Fix:</strong> After 100+ tagged picks, compute actual win rate in contrarian/motivation-tagged vs untagged spots. If tagged picks don't outperform, set boosts to zero. If they do, calibrate the boost size from data.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">1 hour</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">18. Line Shopping Ignores Book Health</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail"><code>best_home_spread</code> / <code>best_away_ml</code> take the best number across ALL books from the Odds API. You may be limited or restricted at some of those books. Edge calculations using consensus lines may overstate actual available edge.</div>
+    <div class="fix low"><strong>Fix:</strong> Add a <code>HEALTHY_BOOKS</code> config list. Filter in <code>pull_odds()</code>. ~10 lines.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">15 min</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">19. Manual Data Refresh Before Picks</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail"><code>v7_daily.py refresh</code> must be run manually. If forgotten, picks run on stale features. No staleness check at the top of <code>run_picks()</code>.</div>
+    <div class="fix low"><strong>Fix:</strong> Add a staleness check at the top of <code>run_picks()</code> — if database doesn't have today's date, auto-run refresh. Or Windows Task Scheduler.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py</span>
+      <span class="tag tag-sport">NBA</span>
+      <span class="tag tag-effort">30 min</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">20. No Automated Grading Pipeline</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail">Grading exists but it's unclear if results are systematically logged with enough detail for <code>model_health.py</code>. The health monitoring tool exists but isn't wired into the daily pipeline.</div>
+    <div class="fix low"><strong>Fix:</strong> Ensure every pick log gets a result log with W/L, actual score, CLV, units +/-. Wire <code>model_health.py</code> to run automatically weekly.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py, tools/model_health.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">1-2 hours</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">21. NIT Sigma Inflation Is a Guess</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail"><code>game_sigma = sigma * 1.15</code> for NIT neutral games — a hardcoded 15% uncertainty bump because "we don't have enough NIT data to calibrate properly." No validation that 1.15 is the right multiplier vs 1.05 or 1.30.</div>
+    <div class="fix low"><strong>Fix:</strong> Collect NIT game residuals over multiple seasons and compute the actual sigma. If not enough data, use all neutral-site games as a proxy.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py</span>
+      <span class="tag tag-sport">NCAAB</span>
+      <span class="tag tag-effort">1 hour</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">22. Hardcoded Tournament Team Lists</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail"><code>NCAA_TOURNAMENT_TEAMS</code> and <code>CBC_TEAMS</code> are manually updated sets. These go stale if the bracket changes and need annual maintenance. <code>PUBLIC_TEAMS_NBA</code> for contrarian logic is also static.</div>
+    <div class="fix low"><strong>Fix:</strong> Pull from an authoritative source (ESPN API, NCAA bracket API) or at minimum move to a JSON config file that's easier to update than embedded Python sets.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py</span>
+      <span class="tag tag-sport">NCAAB / NBA</span>
+      <span class="tag tag-effort">1 hour</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">23. Pick Volume Caps Instead of Threshold Tuning</div>
+      <span class="badge badge-purple">Bandaid</span>
+    </div>
+    <div class="detail"><code>MAX_PICKS_PER_DAY=3</code> per sport and <code>MAX_PICKS_COMBINED=6</code> drop the lowest-edge picks when the model generates too many. This is a portfolio constraint masquerading as a fix for the model outputting too many marginal edges.</div>
+    <div class="fix low"><strong>Fix:</strong> If the model consistently produces >6 qualifying picks, the edge thresholds (NBA 5%/6%, NCAAB 3%/4%) are too low. Raise thresholds until natural pick volume is 4-6 per day. The caps can remain as a safety net but shouldn't be binding daily.</div>
+    <div class="meta">
+      <span class="tag tag-file">v7_daily.py</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">30 min</span>
+    </div>
+  </div>
+
+  <div class="item">
+    <div class="item-header">
+      <div class="title">24. Low R² Caps Maximum Edge (Ongoing)</div>
+      <span class="badge badge-red">Gap</span>
+    </div>
+    <div class="detail">NBA R²=0.14, NCAAB R²=0.10. The market already prices 86%+ of what the model knows. This caps maximum possible edge at ~2-3% on most games. This isn't a "fix" — it's the fundamental constraint. Gains from here come from PBP features, lineup-level prediction, context-specific sub-models, and eventually neural ensemble.</div>
+    <div class="fix low"><strong>Fix:</strong> Continue the V8 roadmap: PBP features (#5), lineup-level prediction (v7.8), neural ensemble (v8.0). Also consider training separate models for high-R² contexts (B2B games, large rest advantages, divisional matchups) where the model may explain more variance.</div>
+    <div class="meta">
+      <span class="tag tag-file">Entire system</span>
+      <span class="tag tag-sport">Both</span>
+      <span class="tag tag-effort">Ongoing</span>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- ROOT CAUSES -->
+<!-- ════════════════════════════════════════════ -->
+<div class="section root-cause-section">
+  <h2><span class="badge badge-blue">Analysis</span> Root Causes Behind the Bandaids</h2>
+  <p style="color: #8a8a9a; font-size: 0.92rem; margin-bottom: 18px;">Most bandaids trace back to five root problems. Fix these and ~60% of the patches become unnecessary.</p>
+
+  <div class="root-cause">
+    <div class="rc-title">1. XGBoost Margin Compression at Extreme Spreads</div>
+    <div class="rc-detail">XGBoost's tree-based predictions regress toward mean values at the tails. This drives the SPREAD_CAP, the margin correction slope, the removed market shrinkage, and indirectly the favorite sizing haircuts.</div>
+    <div class="rc-items"><strong>Items caused:</strong> #6, #8, #9, #15</div>
+  </div>
+
+  <div class="root-cause">
+    <div class="rc-title">2. Missing/Stale Data Sources</div>
+    <div class="rc-detail">The pipeline has no universal "data quality" layer. When sources fail or return stale data, features silently fall back to hardcoded league averages. This creates covariate shift between good-data games and bad-data games with no visibility.</div>
+    <div class="rc-items"><strong>Items caused:</strong> #2, #7, #10, #14, #19</div>
+  </div>
+
+  <div class="root-cause">
+    <div class="rc-title">3. No Automated Recalibration on Retrain</div>
+    <div class="rc-detail">Sigma, margin correction, and R² are calibrated once and hardcoded. Each retrain changes the model's behavior but the downstream parameters stay frozen, creating drift between model output and calibration assumptions.</div>
+    <div class="rc-items"><strong>Items caused:</strong> #6, #12, #21</div>
+  </div>
+
+  <div class="root-cause">
+    <div class="rc-title">4. Symptom-Level Fixes Instead of Calibration Fixes</div>
+    <div class="rc-detail">When favorites underperform, the response is sizing haircuts — not investigating whether calibration is wrong. When picks exceed volume, the response is caps — not raising thresholds. This pattern creates layers of patches that interact unpredictably.</div>
+    <div class="rc-items"><strong>Items caused:</strong> #9, #15, #17, #23</div>
+  </div>
+
+  <div class="root-cause">
+    <div class="rc-title">5. Train/Serve Feature Mismatch</div>
+    <div class="rc-detail">Training and live prediction don't always see the same data. Injuries are shifted in training but real-time in live. Name mappings are duplicated and can diverge. Neural model trains on placeholder zeros but the plan is to eventually fill them in live. Each mismatch means the model's learned coefficients are miscalibrated for what it actually sees.</div>
+    <div class="rc-items"><strong>Items caused:</strong> #3, #4, #10</div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,40 @@
+# Live ledger data — never commit
+data/*.csv
+data/*.log
+data/*.json
+data/picks/
+
+# Generated artefacts
+results_graphics/
+projections/*.csv
+*.png
+*.jpg
+*.jpeg
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Large retired / archive folders
+archive/
+claude_workspace/
+mlmodel/
+ncaanbamlmodel_v6_archive/
+picksbyjonnydashboard/
+
+# Env / secrets (for when you eventually migrate webhook URLs + ODDS_API_KEY)
+.env
+.env.*
+*.key
+secrets.json

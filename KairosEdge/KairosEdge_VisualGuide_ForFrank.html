@@ -1,0 +1,2350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESX Indicators + KairosEdge — Visual Reference & Usage Guide</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/3.0.1/chartjs-plugin-annotation.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+  :root {
+    --bg: #0A0804;
+    --bg2: #0D0B07;
+    --panel: #13110D;
+    --panel-border: #2a2519;
+    --gold: #DDB67D;
+    --gold-dim: rgba(221, 182, 125, 0.25);
+    --gold-glow: rgba(221, 182, 125, 0.08);
+    --text: #e8e0d4;
+    --text-dim: #8a7e6e;
+    --red: #FF5555;
+    --blue: #44AAFF;
+    --purple: #CC55FF;
+    --green: #00DD88;
+    --market-gold: #DDB67D;
+    --white: #ffffff;
+    --danger: #ff4444;
+    --safe: #22cc88;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Header ── */
+  .masthead {
+    padding: 48px 40px 40px;
+    border-bottom: 1px solid var(--panel-border);
+    background: linear-gradient(180deg, #151210 0%, var(--bg) 100%);
+    position: relative;
+    overflow: hidden;
+  }
+  .masthead::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  }
+  .masthead-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  .badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--gold);
+    border: 1px solid var(--gold-dim);
+    padding: 5px 14px;
+    border-radius: 3px;
+    margin-bottom: 20px;
+    background: var(--gold-glow);
+  }
+  h1 {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 38px;
+    font-weight: 400;
+    color: var(--white);
+    letter-spacing: -0.5px;
+    margin-bottom: 10px;
+    line-height: 1.15;
+  }
+  h1 em {
+    font-style: italic;
+    color: var(--gold);
+  }
+  .subtitle {
+    font-size: 15px;
+    color: var(--text-dim);
+    max-width: 640px;
+    line-height: 1.7;
+  }
+  .meta-row {
+    display: flex;
+    gap: 24px;
+    margin-top: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .meta-row span { opacity: 0.6; }
+
+  /* ── Content wrapper ── */
+  .content {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 40px;
+  }
+
+  /* ── Scenario banner ── */
+  .scenario {
+    margin: 32px 0;
+    padding: 24px 28px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    position: relative;
+  }
+  .scenario::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 3px;
+    background: var(--gold);
+    border-radius: 6px 0 0 6px;
+  }
+  .scenario-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 10px;
+  }
+  .scenario-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--white);
+    margin-bottom: 6px;
+  }
+  .scenario p {
+    font-size: 14px;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+  .scenario-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--panel-border);
+  }
+  .stat-block {}
+  .stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--white);
+  }
+  .stat-value.gold { color: var(--gold); }
+  .stat-value.green { color: var(--safe); }
+  .stat-value.red { color: var(--danger); }
+
+  /* ── Indicator section ── */
+  .indicator-section {
+    margin: 48px 0;
+    padding-bottom: 48px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .indicator-section:last-of-type { border-bottom: none; }
+
+  .indicator-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .indicator-tag.red { color: var(--red); }
+  .indicator-tag.blue { color: var(--blue); }
+  .indicator-tag.purple { color: var(--purple); }
+  .indicator-tag.green { color: var(--green); }
+  .indicator-tag.gold { color: var(--market-gold); }
+
+  h2 {
+    font-family: Georgia, serif;
+    font-size: 26px;
+    font-weight: 400;
+    color: var(--white);
+    margin-bottom: 6px;
+  }
+  .indicator-role {
+    font-size: 14px;
+    color: var(--text-dim);
+    margin-bottom: 24px;
+    font-style: italic;
+  }
+
+  /* Chart container */
+  .chart-wrap {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 20px 20px 16px;
+    margin-bottom: 20px;
+    position: relative;
+  }
+  .chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(42, 37, 25, 0.5);
+  }
+  .chart-title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .chart-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.5px;
+  }
+  .chart-live-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .chart-legend {
+    display: flex;
+    gap: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+  .legend-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+  .chart-canvas-wrap {
+    position: relative;
+    height: 260px;
+  }
+  .chart-canvas-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* How to read */
+  .how-to-read {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 20px;
+  }
+  @media (max-width: 768px) {
+    .how-to-read { grid-template-columns: 1fr; }
+  }
+  .read-card {
+    padding: 18px 20px;
+    background: rgba(19, 17, 13, 0.7);
+    border: 1px solid var(--panel-border);
+    border-radius: 5px;
+  }
+  .read-card-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .read-card-label.look { color: var(--gold); }
+  .read-card-label.signal { color: var(--safe); }
+  .read-card-label.caution { color: var(--danger); }
+  .read-card-label.exit { color: var(--blue); }
+  .read-card p {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.65;
+  }
+
+  /* Annotation callouts */
+  .callout-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  .callout {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 14px;
+    background: rgba(19, 17, 13, 0.8);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    flex: 1;
+    min-width: 200px;
+  }
+  .callout-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    min-width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Flow diagram */
+  .flow-section {
+    margin: 48px 0;
+  }
+  .flow-title {
+    font-family: Georgia, serif;
+    font-size: 26px;
+    font-weight: 400;
+    color: var(--white);
+    margin-bottom: 24px;
+  }
+  .flow-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .flow-step {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 0;
+    min-height: 100px;
+  }
+  .flow-line-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .flow-dot {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+    border: 2px solid;
+  }
+  .flow-connector {
+    width: 2px;
+    flex: 1;
+    min-height: 20px;
+  }
+  .flow-content {
+    padding: 4px 0 28px 16px;
+  }
+  .flow-content h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .flow-content p {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.65;
+  }
+
+  /* Footer */
+  .footer {
+    padding: 32px 40px;
+    border-top: 1px solid var(--panel-border);
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 40px;
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 3px; }
+
+  /* ── Step-by-step guide ── */
+  .step-phase {
+    margin-bottom: 40px;
+  }
+  .phase-header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 18px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--panel-border);
+    flex-wrap: wrap;
+  }
+  .phase-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--gold);
+    background: rgba(221, 182, 125, 0.1);
+    border: 1px solid var(--gold-dim);
+    padding: 4px 10px;
+    border-radius: 3px;
+  }
+  .phase-title {
+    font-family: Georgia, serif;
+    font-size: 20px;
+    font-weight: 400;
+    color: var(--white);
+  }
+  .phase-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+  .step-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .step-card {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    gap: 16px;
+    padding: 18px 20px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    transition: border-color 0.2s;
+  }
+  .step-card:hover {
+    border-color: rgba(221, 182, 125, 0.2);
+  }
+  .step-number {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-dim);
+    border: 1.5px solid var(--panel-border);
+    background: rgba(19, 17, 13, 0.5);
+    flex-shrink: 0;
+  }
+  .step-content {}
+  .step-heading {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--white);
+    margin-bottom: 6px;
+  }
+  .step-content p {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+  .checklist {
+    margin: 10px 0 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .check-item {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    padding-left: 4px;
+  }
+  .check-icon {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--gold);
+    margin-right: 4px;
+  }
+
+  @media (max-width: 768px) {
+    .phase-header { flex-direction: column; gap: 6px; }
+    .phase-time { margin-left: 0; }
+    .step-card { grid-template-columns: 36px 1fr; gap: 12px; padding: 14px 16px; }
+    .step-number { width: 30px; height: 30px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<div class="masthead">
+  <div class="masthead-inner">
+    <div class="badge">ESX Exclusive · Visual Reference</div>
+    <h1>ESX Indicators <em>+ KairosEdge</em></h1>
+    <p class="subtitle">
+      The ESX Indicator panels are the visual layer — what traders see on-screen during the game. KairosEdge is the scoring engine running behind them — it crunches the numbers and generates the BUY/PASS decision. This doc shows what each panel looks like, how to read it, and how the two systems work together.
+    </p>
+    <div class="meta-row">
+      <span>Prepared by Jono</span>
+      <span>For Frank @ ESX</span>
+      <span>February 2026</span>
+    </div>
+  </div>
+</div>
+
+<div class="content">
+
+<!-- ════════════ SCENARIO ════════════ -->
+<div class="scenario">
+  <div class="scenario-label">Simulated Game Scenario</div>
+  <div class="scenario-title">Dallas Mavericks @ Indiana Pacers — Feb 22, 2026</div>
+  <p>Indiana leads 64–51 at halftime. The Pacers shot 52% from three in Q1–Q2 (season avg: 36%). Dallas was cold — 24% from three (season avg: 37%). The ESX indicators light up a regression setup and KairosEdge scores it as a BUY. Dallas is the trailing team. All charts below simulate this game from tip-off through a mid-Q4 exit.</p>
+  <div class="scenario-stats">
+    <div class="stat-block">
+      <div class="stat-label">Halftime Deficit</div>
+      <div class="stat-value red">−13</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Pregame Spread</div>
+      <div class="stat-value">DAL −3.5</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Entry Price</div>
+      <div class="stat-value gold">34¢</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">KairosEdge Fair Value</div>
+      <div class="stat-value green">46¢</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">KairosEdge Score</div>
+      <div class="stat-value gold">82 / 100</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Signal</div>
+      <div class="stat-value green">BUY</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ COMPOSITE SCORE BREAKDOWN ════════════ -->
+<div class="scenario" style="margin-top: 0;">
+  <div class="scenario-label">KairosEdge Composite Score Breakdown</div>
+  <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px;">This is what the engine computes behind the scenes. Each ESX indicator feeds a layer score (0–100), then KairosEdge multiplies by the weight and sums them.</p>
+  <div style="display:grid;grid-template-columns:1fr;gap:8px;">
+    <div style="display:grid;grid-template-columns:200px 60px 40px 60px 1fr;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--panel-border);">
+      <span style="font-size:11px;font-weight:600;color:var(--text-dim);font-family:'JetBrains Mono',monospace;">INDICATOR</span>
+      <span style="font-size:11px;font-weight:600;color:var(--text-dim);font-family:'JetBrains Mono',monospace;text-align:right;">SCORE</span>
+      <span style="font-size:11px;font-weight:600;color:var(--text-dim);font-family:'JetBrains Mono',monospace;text-align:center;">×</span>
+      <span style="font-size:11px;font-weight:600;color:var(--text-dim);font-family:'JetBrains Mono',monospace;text-align:right;">WEIGHT</span>
+      <span style="font-size:11px;font-weight:600;color:var(--text-dim);font-family:'JetBrains Mono',monospace;">CONTRIBUTION</span>
+    </div>
+    <div style="display:grid;grid-template-columns:200px 60px 40px 60px 1fr;align-items:center;gap:8px;padding:6px 0;">
+      <span style="font-size:13px;color:var(--red);">❶ Regression Index</span>
+      <span style="font-size:14px;font-weight:700;color:var(--white);text-align:right;font-family:'JetBrains Mono',monospace;">89</span>
+      <span style="font-size:12px;color:var(--text-dim);text-align:center;">×</span>
+      <span style="font-size:13px;color:var(--text-dim);text-align:right;font-family:'JetBrains Mono',monospace;">0.35</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="height:8px;width:calc(31.2 / 35 * 100%);max-width:200px;background:var(--red);border-radius:2px;"></div>
+        <span style="font-size:13px;font-weight:600;color:var(--white);font-family:'JetBrains Mono',monospace;">31.2</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:200px 60px 40px 60px 1fr;align-items:center;gap:8px;padding:6px 0;">
+      <span style="font-size:13px;color:var(--blue);">❷ Possession Advantage</span>
+      <span style="font-size:14px;font-weight:700;color:var(--white);text-align:right;font-family:'JetBrains Mono',monospace;">72</span>
+      <span style="font-size:12px;color:var(--text-dim);text-align:center;">×</span>
+      <span style="font-size:13px;color:var(--text-dim);text-align:right;font-family:'JetBrains Mono',monospace;">0.25</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="height:8px;width:calc(18.0 / 35 * 100%);max-width:200px;background:var(--blue);border-radius:2px;"></div>
+        <span style="font-size:13px;font-weight:600;color:var(--white);font-family:'JetBrains Mono',monospace;">18.0</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:200px 60px 40px 60px 1fr;align-items:center;gap:8px;padding:6px 0;">
+      <span style="font-size:13px;color:var(--purple);">❸ Efficiency Sustainability</span>
+      <span style="font-size:14px;font-weight:700;color:var(--white);text-align:right;font-family:'JetBrains Mono',monospace;">85</span>
+      <span style="font-size:12px;color:var(--text-dim);text-align:center;">×</span>
+      <span style="font-size:13px;color:var(--text-dim);text-align:right;font-family:'JetBrains Mono',monospace;">0.20</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="height:8px;width:calc(17.0 / 35 * 100%);max-width:200px;background:var(--purple);border-radius:2px;"></div>
+        <span style="font-size:13px;font-weight:600;color:var(--white);font-family:'JetBrains Mono',monospace;">17.0</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:200px 60px 40px 60px 1fr;align-items:center;gap:8px;padding:6px 0;">
+      <span style="font-size:13px;color:var(--green);">❹ Comeback Capacity</span>
+      <span style="font-size:14px;font-weight:700;color:var(--white);text-align:right;font-family:'JetBrains Mono',monospace;">71</span>
+      <span style="font-size:12px;color:var(--text-dim);text-align:center;">×</span>
+      <span style="font-size:13px;color:var(--text-dim);text-align:right;font-family:'JetBrains Mono',monospace;">0.10</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="height:8px;width:calc(7.1 / 35 * 100%);max-width:200px;background:var(--green);border-radius:2px;"></div>
+        <span style="font-size:13px;font-weight:600;color:var(--white);font-family:'JetBrains Mono',monospace;">7.1</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:200px 60px 40px 60px 1fr;align-items:center;gap:8px;padding:6px 0;">
+      <span style="font-size:13px;color:var(--market-gold);">❺ Market Edge</span>
+      <span style="font-size:14px;font-weight:700;color:var(--white);text-align:right;font-family:'JetBrains Mono',monospace;">87</span>
+      <span style="font-size:12px;color:var(--text-dim);text-align:center;">×</span>
+      <span style="font-size:13px;color:var(--text-dim);text-align:right;font-family:'JetBrains Mono',monospace;">0.10</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="height:8px;width:calc(8.7 / 35 * 100%);max-width:200px;background:var(--market-gold);border-radius:2px;"></div>
+        <span style="font-size:13px;font-weight:600;color:var(--white);font-family:'JetBrains Mono',monospace;">8.7</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:200px 60px 40px 60px 1fr;align-items:center;gap:8px;padding:10px 0;margin-top:4px;border-top:1px solid var(--gold-dim);">
+      <span style="font-size:14px;font-weight:700;color:var(--gold);">COMPOSITE TOTAL</span>
+      <span></span><span></span><span></span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="height:10px;width:calc(82 / 100 * 200px);background:linear-gradient(90deg,var(--red),var(--blue),var(--purple),var(--green),var(--market-gold));border-radius:2px;"></div>
+        <span style="font-size:18px;font-weight:700;color:var(--gold);font-family:'JetBrains Mono',monospace;">82 / 100</span>
+      </div>
+    </div>
+  </div>
+  <p style="font-size:12px;color:var(--text-dim);margin-top:12px;">Threshold is 78. This scores 82 → <strong style="color:var(--safe);">BUY signal confirmed.</strong> The engine doesn't care about any single indicator in isolation — it's the weighted sum that decides.</p>
+</div>
+
+<!-- ════════════ P&L EXAMPLE ════════════ -->
+<div class="scenario" style="margin-top: 0;">
+  <div class="scenario-label">P&L Example — What the Money Looks Like</div>
+  <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px;">Prediction market contracts are priced in cents. Here's how this trade translates to real dollars.</p>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:16px;">
+    <div class="stat-block">
+      <div class="stat-label">Contracts Bought</div>
+      <div class="stat-value" style="color:var(--white);">100</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Entry Price</div>
+      <div class="stat-value gold">34¢ each</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Total Cost</div>
+      <div class="stat-value" style="color:var(--white);">$34.00</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Exit Price</div>
+      <div class="stat-value green">58¢ each</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Gross Profit</div>
+      <div class="stat-value green">$24.00</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Maker Fees (~1¢/contract)</div>
+      <div class="stat-value red">−$1.00</div>
+    </div>
+  </div>
+  <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--panel-border);display:flex;align-items:baseline;gap:12px;">
+    <span style="font-size:14px;font-weight:700;color:var(--gold);">Net Profit:</span>
+    <span style="font-size:24px;font-weight:700;color:var(--safe);font-family:'JetBrains Mono',monospace;">+$23.00</span>
+    <span style="font-size:13px;color:var(--text-dim);">(67.6% return on $34 risked)</span>
+  </div>
+  <p style="font-size:12px;color:var(--text-dim);margin-top:10px;">You don't need the team to win. You bought at 34¢ and sold at 58¢ during Q3 when the market repriced the comeback. The game could end either way — the trade is already closed. This is why maker-only orders matter: taker fees would have been ~$4 instead of $1, cutting your profit by 13%.</p>
+</div>
+
+<!-- ════════════ INDICATOR 1 ════════════ -->
+<div class="indicator-section">
+  <div class="indicator-tag red">ESX Indicator 1 · Weight: 35%</div>
+  <h2>Regression Index</h2>
+  <div class="indicator-role">The primary trigger — detects hot/cold shooting variance in real time</div>
+
+  <div class="chart-wrap">
+    <div class="chart-header">
+      <div class="chart-title-row">
+        <div class="chart-title">eFG% DEVIATION FROM SEASON NORM</div>
+        <div class="chart-live-val" style="color: var(--red);">+8.2</div>
+      </div>
+      <div class="chart-legend">
+        <span><span class="legend-dot" style="background:var(--red)"></span>Lead (IND) eFG% Dev</span>
+        <span><span class="legend-dot" style="background:var(--green)"></span>Trail (DAL) eFG% Dev</span>
+      </div>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="chart1"></canvas>
+    </div>
+  </div>
+
+  <div class="callout-row">
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(255,85,85,0.15);color:var(--red);">A</div>
+      <div><strong style="color:var(--text);">Halftime gap</strong> — IND's red line peaked at +10.1 above season norm. DAL's green line sits at −5.8. This 16-point eFG% gap is the regression signal.</div>
+    </div>
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(0,221,136,0.15);color:var(--green);">B</div>
+      <div><strong style="color:var(--text);">Regression confirmed</strong> — By mid-Q3, IND's red line drops back toward zero. The gap is compressing. This is mean reversion in real time.</div>
+    </div>
+  </div>
+
+  <div class="how-to-read">
+    <div class="read-card">
+      <div class="read-card-label look">What to look for</div>
+      <p>The <strong style="color:var(--red)">red line</strong> (leading team) should be well above zero at halftime — that means they're shooting above their season average. The <strong style="color:var(--green)">green line</strong> (trailing team) should be below zero — shooting cold. The wider the gap between the two lines, the stronger the regression signal.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label signal">Buy signal</div>
+      <p>Red line above +5, green line below −3, and area fill between them is wide. This means the leading team's eFG% is 5+ points above their norm — statistically unsustainable on ~15 three-point attempts (binomial SD ±12pp). The trade exists because this gap will compress.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label caution">When NOT to trade</div>
+      <p>If both lines are near zero, the shooting difference is real — not variance-driven. If the red line is only +1–2 above norm, there isn't enough to regress. No gap = no trade.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label exit">Second-half read</div>
+      <p>Watch for the red line dropping toward zero during Q3. That's the regression happening live. As the gap closes, the score compresses and the market will reprice. This is your profit materializing. The line won't activate until 20 FGA to avoid early noise.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ INDICATOR 2 ════════════ -->
+<div class="indicator-section">
+  <div class="indicator-tag blue">ESX Indicator 2 · Weight: 25%</div>
+  <h2>Possession Advantage</h2>
+  <div class="indicator-role">Structural validator — who controls the game independent of shooting</div>
+
+  <div class="chart-wrap">
+    <div class="chart-header">
+      <div class="chart-title-row">
+        <div class="chart-title">COMPOSITE STRUCTURAL INDEX</div>
+        <div class="chart-live-val" style="color: var(--blue);">+4.8</div>
+      </div>
+      <div class="chart-legend">
+        <span><span class="legend-dot" style="background:var(--blue)"></span>Composite Index</span>
+        <span><span class="legend-dot" style="background:rgba(68,170,255,0.3)"></span>Paint Sub-line</span>
+      </div>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="chart2"></canvas>
+    </div>
+  </div>
+
+  <div class="callout-row">
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(68,170,255,0.15);color:var(--blue);">A</div>
+      <div><strong style="color:var(--text);">Above zero = structurally competitive</strong> — Dallas is winning in paint points and rebounds despite trailing by 13. They're losing because of IND's 3PT shooting, not structural collapse.</div>
+    </div>
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(255,68,68,0.15);color:var(--danger);">B</div>
+      <div><strong style="color:var(--text);">Danger zone</strong> — The red-shaded area below zero is where you don't want to see this line. If it dips and stays there, the trailing team is genuinely outmatched. Suppress the trade.</div>
+    </div>
+  </div>
+
+  <div class="how-to-read">
+    <div class="read-card">
+      <div class="read-card-label look">What to look for</div>
+      <p>A single blue line showing the weighted composite of paint differential (40%), turnover differential (35%), and rebound differential (25%). Above zero = trailing team is holding structurally. The faint sub-line shows paint points alone for added context.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label signal">What confirms the trade</div>
+      <p>Index above zero at halftime. This means the trailing team is losing because of shooting variance (caught by ESX Indicator 1), NOT because they're being outplayed structurally. The deficit is artificial — the kind that regresses.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label caution">Kill switch</div>
+      <p>Index below zero AND trending down = the trailing team is getting dominated in paint, boards, and turnovers. Even if ESX Indicator 1 shows a regression signal, don't trade. They're losing for real reasons that won't fix themselves.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label exit">Second-half read</div>
+      <p>Check this at halftime and again mid-Q3. If it's still positive, hold. If it reverses hard into the red zone during Q3, reassess the position — the structural picture has changed and the comeback may stall.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ INDICATOR 3 ════════════ -->
+<div class="indicator-section">
+  <div class="indicator-tag purple">ESX Indicator 3 · Weight: 20%</div>
+  <h2>Efficiency Sustainability</h2>
+  <div class="indicator-role">Shot quality filter — is the opponent's lead built on variance or real offense?</div>
+
+  <div class="chart-wrap">
+    <div class="chart-header">
+      <div class="chart-title-row">
+        <div class="chart-title">SUSTAINABILITY SCORE (LEADING TEAM)</div>
+        <div class="chart-live-val" style="color: var(--purple);">32</div>
+      </div>
+      <div class="chart-legend">
+        <span><span class="legend-dot" style="background:var(--purple)"></span>Score</span>
+        <span><span class="legend-dot" style="background:rgba(204,85,255,0.4)"></span>EMA(10)</span>
+      </div>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="chart3"></canvas>
+    </div>
+  </div>
+
+  <div class="callout-row">
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(204,85,255,0.15);color:var(--purple);">A</div>
+      <div><strong style="color:var(--text);">Fragile zone (below 40)</strong> — IND's sustainability score is 32. They're making a lot of unassisted threes with a low FT rate. This is the most volatile shooting profile — exactly what regresses hardest.</div>
+    </div>
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(204,85,255,0.15);color:var(--purple);">B</div>
+      <div><strong style="color:var(--text);">Durable zone would be above 70</strong> — If this line was up there, it would mean IND's offense is built on free throws and assisted shots. That's real, sustainable offense. You'd want to pass or reduce size.</div>
+    </div>
+  </div>
+
+  <div class="how-to-read">
+    <div class="read-card">
+      <div class="read-card-label look">What to look for</div>
+      <p>A 0–100 score measuring the <em>leading team's</em> shooting sustainability. The purple area fill turns red-ish below 40 (fragile) and green-ish above 70 (durable). The dashed EMA line smooths out the noise.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label signal">Ideal setup</div>
+      <p>Score below 40 + ESX Indicator 1 showing high eFG% deviation = the leading team is shooting hot AND it's fragile. High 3P rate with low assist rate and low FT rate. This is the textbook regression trade.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label caution">Score above 70</div>
+      <p>Their offense is durable — high FT rate, well-assisted shots. Even if ESX Indicator 1 shows deviation, the regression may be partial. Reduce position size or pass entirely. They might be genuinely the better team tonight.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label exit">Second-half read</div>
+      <p>If the score rises during Q3 (leading team adjusts to more sustainable offense), consider an earlier exit. If it stays low or drops further, hold — the regression thesis is intact and their efficiency will normalize.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ INDICATOR 4 ════════════ -->
+<div class="indicator-section">
+  <div class="indicator-tag green">ESX Indicator 4 · Weight: 10%</div>
+  <h2>Comeback Capacity</h2>
+  <div class="indicator-role">Elasticity — can the trailing team generate the scoring bursts needed to close the gap?</div>
+
+  <div class="chart-wrap">
+    <div class="chart-header">
+      <div class="chart-title-row">
+        <div class="chart-title">BURST POTENTIAL (TRAILING TEAM)</div>
+        <div class="chart-live-val" style="color: var(--green);">71</div>
+      </div>
+      <div class="chart-legend">
+        <span><span class="legend-dot" style="background:var(--green)"></span>Capacity Score</span>
+        <span><span class="legend-dot" style="background:rgba(0,221,136,0.3)"></span>3PA Rate</span>
+        <span style="color:var(--text-dim)">┈ Baseline (50)</span>
+      </div>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="chart4"></canvas>
+    </div>
+  </div>
+
+  <div class="callout-row">
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(0,221,136,0.15);color:var(--green);">A</div>
+      <div><strong style="color:var(--text);">High capacity = be patient</strong> — Dallas has a 71 capacity score. High 3PA rate, fast pace, good turnover creation. They can close a 13-point gap in 3–4 possessions. Hold for full repricing.</div>
+    </div>
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(0,221,136,0.15);color:var(--green);">B</div>
+      <div><strong style="color:var(--text);">Low capacity = exit early</strong> — If this was below 35, the trailing team grinds slowly. Take the first profitable exit window rather than waiting for a big move that may not come.</div>
+    </div>
+  </div>
+
+  <div class="how-to-read">
+    <div class="read-card">
+      <div class="read-card-label look">What to look for</div>
+      <p>A 0–100 score measuring the trailing team's ability to close gaps quickly. Based on their 3PA rate (heaviest weight), game pace, and turnover creation rate. The dashed line at 50 is league average.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label signal">This is an exit timer, not an entry filter</div>
+      <p>This indicator does NOT trigger or block trades. It tells you <em>how long to hold</em>. High score = the comeback can happen fast, so be patient and let it play out. Low score = it'll be slow, take profits early.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label caution">High score ≠ guaranteed comeback</div>
+      <p>Capacity just means the <em>tools</em> are there. A team can have high 3PA rate and still miss. This indicator calibrates exit timing expectations, not comeback probability. That's what the other indicators are for.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label exit">How it changes exit timing</div>
+      <p><strong>Score 65+:</strong> Wait for full repricing — target mid-to-late Q3 exit. <strong>Score 40–64:</strong> Standard exit — take the first good window. <strong>Score below 40:</strong> Exit at first sign of profit — don't wait.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ INDICATOR 5 ════════════ -->
+<div class="indicator-section">
+  <div class="indicator-tag gold">ESX Indicator 5 · Weight: 10%</div>
+  <h2>Market Edge</h2>
+  <div class="indicator-role">The precision tool — live ESX price vs. KairosEdge fair value (Temporal Edge Theory)</div>
+
+  <div class="chart-wrap">
+    <div class="chart-header">
+      <div class="chart-title-row">
+        <div class="chart-title">KAIROSEDGE FAIR VALUE vs ESX PRICE</div>
+        <div class="chart-live-val" style="color: var(--market-gold);">+12¢ edge</div>
+      </div>
+      <div class="chart-legend">
+        <span><span class="legend-dot" style="background:var(--blue)"></span>KairosEdge Fair Value</span>
+        <span><span class="legend-dot" style="background:var(--market-gold)"></span>ESX Price (live)</span>
+        <span style="border-bottom:1px dashed var(--white);padding-bottom:1px;color:var(--text-dim);">Entry Price</span>
+      </div>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="chart5"></canvas>
+    </div>
+  </div>
+
+  <div class="callout-row">
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(221,182,125,0.15);color:var(--gold);">A</div>
+      <div><strong style="color:var(--text);">The edge gap</strong> — At halftime, KairosEdge fair value is 46¢ but ESX prices it at 34¢. That's a 12-cent edge. The green shaded area between the lines IS the mispricing — this is what you're trading.</div>
+    </div>
+    <div class="callout">
+      <div class="callout-num" style="background:rgba(221,182,125,0.15);color:var(--gold);">B</div>
+      <div><strong style="color:var(--text);">Lines converging = exit</strong> — As regression happens, the market catches up. When the gold line meets the blue line, the edge is gone. Sell. If gold spikes ABOVE blue, the market overreacted — that's the ideal exit.</div>
+    </div>
+  </div>
+
+  <div class="how-to-read">
+    <div class="read-card">
+      <div class="read-card-label look">What to look for</div>
+      <p>Two lines: <strong style="color:var(--blue)">blue</strong> = KairosEdge's mathematical fair value (from the Brownian motion formula). <strong style="color:var(--gold)">Gold dashed</strong> = what ESX is actually pricing the contract at. The gap between them = your edge in cents. White dashed = your entry price.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label signal">Entry confirmation</div>
+      <p>At halftime: KairosEdge fair value must be at least 8¢ above ESX price. This 8pp minimum accounts for the favourite-longshot bias documented by Bürgi et al. (2026) — low-price contracts are systematically overpriced, so you need extra margin.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label caution">The formula behind the blue line</div>
+      <p>z = (−deficit + spread × τ) / (12 × √τ), then Fair Value = normalCDF(z) × 100. The spread already includes home court — never add it separately. σ = 12 is NBA scoring standard deviation. τ = remaining time fraction.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label exit">This is the exit trigger</div>
+      <p><strong>Exit when:</strong> gold line meets or crosses blue line (edge gone), OR gold spikes above blue during a trailing team run (market overreacted — sell into the spike). <strong>Forced exit:</strong> 4:00 remaining in Q4 regardless — the Brownian model breaks when teams start fouling and managing clock.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ PASS SCENARIO ════════════ -->
+<div class="indicator-section">
+  <div class="badge" style="margin-bottom:16px;color:var(--danger);border-color:rgba(255,68,68,0.3);background:rgba(255,68,68,0.06);">Scenario 2 · PASS</div>
+  <h2 style="font-size:26px;">When the Indicators Say No</h2>
+  <div class="indicator-role">Not every halftime deficit is a regression opportunity. Here's what a PASS looks like.</div>
+
+  <div class="scenario" style="border-left:3px solid var(--danger);border-color:var(--panel-border);border-left-color:var(--danger);">
+    <div class="scenario-label" style="color:var(--danger);">PASS Scenario</div>
+    <div class="scenario-title">Milwaukee Bucks @ Boston Celtics — Feb 22, 2026</div>
+    <p>Boston leads 72–58 at halftime. MIL is trailing by 14. On the surface this looks like a regression candidate — but the indicators tell a different story.</p>
+    <div class="scenario-stats">
+      <div class="stat-block">
+        <div class="stat-label">Halftime Deficit</div>
+        <div class="stat-value red">−14</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Ind 1 Gap</div>
+        <div class="stat-value" style="color:var(--text-dim);">+2.8 (weak)</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Ind 2 Index</div>
+        <div class="stat-value red">−4.2 (negative)</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">KairosEdge Score</div>
+        <div class="stat-value red">51 / 100</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Signal</div>
+        <div class="stat-value red">PASS</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px;">
+    <div class="chart-wrap">
+      <div class="chart-header">
+        <div class="chart-title-row">
+          <div class="chart-title">ESX IND 1 — REGRESSION INDEX</div>
+          <div class="chart-live-val" style="color: var(--text-dim);">+2.8</div>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap" style="height:200px;">
+        <canvas id="pass-chart1"></canvas>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-header">
+        <div class="chart-title-row">
+          <div class="chart-title">ESX IND 2 — POSSESSION ADVANTAGE</div>
+          <div class="chart-live-val" style="color: var(--danger);">−4.2</div>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap" style="height:200px;">
+        <canvas id="pass-chart2"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="how-to-read" style="margin-top:16px;">
+    <div class="read-card">
+      <div class="read-card-label caution">Why Indicator 1 fails</div>
+      <p>Boston's eFG% deviation is only +2.8 above their season norm. They're a 48% eFG% team shooting 50.8% — that's well within normal range, not a hot streak. The gap between the red and green lines is narrow. There's nothing meaningful to regress.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label caution">Why Indicator 2 kills it</div>
+      <p>The composite index is deep in the red zone at −4.2. Milwaukee is losing in paint points, getting outrebounded, AND turning the ball over more. This isn't a shooting variance deficit — Boston is structurally better tonight. The deficit is real. Trading against this is fighting the tide.</p>
+    </div>
+  </div>
+
+  <div class="callout-row">
+    <div class="callout" style="flex:1;">
+      <div class="callout-num" style="background:rgba(255,68,68,0.15);color:var(--danger);">!</div>
+      <div><strong style="color:var(--text);">The lesson:</strong> A 14-point halftime deficit does NOT automatically mean regression. The indicators exist to tell you <em>why</em> the team is trailing. If the answer is "because the other team is better tonight," there's no trade. KairosEdge scores this 51/100 — well below the 78 threshold. PASS.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ LOSING TRADE SCENARIO ════════════ -->
+<div class="indicator-section">
+  <div class="badge" style="margin-bottom:16px;color:var(--danger);border-color:rgba(255,68,68,0.3);background:rgba(255,68,68,0.06);">Scenario 3 · Loss</div>
+  <h2 style="font-size:26px;">When the System Gets It Wrong</h2>
+  <div class="indicator-role">Everything checks out at halftime, but the regression never comes. This will happen — here's what it looks like.</div>
+
+  <div class="scenario" style="border-left:3px solid var(--danger);border-color:var(--panel-border);border-left-color:var(--danger);">
+    <div class="scenario-label" style="color:var(--danger);">Loss Scenario</div>
+    <div class="scenario-title">Memphis Grizzlies @ Cleveland Cavaliers — Feb 23, 2026</div>
+    <p>Cleveland leads 68–57 at halftime. CLE shot 49% from three (season avg: 37%). ESX indicators showed a strong regression setup. KairosEdge scored 81. The trade was entered at 36¢. But Cleveland's shooting held — they were genuinely on fire, not just lucky. The regression never came.</p>
+    <div class="scenario-stats">
+      <div class="stat-block">
+        <div class="stat-label">Entry Price</div>
+        <div class="stat-value gold">36¢</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Exit Price</div>
+        <div class="stat-value red">22¢</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">KairosEdge Score</div>
+        <div class="stat-value" style="color:var(--text-dim);">81 / 100</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Result</div>
+        <div class="stat-value red">−$14.00</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px;">
+    <div class="chart-wrap">
+      <div class="chart-header">
+        <div class="chart-title-row">
+          <div class="chart-title">ESX IND 1 — RED LINE STAYED HOT</div>
+          <div class="chart-live-val" style="color: var(--red);">+7.6</div>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap" style="height:200px;">
+        <canvas id="loss-chart1"></canvas>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-header">
+        <div class="chart-title-row">
+          <div class="chart-title">ESX IND 5 — LINES NEVER CONVERGED</div>
+          <div class="chart-live-val" style="color: var(--danger);">−14¢</div>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap" style="height:200px;">
+        <canvas id="loss-chart5"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px;">
+    <div class="chart-wrap">
+      <div class="chart-header">
+        <div class="chart-title-row">
+          <div class="chart-title">ESX IND 3 — THE CLUE THAT WAS MISSED</div>
+          <div class="chart-live-val" style="color: var(--purple);">72 (durable)</div>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap" style="height:200px;">
+        <canvas id="loss-chart3"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="how-to-read" style="margin-top:16px;">
+    <div class="read-card">
+      <div class="read-card-label caution">What happened on Indicator 1</div>
+      <p>The red line (CLE eFG% deviation) was +9.2 at halftime — a strong regression signal. But during Q3, it barely dropped. By Q4 it was still at +7.6. Cleveland's shooting wasn't variance — they were hitting contested shots, playing at an elite level. The regression never materialized.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label caution">What Indicator 3 was telling you</div>
+      <p>ESX Indicator 3 (Efficiency Sustainability) was at 72 — <strong>deep in the durable zone.</strong> Cleveland's offense was built on high FT rate and well-assisted shots, not unassisted threes. This was the warning sign. A sustainability score above 70 with high eFG% deviation means the shooting might be real. The system scored it 81 anyway because the other indicators were strong, but Indicator 3 was flashing caution.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label caution">What Indicator 5 showed</div>
+      <p>The lines never converged. The gold ESX price drifted lower as Cleveland extended the lead. KairosEdge fair value dropped too because the deficit grew. The exit should have come at 4:00 Q4 (forced exit rule) — but by then the contract was at 22¢. Loss: $14 on 100 contracts.</p>
+    </div>
+    <div class="read-card">
+      <div class="read-card-label exit">The takeaway</div>
+      <p>This is a correct process, bad outcome situation. The system can't distinguish "real hot shooting" from "variance hot shooting" 100% of the time — nobody can. That's why the edge is probabilistic, not certain. Over 200+ trades, the wins should outsize the losses because the regression thesis holds <em>on average</em>. One loss doesn't invalidate the model. Tracking CLV across all trades is what proves the edge.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ STEP BY STEP USAGE GUIDE ════════════ -->
+<div class="indicator-section" style="border-bottom:none;padding-bottom:0;">
+  <div class="badge" style="margin-bottom:16px;">Usage Guide</div>
+  <h2 style="font-size:30px;margin-bottom:8px;">How to Use the ESX Indicators + KairosEdge</h2>
+  <p style="font-size:13px;color:var(--gold);max-width:640px;margin-bottom:4px;line-height:1.7;">
+    <strong style="color:var(--text);">ESX Indicators</strong> = the 5 chart panels you watch on ESX during the game.<br>
+    <strong style="color:var(--text);">KairosEdge</strong> = the scoring engine that computes the composite score and BUY/PASS decision behind the scenes.
+  </p>
+  <p style="font-size:14px;color:var(--text-dim);max-width:640px;margin-bottom:32px;">
+    The indicators show you the picture. KairosEdge tells you what to do with it. Here's the full workflow.
+  </p>
+
+  <!-- Phase 1 -->
+  <div class="step-phase">
+    <div class="phase-header">
+      <div class="phase-num">PHASE 1</div>
+      <div class="phase-title">Pre-Game Setup</div>
+      <div class="phase-time">30–60 minutes before tip-off</div>
+    </div>
+
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-number">1</div>
+        <div class="step-content">
+          <div class="step-heading">Open ESX and check tonight's NBA slate</div>
+          <p>Pull up the ESX indicator panels for tonight's games. You're looking for games where one team is a moderate favorite (spread 2–7 points). Blowout matchups (spread 12+) rarely produce tradeable setups because the better team usually leads for real reasons, not variance.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">2</div>
+        <div class="step-content">
+          <div class="step-heading">Note the pregame spread for each game</div>
+          <p>Write down or screenshot the spread. This feeds directly into the Indicator 5 KairosEdge fair value formula. The spread already includes home court advantage — never adjust for HCA separately. You need this number at halftime.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">3</div>
+        <div class="step-content">
+          <div class="step-heading">Check injury reports</div>
+          <p>A key player being out changes the team's season averages. If a team's best shooter is out, their "season eFG%" baseline is artificially high — the regression signal will be weaker than it looks. Flag any games with major injuries for reduced confidence.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 2 -->
+  <div class="step-phase">
+    <div class="phase-header">
+      <div class="phase-num">PHASE 2</div>
+      <div class="phase-title">First Half — Watch the Indicators Build</div>
+      <div class="phase-time">Q1 through halftime</div>
+    </div>
+
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-number">4</div>
+        <div class="step-content">
+          <div class="step-heading">Watch ESX Indicator 1 (Regression Index) develop</div>
+          <p>This is the panel you're watching most. As the first half plays out, you'll see the red line (leading team's eFG% deviation) and green line (trailing team's deviation) diverge. You're hoping for a wide gap — red line above +5, green line below −3. The wider the gap, the more the leading team is shooting above their norm. <strong>Don't make any decisions yet.</strong> Just watch it build.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">5</div>
+        <div class="step-content">
+          <div class="step-heading">Glance at ESX Indicator 2 (Possession Advantage)</div>
+          <p>Is the blue line above or below zero? If the trailing team is also losing structurally (paint points, rebounds, turnovers all going the wrong way), the deficit might be real — not just shooting variance. You want to see this line above zero heading into halftime.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">6</div>
+        <div class="step-content">
+          <div class="step-heading">Let the ESX panels build — don't trade during the first half</div>
+          <p>This is a halftime system. The ESX indicators are building the picture in real time so you have full context at the break. KairosEdge runs its scoring at halftime, not during live play. No entries until then. The data isn't stable enough until halftime (minimum 20 FGA per team before the regression line even activates).</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 3 -->
+  <div class="step-phase">
+    <div class="phase-header">
+      <div class="phase-num">PHASE 3</div>
+      <div class="phase-title">Halftime — The Decision</div>
+      <div class="phase-time">First 1–3 minutes of halftime break</div>
+    </div>
+
+    <div class="step-grid">
+      <div class="step-card" style="border-color:var(--gold-dim);">
+        <div class="step-number" style="background:rgba(221,182,125,0.15);color:var(--gold);border-color:var(--gold-dim);">7</div>
+        <div class="step-content">
+          <div class="step-heading" style="color:var(--gold);">Read the ESX panels + check the KairosEdge score — all must pass</div>
+          <p>This is the moment. Read each ESX indicator panel, then check the KairosEdge composite score:</p>
+          <div class="checklist">
+            <div class="check-item"><span class="check-icon">①</span> <strong>ESX Indicator 1:</strong> Is the leading team's eFG% deviation above +5? Is the gap between red and green lines wide?</div>
+            <div class="check-item"><span class="check-icon">②</span> <strong>ESX Indicator 2:</strong> Is the composite index above zero? (Trailing team is structurally competitive)</div>
+            <div class="check-item"><span class="check-icon">③</span> <strong>ESX Indicator 3:</strong> Is the sustainability score below 40? (Leading team's offense is fragile)</div>
+            <div class="check-item"><span class="check-icon">④</span> <strong>ESX Indicator 5:</strong> Is the blue KairosEdge fair value line at least 8¢ above the gold ESX price line?</div>
+            <div class="check-item"><span class="check-icon">⑤</span> <strong>KairosEdge engine:</strong> Is the overall composite score ≥ 78/100?</div>
+            <div class="check-item"><span class="check-icon">⑥</span> <strong>Hard filters:</strong> Deficit under 19 points? Paint differential under 12? Turnovers under 7?</div>
+          </div>
+          <p style="margin-top:10px;"><strong style="color:var(--safe);">All green? → BUY.</strong> <strong style="color:var(--danger);">Any fail? → PASS.</strong> Don't negotiate with the checklist.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">8</div>
+        <div class="step-content">
+          <div class="step-heading">Place the trade — maker-only limit order</div>
+          <p>On ESX, find the trailing team's full-game winner market. Place a <strong>maker-only limit order</strong> (not a taker order — taker fees eat 15–35% of your edge). Your limit price should be at or slightly below the current ask. Entry window is the first 1–3 minutes of halftime — after that, institutional market makers (SIG, DRW, Jump) start repricing and the edge shrinks.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">9</div>
+        <div class="step-content">
+          <div class="step-heading">Size the position</div>
+          <p>Use half-Kelly sizing. For a single trade, that's roughly 2.25–3% of bankroll. If you have multiple trades tonight, use quarter-Kelly per trade and cap total exposure at 2× a single position size. NBA game contracts have ~0.73 correlation — don't treat them as independent.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">10</div>
+        <div class="step-content">
+          <div class="step-heading">Record your entry price</div>
+          <p>Write down the exact fill price. This becomes the white dashed line on ESX Indicator 5. You need it to calculate your P&L and to track CLV (closing line value) — which is the only true long-term edge validator. If your entry price is consistently better than the closing price, you have a real edge regardless of individual win/loss results.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 4 -->
+  <div class="step-phase">
+    <div class="phase-header">
+      <div class="phase-num">PHASE 4</div>
+      <div class="phase-title">Second Half — Monitor and Exit</div>
+      <div class="phase-time">Q3 through exit</div>
+    </div>
+
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-number">11</div>
+        <div class="step-content">
+          <div class="step-heading">Check ESX Indicator 4 (Comeback Capacity) to set your patience level</div>
+          <p>This is the first thing to check when Q3 starts. It tells you how long to hold:</p>
+          <div class="checklist">
+            <div class="check-item"><span class="check-icon" style="color:var(--safe);">▸</span> <strong>Score 65+:</strong> Be patient. This team has the tools to close fast. Target mid-to-late Q3 for your exit.</div>
+            <div class="check-item"><span class="check-icon" style="color:var(--gold);">▸</span> <strong>Score 40–64:</strong> Standard patience. Take the first good window that appears.</div>
+            <div class="check-item"><span class="check-icon" style="color:var(--danger);">▸</span> <strong>Score below 40:</strong> Short leash. Exit at the first sign of profit. This team grinds slowly.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">12</div>
+        <div class="step-content">
+          <div class="step-heading">Watch ESX Indicator 1 — is the regression actually happening?</div>
+          <p>The red line (leading team's eFG% deviation) should be trending back toward zero during Q3. This is mean reversion in real time — the leading team's shooting is normalizing. As it drops, the score compresses, and the market reprices the trailing team's contract upward. That's your profit building.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">13</div>
+        <div class="step-content">
+          <div class="step-heading">Mid-Q3: recheck ESX Indicators 2 and 3</div>
+          <p>Quick gut check — is ESX Indicator 2 still above zero? Is ESX Indicator 3 still below 40? If both are holding, the thesis is intact. Keep holding. If Indicator 2 has dropped below zero (trailing team is now losing structurally too), consider an early exit — the picture has changed.</p>
+        </div>
+      </div>
+
+      <div class="step-card" style="border-color:var(--gold-dim);">
+        <div class="step-number" style="background:rgba(221,182,125,0.15);color:var(--gold);border-color:var(--gold-dim);">14</div>
+        <div class="step-content">
+          <div class="step-heading" style="color:var(--gold);">Watch ESX Indicator 5 for the exit signal</div>
+          <p>This is the exit trigger chart. You're watching two things:</p>
+          <div class="checklist">
+            <div class="check-item"><span class="check-icon" style="color:var(--blue);">▸</span> <strong>Lines converging:</strong> The gold ESX price line is rising toward the blue KairosEdge fair value line. When they meet, the edge is gone. Sell.</div>
+            <div class="check-item"><span class="check-icon" style="color:var(--gold);">▸</span> <strong>Gold spikes above blue:</strong> The trailing team goes on a run and the market overreacts — ESX price briefly exceeds KairosEdge fair value. This is the <em>ideal</em> exit. Sell into the spike immediately.</div>
+          </div>
+          <p style="margin-top:8px;"><strong>Laddered exit:</strong> Sell 50% of your position when the market reaches KairosEdge fair value. Hold the other 50% for further Q3 repricing or a trailing team run.</p>
+        </div>
+      </div>
+
+      <div class="step-card" style="border-color:rgba(255,68,68,0.3);">
+        <div class="step-number" style="background:rgba(255,68,68,0.12);color:var(--danger);border-color:rgba(255,68,68,0.3);">15</div>
+        <div class="step-content">
+          <div class="step-heading" style="color:var(--danger);">Hard exit: 4:00 remaining in Q4 — no exceptions</div>
+          <p>The Brownian motion model that powers the KairosEdge fair value calculation breaks down in the final minutes. Teams start fouling intentionally, managing the clock, and playing fundamentally different basketball. The math no longer applies. If you're still holding at the 4:00 mark in Q4, sell everything at whatever price is available. This is a non-negotiable rule.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 5 -->
+  <div class="step-phase">
+    <div class="phase-header">
+      <div class="phase-num">PHASE 5</div>
+      <div class="phase-title">Post-Game</div>
+      <div class="phase-time">After the final buzzer</div>
+    </div>
+
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-number">16</div>
+        <div class="step-content">
+          <div class="step-heading">Record the result and calculate CLV</div>
+          <p>Log: entry price, exit price, profit/loss (after fees), and the <strong>closing line value</strong> — what the contract was priced at when you exited or at game end. If your entry prices are consistently below the closing line, you have a verified edge. CLV is the single most important metric. Win rate alone means nothing at small sample sizes.</p>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-number">17</div>
+        <div class="step-content">
+          <div class="step-heading">Review: did the ESX indicators behave as expected?</div>
+          <p>Look back at the 5 ESX panels. Did the regression actually happen (Ind 1 red line drop)? Did the structural picture hold (Ind 2 stay positive)? Did the market eventually reprice (Ind 5 lines converge)? This review is how you build intuition over time. After 50+ trades you'll start reading the panels instinctively.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ FLOW: HOW ALL 5 WORK TOGETHER ════════════ -->
+<div class="flow-section">
+  <div class="flow-title">How the 5 ESX Indicators + KairosEdge Work Together</div>
+  <p style="font-size:14px;color:var(--text-dim);margin-bottom:28px;max-width:640px;">
+    The ESX panels aren't independent — they form a decision chain. KairosEdge reads all 5 and generates the composite score. Here's the read order from tip-off through exit.
+  </p>
+
+  <div class="flow-grid">
+    <!-- Step 1 -->
+    <div class="flow-step">
+      <div class="flow-line-col">
+        <div class="flow-dot" style="color:var(--red);border-color:var(--red);background:rgba(255,85,85,0.1);">1</div>
+        <div class="flow-connector" style="background: linear-gradient(var(--red), var(--blue));"></div>
+      </div>
+      <div class="flow-content">
+        <h3 style="color:var(--red);">ESX Indicator 1 — Regression Index</h3>
+        <p><strong>Check at halftime.</strong> Is there a gap? Is the leading team's red line above +5? Is the trailing team's green line below −3? If yes, there's a regression signal. If both lines are near zero, no trade — the shooting difference is real.</p>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="flow-step">
+      <div class="flow-line-col">
+        <div class="flow-dot" style="color:var(--blue);border-color:var(--blue);background:rgba(68,170,255,0.1);">2</div>
+        <div class="flow-connector" style="background: linear-gradient(var(--blue), var(--purple));"></div>
+      </div>
+      <div class="flow-content">
+        <h3 style="color:var(--blue);">ESX Indicator 2 — Possession Advantage</h3>
+        <p><strong>Validate the signal.</strong> Is the blue line above zero? If yes, the trailing team is structurally competitive — they're losing because of shooting, not because they're outmatched. If below zero, suppress the trade. The deficit is real.</p>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="flow-step">
+      <div class="flow-line-col">
+        <div class="flow-dot" style="color:var(--purple);border-color:var(--purple);background:rgba(204,85,255,0.1);">3</div>
+        <div class="flow-connector" style="background: linear-gradient(var(--purple), var(--market-gold));"></div>
+      </div>
+      <div class="flow-content">
+        <h3 style="color:var(--purple);">ESX Indicator 3 — Efficiency Sustainability</h3>
+        <p><strong>Confirm the fragility.</strong> Is the leading team's sustainability score below 40? That means their hot shooting is built on unassisted threes and low FT rate — the most fragile profile. If it's above 70, their offense is real. Reduce size or pass.</p>
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="flow-step">
+      <div class="flow-line-col">
+        <div class="flow-dot" style="color:var(--market-gold);border-color:var(--market-gold);background:rgba(221,182,125,0.1);">4</div>
+        <div class="flow-connector" style="background: linear-gradient(var(--market-gold), var(--green));"></div>
+      </div>
+      <div class="flow-content">
+        <h3 style="color:var(--market-gold);">ESX Indicator 5 — Market Edge</h3>
+        <p><strong>Confirm the edge exists.</strong> Is the blue KairosEdge fair value line at least 8¢ above the gold ESX price? If yes, the market is underpricing the comeback probability. KairosEdge generates the BUY signal. Place the trade — maker-only limit order, within the first 1–3 minutes of halftime.</p>
+      </div>
+    </div>
+
+    <!-- Step 5 -->
+    <div class="flow-step">
+      <div class="flow-line-col">
+        <div class="flow-dot" style="color:var(--green);border-color:var(--green);background:rgba(0,221,136,0.1);">5</div>
+        <div class="flow-connector" style="background: linear-gradient(var(--green), transparent);"></div>
+      </div>
+      <div class="flow-content">
+        <h3 style="color:var(--green);">ESX Indicator 4 — Comeback Capacity → Exit Timing</h3>
+        <p><strong>Calibrate your patience.</strong> High capacity (65+) = wait for full repricing, target mid-Q3 exit. Low capacity (below 40) = take the first profitable window. Then watch ESX Indicator 5 — when the lines converge or gold crosses above blue, sell immediately.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ QUICK REF ════════════ -->
+<div class="scenario" style="margin-top:12px;">
+  <div class="scenario-label">Quick Reference — ESX Indicators + KairosEdge Signal Checklist</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:12px;">
+    <div>
+      <div style="font-size:14px;font-weight:700;color:var(--safe);margin-bottom:8px;">✓ BUY when all of these are true:</div>
+      <div style="font-size:13px;color:var(--text-dim);line-height:1.8;">
+        ESX Ind 1: Lead eFG% deviation > +5<br>
+        ESX Ind 2: Composite index above zero<br>
+        ESX Ind 3: Sustainability score below 40<br>
+        ESX Ind 5: KairosEdge fair value ≥ 8¢ above ESX price<br>
+        KairosEdge composite score ≥ 78/100<br>
+        Deficit under 19 points<br>
+        Maker-only order, first 1–3 min of halftime
+      </div>
+    </div>
+    <div>
+      <div style="font-size:14px;font-weight:700;color:var(--danger);margin-bottom:8px;">✕ EXIT when any of these happen:</div>
+      <div style="font-size:13px;color:var(--text-dim);line-height:1.8;">
+        Ind 5: Gold line meets or crosses above blue<br>
+        ESX Ind 5: ESX price spikes above KairosEdge fair value<br>
+        ESX Ind 2: Composite drops below zero mid-game<br>
+        4:00 remaining in Q4 (forced — Brownian breaks)<br>
+        ESX Ind 4 score below 40 → exit at first profit<br>
+        Laddered TP: sell 50% at KairosEdge fair value, hold 50% for Q3
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<!-- ════════════ FOOTER ════════════ -->
+<div class="footer">
+  ESX Indicators + KairosEdge · Visual Reference · Confidential
+</div>
+
+<!-- ════════════ CHART SCRIPTS ════════════ -->
+<script>
+// Shared config
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 10;
+Chart.defaults.color = '#6b7a8d';
+
+const GAME_LABELS = [];
+for (let q = 1; q <= 4; q++) {
+  for (let m = 12; m >= 1; m--) {
+    GAME_LABELS.push(`Q${q} ${m}:00`);
+  }
+}
+
+// Time index helpers
+const HT = 24; // halftime index
+const ENTRY = 25; // entry point (start of Q3)
+
+function makeAnnotations(color) {
+  return {
+    halftime: {
+      type: 'line',
+      xMin: HT, xMax: HT,
+      borderColor: 'rgba(255,255,255,0.2)',
+      borderWidth: 1,
+      borderDash: [4, 4],
+      label: {
+        display: true,
+        content: 'HALFTIME',
+        position: 'start',
+        font: { size: 9, weight: 600, family: "'JetBrains Mono'" },
+        color: 'rgba(255,255,255,0.35)',
+        backgroundColor: 'transparent',
+        padding: 2
+      }
+    },
+    entry: {
+      type: 'line',
+      xMin: ENTRY, xMax: ENTRY,
+      borderColor: color || 'rgba(221,182,125,0.5)',
+      borderWidth: 2,
+      borderDash: [6, 3],
+      label: {
+        display: true,
+        content: '▶ ENTRY',
+        position: 'end',
+        font: { size: 9, weight: 700, family: "'JetBrains Mono'" },
+        color: color || '#DDB67D',
+        backgroundColor: 'rgba(10,8,4,0.8)',
+        padding: { x: 6, y: 3 },
+        borderRadius: 3
+      }
+    }
+  };
+}
+
+function baseOpts(annotations) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 0 },
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#1a1714',
+        borderColor: '#2a2519',
+        borderWidth: 1,
+        titleFont: { family: "'JetBrains Mono'", size: 11 },
+        bodyFont: { family: "'JetBrains Mono'", size: 11 },
+        padding: 10,
+        cornerRadius: 4
+      },
+      annotation: { annotations: annotations || {} }
+    },
+    scales: {
+      x: {
+        grid: { color: 'rgba(42,37,25,0.3)', lineWidth: 0.5 },
+        ticks: {
+          maxTicksLimit: 8,
+          font: { size: 9 },
+          callback: function(val) {
+            const l = GAME_LABELS[val];
+            if (!l) return '';
+            if (l.includes('12:00')) return l.replace(' 12:00','');
+            return '';
+          }
+        }
+      },
+      y: {
+        grid: { color: 'rgba(42,37,25,0.3)', lineWidth: 0.5 },
+        ticks: { font: { size: 9 } }
+      }
+    }
+  };
+}
+
+// ── Deterministic data (locked — callouts match exactly) ──
+
+// Seeded PRNG so charts look organic but never change
+function seededRng(seed) {
+  let s = seed;
+  return function() {
+    s = (s * 16807 + 0) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+const rng = seededRng(42);
+
+// Indicator 1: Regression Index (BUY scenario)
+function genInd1() {
+  const lead = [], trail = [];
+  const r = seededRng(101);
+  for (let i = 0; i < HT; i++) {
+    const t = i / HT;
+    lead.push(+(t * 10.5 + Math.sin(i*0.4)*1.2 + (r()-0.5)*0.8).toFixed(1));
+    trail.push(+(-t * 6.2 + Math.cos(i*0.3)*0.8 + (r()-0.5)*0.6).toFixed(1));
+  }
+  const leadPeak = lead[lead.length-1];
+  const trailBottom = trail[trail.length-1];
+  for (let i = 0; i < 24; i++) {
+    const t = i / 24;
+    const decay = Math.pow(t, 0.7);
+    lead.push(+(leadPeak * (1 - decay*0.85) + Math.sin(i*0.5)*0.6 + (r()-0.5)*0.5).toFixed(1));
+    trail.push(+(trailBottom * (1 - decay*0.75) + Math.cos(i*0.4)*0.5 + (r()-0.5)*0.4).toFixed(1));
+  }
+  return { lead, trail };
+}
+
+// Indicator 2: Possession Advantage
+function genInd2() {
+  const composite = [], paint = [];
+  const r = seededRng(202);
+  for (let i = 0; i < 48; i++) {
+    const base = i < HT ? 2.5 + Math.sin(i*0.25)*2 + (r()-0.5)*1.5
+                         : 3.5 + Math.sin(i*0.2)*2.5 + (r()-0.5)*1.2;
+    composite.push(+base.toFixed(1));
+    paint.push(+(base * 0.65 + (r()-0.5)*2).toFixed(1));
+  }
+  return { composite, paint };
+}
+
+// Indicator 3: Sustainability Score
+function genInd3() {
+  const score = [], ema = [];
+  const r = seededRng(303);
+  for (let i = 0; i < 48; i++) {
+    let val;
+    if (i < 8) val = 50 - i*1.5 + (r()-0.5)*3;
+    else if (i < HT) val = 30 + Math.sin(i*0.3)*4 + (r()-0.5)*3;
+    else val = 32 + (i-HT)*0.3 + Math.sin(i*0.35)*3 + (r()-0.5)*2.5;
+    val = Math.max(10, Math.min(90, val));
+    score.push(+val.toFixed(0));
+  }
+  let e = score[0];
+  for (let i = 0; i < score.length; i++) {
+    e = e * 0.8 + score[i] * 0.2;
+    ema.push(+e.toFixed(0));
+  }
+  return { score, ema };
+}
+
+// Indicator 4: Comeback Capacity
+function genInd4() {
+  const capacity = [], threeRate = [];
+  const r = seededRng(404);
+  for (let i = 0; i < 48; i++) {
+    let val;
+    if (i < HT) val = 55 + i*0.6 + Math.sin(i*0.4)*3 + (r()-0.5)*2.5;
+    else val = 68 + Math.sin((i-HT)*0.35)*4 + (r()-0.5)*3;
+    val = Math.max(20, Math.min(95, val));
+    capacity.push(+val.toFixed(0));
+    threeRate.push(+(val * 0.55 + (r()-0.5)*5).toFixed(0));
+  }
+  return { capacity, threeRate };
+}
+
+// Indicator 5: Market Edge — with deterministic exit crossover at index 38 (mid-Q4)
+function genInd5() {
+  const fair = [], market = [];
+  const EXIT_IDX = 38; // where lines cross = exit signal
+  for (let i = 0; i < 48; i++) {
+    let fv, mp;
+    if (i < HT) {
+      const decline = i / HT;
+      fv = 55 - decline * 12 + Math.sin(i*0.3)*2;
+      mp = fv - 3 - decline * 5 + Math.sin(i*0.25)*1.5;
+    } else if (i <= EXIT_IDX) {
+      const recovery = (i - HT) / (EXIT_IDX - HT);
+      fv = 46 + recovery * 12 + Math.sin(i*0.3)*1.2;
+      mp = 34 + recovery * 24 + Math.sin(i*0.25)*1.5;
+    } else {
+      // Post-exit: market stays above or near fair value
+      const post = (i - EXIT_IDX) / (47 - EXIT_IDX);
+      fv = 58 + post * 4 + Math.sin(i*0.3)*1;
+      mp = 60 + post * 5 + Math.sin(i*0.25)*1.5;
+    }
+    fv = Math.max(5, Math.min(80, fv));
+    mp = Math.max(5, Math.min(80, mp));
+    fair.push(+fv.toFixed(0));
+    market.push(+mp.toFixed(0));
+  }
+  return { fair, market };
+}
+
+// ── PASS scenario data (IND 1 weak gap, IND 2 negative) ──
+function genPassInd1() {
+  const lead = [], trail = [];
+  const r = seededRng(501);
+  for (let i = 0; i < HT; i++) {
+    const t = i / HT;
+    lead.push(+(t * 3.5 + Math.sin(i*0.4)*0.8 + (r()-0.5)*0.6).toFixed(1));
+    trail.push(+(-t * 1.8 + Math.cos(i*0.3)*0.6 + (r()-0.5)*0.5).toFixed(1));
+  }
+  for (let i = 0; i < 24; i++) {
+    lead.push(+(lead[HT-1] * 0.9 + Math.sin(i*0.5)*0.5 + (r()-0.5)*0.4).toFixed(1));
+    trail.push(+(trail[HT-1] * 0.85 + Math.cos(i*0.4)*0.4 + (r()-0.5)*0.3).toFixed(1));
+  }
+  return { lead, trail };
+}
+
+function genPassInd2() {
+  const composite = [], paint = [];
+  const r = seededRng(502);
+  for (let i = 0; i < 48; i++) {
+    const base = i < HT ? -3.5 + Math.sin(i*0.25)*1.5 + (r()-0.5)*1.2
+                         : -4.2 + Math.sin(i*0.2)*1.8 + (r()-0.5)*1;
+    composite.push(+base.toFixed(1));
+    paint.push(+(base * 0.7 + (r()-0.5)*1.5).toFixed(1));
+  }
+  return { composite, paint };
+}
+
+// ── LOSS scenario data (entered correctly, regression didn't happen) ──
+function genLossInd1() {
+  const lead = [], trail = [];
+  const r = seededRng(601);
+  for (let i = 0; i < HT; i++) {
+    const t = i / HT;
+    lead.push(+(t * 9.0 + Math.sin(i*0.4)*1.0 + (r()-0.5)*0.7).toFixed(1));
+    trail.push(+(-t * 5.0 + Math.cos(i*0.3)*0.7 + (r()-0.5)*0.5).toFixed(1));
+  }
+  // Regression DOESN'T happen — lead stays hot
+  for (let i = 0; i < 24; i++) {
+    const t = i / 24;
+    lead.push(+(lead[HT-1] * (1 - t*0.15) + Math.sin(i*0.5)*0.8 + (r()-0.5)*0.6).toFixed(1));
+    trail.push(+(trail[HT-1] * (1 - t*0.3) + Math.cos(i*0.4)*0.5 + (r()-0.5)*0.4).toFixed(1));
+  }
+  return { lead, trail };
+}
+
+function genLossInd3() {
+  const score = [], ema = [];
+  const r = seededRng(603);
+  for (let i = 0; i < 48; i++) {
+    let val;
+    if (i < 8) val = 50 + i*2 + (r()-0.5)*3;
+    else if (i < HT) val = 68 + Math.sin(i*0.3)*4 + (r()-0.5)*3;
+    else val = 72 + Math.sin(i*0.35)*3 + (r()-0.5)*2;
+    val = Math.max(10, Math.min(95, val));
+    score.push(+val.toFixed(0));
+  }
+  let e = score[0];
+  for (let i = 0; i < score.length; i++) {
+    e = e * 0.8 + score[i] * 0.2;
+    ema.push(+e.toFixed(0));
+  }
+  return { score, ema };
+}
+
+function genLossInd5() {
+  const fair = [], market = [];
+  for (let i = 0; i < 48; i++) {
+    let fv, mp;
+    if (i < HT) {
+      const decline = i / HT;
+      fv = 55 - decline * 14 + Math.sin(i*0.3)*2;
+      mp = fv - 2 - decline * 4 + Math.sin(i*0.25)*1.5;
+    } else {
+      // No recovery — both lines drift down
+      const drift = (i - HT) / 24;
+      fv = 41 - drift * 18 + Math.sin(i*0.3)*1.5;
+      mp = 33 - drift * 16 + Math.sin(i*0.25)*1;
+    }
+    fv = Math.max(3, Math.min(80, fv));
+    mp = Math.max(3, Math.min(80, mp));
+    fair.push(+fv.toFixed(0));
+    market.push(+mp.toFixed(0));
+  }
+  return { fair, market };
+}
+
+// ── Render charts ──
+
+const d1 = genInd1();
+new Chart(document.getElementById('chart1'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      {
+        label: 'Lead eFG% Dev',
+        data: d1.lead,
+        borderColor: '#FF5555',
+        backgroundColor: 'rgba(255,85,85,0.08)',
+        borderWidth: 2,
+        fill: false,
+        pointRadius: 0,
+        tension: 0.3
+      },
+      {
+        label: 'Trail eFG% Dev',
+        data: d1.trail,
+        borderColor: '#00DD88',
+        backgroundColor: 'rgba(0,221,136,0.08)',
+        borderWidth: 2,
+        fill: false,
+        pointRadius: 0,
+        tension: 0.3
+      }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      ...makeAnnotations('#FF5555'),
+      zero: {
+        type: 'line',
+        yMin: 0, yMax: 0,
+        borderColor: 'rgba(255,255,255,0.12)',
+        borderWidth: 1,
+        borderDash: [3, 3]
+      }
+    }),
+    scales: {
+      ...baseOpts().scales,
+      y: {
+        ...baseOpts().scales.y,
+        title: { display: true, text: 'eFG% Deviation (pp)', font: { size: 9 }, color: '#6b7a8d' }
+      }
+    }
+  }
+});
+
+const d2 = genInd2();
+new Chart(document.getElementById('chart2'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      {
+        label: 'Composite',
+        data: d2.composite,
+        borderColor: '#44AAFF',
+        backgroundColor: (ctx) => {
+          const val = ctx.raw;
+          return val >= 0 ? 'rgba(68,170,255,0.08)' : 'rgba(255,68,68,0.08)';
+        },
+        borderWidth: 2.5,
+        fill: true,
+        pointRadius: 0,
+        tension: 0.3
+      },
+      {
+        label: 'Paint',
+        data: d2.paint,
+        borderColor: 'rgba(68,170,255,0.2)',
+        borderWidth: 1,
+        borderDash: [3, 3],
+        fill: false,
+        pointRadius: 0,
+        tension: 0.3
+      }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      ...makeAnnotations('#44AAFF'),
+      zero: {
+        type: 'line',
+        yMin: 0, yMax: 0,
+        borderColor: 'rgba(255,255,255,0.2)',
+        borderWidth: 1.5,
+        borderDash: [4, 3]
+      },
+      dangerBox: {
+        type: 'box',
+        yMin: -10, yMax: 0,
+        backgroundColor: 'rgba(255,68,68,0.04)',
+        borderWidth: 0
+      }
+    }),
+    scales: {
+      ...baseOpts().scales,
+      y: {
+        ...baseOpts().scales.y,
+        title: { display: true, text: 'Structural Index', font: { size: 9 }, color: '#6b7a8d' }
+      }
+    }
+  }
+});
+
+const d3 = genInd3();
+new Chart(document.getElementById('chart3'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      {
+        label: 'Score',
+        data: d3.score,
+        borderColor: '#CC55FF',
+        backgroundColor: 'rgba(204,85,255,0.06)',
+        borderWidth: 2,
+        fill: true,
+        pointRadius: 0,
+        tension: 0.3
+      },
+      {
+        label: 'EMA(10)',
+        data: d3.ema,
+        borderColor: 'rgba(204,85,255,0.4)',
+        borderWidth: 1.5,
+        borderDash: [5, 3],
+        fill: false,
+        pointRadius: 0,
+        tension: 0.4
+      }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      ...makeAnnotations('#CC55FF'),
+      fragile: {
+        type: 'box',
+        yMin: 0, yMax: 40,
+        backgroundColor: 'rgba(255,68,68,0.04)',
+        borderWidth: 0,
+        label: {
+          display: true,
+          content: 'FRAGILE',
+          position: { x: 'start', y: 'center' },
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" },
+          color: 'rgba(255,68,68,0.25)',
+          backgroundColor: 'transparent'
+        }
+      },
+      durable: {
+        type: 'box',
+        yMin: 70, yMax: 100,
+        backgroundColor: 'rgba(0,221,136,0.03)',
+        borderWidth: 0,
+        label: {
+          display: true,
+          content: 'DURABLE',
+          position: { x: 'start', y: 'center' },
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" },
+          color: 'rgba(0,221,136,0.2)',
+          backgroundColor: 'transparent'
+        }
+      }
+    }),
+    scales: {
+      ...baseOpts().scales,
+      y: {
+        ...baseOpts().scales.y,
+        min: 0, max: 100,
+        title: { display: true, text: 'Sustainability (0–100)', font: { size: 9 }, color: '#6b7a8d' }
+      }
+    }
+  }
+});
+
+const d4 = genInd4();
+new Chart(document.getElementById('chart4'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      {
+        label: 'Capacity',
+        data: d4.capacity,
+        borderColor: '#00DD88',
+        backgroundColor: 'rgba(0,221,136,0.06)',
+        borderWidth: 2.5,
+        fill: true,
+        pointRadius: 0,
+        tension: 0.3
+      },
+      {
+        label: '3PA Rate',
+        data: d4.threeRate,
+        borderColor: 'rgba(0,221,136,0.25)',
+        borderWidth: 1,
+        borderDash: [3, 3],
+        fill: false,
+        pointRadius: 0,
+        tension: 0.3
+      }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      ...makeAnnotations('#00DD88'),
+      baseline: {
+        type: 'line',
+        yMin: 50, yMax: 50,
+        borderColor: 'rgba(255,255,255,0.12)',
+        borderWidth: 1,
+        borderDash: [3, 3],
+        label: {
+          display: true,
+          content: 'AVG (50)',
+          position: 'end',
+          font: { size: 8, family: "'JetBrains Mono'" },
+          color: 'rgba(255,255,255,0.25)',
+          backgroundColor: 'transparent'
+        }
+      }
+    }),
+    scales: {
+      ...baseOpts().scales,
+      y: {
+        ...baseOpts().scales.y,
+        min: 15, max: 100,
+        title: { display: true, text: 'Capacity (0–100)', font: { size: 9 }, color: '#6b7a8d' }
+      }
+    }
+  }
+});
+
+const d5 = genInd5();
+new Chart(document.getElementById('chart5'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      {
+        label: 'KairosEdge Fair Value',
+        data: d5.fair,
+        borderColor: '#44AAFF',
+        backgroundColor: 'rgba(68,170,255,0.06)',
+        borderWidth: 2.5,
+        fill: '+1',
+        pointRadius: 0,
+        tension: 0.3
+      },
+      {
+        label: 'ESX Price',
+        data: d5.market,
+        borderColor: '#DDB67D',
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        borderDash: [6, 3],
+        fill: false,
+        pointRadius: 0,
+        tension: 0.3
+      }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      ...makeAnnotations('#DDB67D'),
+      entryPrice: {
+        type: 'line',
+        yMin: 34, yMax: 34,
+        borderColor: 'rgba(255,255,255,0.3)',
+        borderWidth: 1,
+        borderDash: [4, 4],
+        label: {
+          display: true,
+          content: 'ENTRY 34¢',
+          position: 'end',
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" },
+          color: 'rgba(255,255,255,0.45)',
+          backgroundColor: 'rgba(10,8,4,0.8)',
+          padding: { x: 6, y: 2 },
+          borderRadius: 2
+        }
+      },
+      exitPoint: {
+        type: 'line',
+        xMin: 38, xMax: 38,
+        borderColor: '#22cc88',
+        borderWidth: 2,
+        borderDash: [6, 3],
+        label: {
+          display: true,
+          content: '◼ EXIT — lines crossed',
+          position: 'start',
+          font: { size: 9, weight: 700, family: "'JetBrains Mono'" },
+          color: '#22cc88',
+          backgroundColor: 'rgba(10,8,4,0.85)',
+          padding: { x: 8, y: 4 },
+          borderRadius: 3
+        }
+      },
+      exitPrice: {
+        type: 'line',
+        yMin: 58, yMax: 58,
+        xMin: 38, xMax: 47,
+        borderColor: 'rgba(34,204,136,0.25)',
+        borderWidth: 1,
+        borderDash: [3, 3],
+        label: {
+          display: true,
+          content: 'SOLD 58¢',
+          position: 'end',
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" },
+          color: 'rgba(34,204,136,0.6)',
+          backgroundColor: 'rgba(10,8,4,0.8)',
+          padding: { x: 6, y: 2 },
+          borderRadius: 2
+        }
+      }
+    }),
+    scales: {
+      ...baseOpts().scales,
+      y: {
+        ...baseOpts().scales.y,
+        min: 0, max: 85,
+        title: { display: true, text: 'Price (¢)', font: { size: 9 }, color: '#6b7a8d' },
+        ticks: { ...baseOpts().scales.y.ticks, callback: v => v + '¢' }
+      }
+    }
+  }
+});
+
+// ══════ PASS SCENARIO CHARTS ══════
+
+const pd1 = genPassInd1();
+new Chart(document.getElementById('pass-chart1'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'Lead eFG% Dev', data: pd1.lead, borderColor: '#FF5555', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 },
+      { label: 'Trail eFG% Dev', data: pd1.trail, borderColor: '#00DD88', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      zero: { type: 'line', yMin: 0, yMax: 0, borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderDash: [3,3] },
+      weakZone: {
+        type: 'box', yMin: -3, yMax: 3,
+        backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 0,
+        label: { display: true, content: 'NO SIGNAL — gap too narrow', position: { x: 'center', y: 'center' },
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" }, color: 'rgba(255,68,68,0.4)', backgroundColor: 'transparent' }
+      }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, min: -8, max: 8 } }
+  }
+});
+
+const pd2 = genPassInd2();
+new Chart(document.getElementById('pass-chart2'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'Composite', data: pd2.composite, borderColor: '#44AAFF', backgroundColor: 'rgba(255,68,68,0.06)', borderWidth: 2.5, fill: true, pointRadius: 0, tension: 0.3 },
+      { label: 'Paint', data: pd2.paint, borderColor: 'rgba(68,170,255,0.2)', borderWidth: 1, borderDash: [3,3], fill: false, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      zero: { type: 'line', yMin: 0, yMax: 0, borderColor: 'rgba(255,255,255,0.2)', borderWidth: 1.5, borderDash: [4,3] },
+      dangerBox: { type: 'box', yMin: -10, yMax: 0, backgroundColor: 'rgba(255,68,68,0.06)', borderWidth: 0 }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, min: -8, max: 4 } }
+  }
+});
+
+// ══════ LOSS SCENARIO CHARTS ══════
+
+const ld1 = genLossInd1();
+new Chart(document.getElementById('loss-chart1'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'Lead eFG% Dev', data: ld1.lead, borderColor: '#FF5555', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 },
+      { label: 'Trail eFG% Dev', data: ld1.trail, borderColor: '#00DD88', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      entry: makeAnnotations('#FF5555').entry,
+      zero: { type: 'line', yMin: 0, yMax: 0, borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderDash: [3,3] },
+      noRegression: {
+        type: 'label', xValue: 36, yValue: 6,
+        content: ['Red line stayed hot →', 'regression never came'],
+        font: { size: 9, family: "'JetBrains Mono'" }, color: 'rgba(255,68,68,0.5)',
+        backgroundColor: 'rgba(10,8,4,0.7)', padding: 6, borderRadius: 3
+      }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y } }
+  }
+});
+
+const ld3 = genLossInd3();
+new Chart(document.getElementById('loss-chart3'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'Score', data: ld3.score, borderColor: '#CC55FF', backgroundColor: 'rgba(204,85,255,0.06)', borderWidth: 2, fill: true, pointRadius: 0, tension: 0.3 },
+      { label: 'EMA(10)', data: ld3.ema, borderColor: 'rgba(204,85,255,0.4)', borderWidth: 1.5, borderDash: [5,3], fill: false, pointRadius: 0, tension: 0.4 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      entry: makeAnnotations('#CC55FF').entry,
+      fragile: { type: 'box', yMin: 0, yMax: 40, backgroundColor: 'rgba(255,68,68,0.03)', borderWidth: 0 },
+      durable: { type: 'box', yMin: 70, yMax: 100, backgroundColor: 'rgba(0,221,136,0.03)', borderWidth: 0,
+        label: { display: true, content: '⚠ DURABLE ZONE — this was the warning', position: { x: 'center', y: 'center' },
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" }, color: 'rgba(0,221,136,0.35)', backgroundColor: 'transparent' }
+      }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, min: 0, max: 100 } }
+  }
+});
+
+const ld5 = genLossInd5();
+new Chart(document.getElementById('loss-chart5'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'KairosEdge Fair Value', data: ld5.fair, borderColor: '#44AAFF', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 },
+      { label: 'ESX Price', data: ld5.market, borderColor: '#DDB67D', borderWidth: 2, borderDash: [6,3], fill: false, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      entry: makeAnnotations('#DDB67D').entry,
+      entryPrice: {
+        type: 'line', yMin: 36, yMax: 36,
+        borderColor: 'rgba(255,255,255,0.2)', borderWidth: 1, borderDash: [4,4],
+        label: { display: true, content: 'ENTRY 36¢', position: 'end',
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" }, color: 'rgba(255,255,255,0.35)',
+          backgroundColor: 'rgba(10,8,4,0.8)', padding: { x: 6, y: 2 }, borderRadius: 2 }
+      },
+      forcedExit: {
+        type: 'line', xMin: 44, xMax: 44,
+        borderColor: 'rgba(255,68,68,0.6)', borderWidth: 2, borderDash: [6,3],
+        label: { display: true, content: '◼ FORCED EXIT 4:00 Q4', position: 'start',
+          font: { size: 9, weight: 700, family: "'JetBrains Mono'" }, color: '#ff4444',
+          backgroundColor: 'rgba(10,8,4,0.85)', padding: { x: 8, y: 4 }, borderRadius: 3 }
+      },
+      lossLabel: {
+        type: 'label', xValue: 45, yValue: 28,
+        content: ['Sold 22¢ → loss of 14¢/contract'],
+        font: { size: 9, family: "'JetBrains Mono'" }, color: 'rgba(255,68,68,0.6)',
+        backgroundColor: 'rgba(10,8,4,0.7)', padding: 6, borderRadius: 3
+      }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, min: 0, max: 65, ticks: { ...baseOpts().scales.y.ticks, callback: v => v + '¢' } } }
+  }
+});
+
+// ── PASS scenario charts ──
+const pd1 = genPassInd1();
+new Chart(document.getElementById('pass-chart1'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'Lead eFG% Dev', data: pd1.lead, borderColor: '#FF5555', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 },
+      { label: 'Trail eFG% Dev', data: pd1.trail, borderColor: '#00DD88', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      zero: { type: 'line', yMin: 0, yMax: 0, borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderDash: [3,3] },
+      weakZone: {
+        type: 'box', yMin: -3, yMax: 3,
+        backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 0,
+        label: { display: true, content: 'NO SIGNAL — gap too narrow', position: { x: 'center', y: 'center' },
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" }, color: 'rgba(255,68,68,0.35)', backgroundColor: 'transparent' }
+      }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, title: { display: true, text: 'eFG% Deviation (pp)', font: { size: 9 }, color: '#6b7a8d' } } }
+  }
+});
+
+const pd2 = genPassInd2();
+new Chart(document.getElementById('pass-chart2'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'Composite', data: pd2.composite, borderColor: '#44AAFF', backgroundColor: 'rgba(255,68,68,0.06)', borderWidth: 2.5, fill: true, pointRadius: 0, tension: 0.3 },
+      { label: 'Paint', data: pd2.paint, borderColor: 'rgba(68,170,255,0.2)', borderWidth: 1, borderDash: [3,3], fill: false, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      zero: { type: 'line', yMin: 0, yMax: 0, borderColor: 'rgba(255,255,255,0.2)', borderWidth: 1.5, borderDash: [4,3] },
+      dangerBox: { type: 'box', yMin: -10, yMax: 0, backgroundColor: 'rgba(255,68,68,0.06)', borderWidth: 0 }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, title: { display: true, text: 'Structural Index', font: { size: 9 }, color: '#6b7a8d' } } }
+  }
+});
+
+// ── LOSS scenario charts ──
+const ld1 = genLossInd1();
+new Chart(document.getElementById('loss-chart1'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'Lead eFG% Dev', data: ld1.lead, borderColor: '#FF5555', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 },
+      { label: 'Trail eFG% Dev', data: ld1.trail, borderColor: '#00DD88', borderWidth: 2, fill: false, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      entry: makeAnnotations('#FF5555').entry,
+      zero: { type: 'line', yMin: 0, yMax: 0, borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderDash: [3,3] },
+      stayedHot: {
+        type: 'label', xValue: 36, yValue: 7,
+        content: ['RED LINE NEVER DROPPED'],
+        font: { size: 9, weight: 700, family: "'JetBrains Mono'" },
+        color: 'rgba(255,68,68,0.5)', backgroundColor: 'rgba(10,8,4,0.8)',
+        padding: { x: 6, y: 3 }, borderRadius: 3
+      }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, title: { display: true, text: 'eFG% Deviation (pp)', font: { size: 9 }, color: '#6b7a8d' } } }
+  }
+});
+
+const ld5 = genLossInd5();
+new Chart(document.getElementById('loss-chart5'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'KairosEdge Fair Value', data: ld5.fair, borderColor: '#44AAFF', borderWidth: 2.5, fill: false, pointRadius: 0, tension: 0.3 },
+      { label: 'ESX Price', data: ld5.market, borderColor: '#DDB67D', borderWidth: 2, borderDash: [6,3], fill: false, pointRadius: 0, tension: 0.3 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      entry: makeAnnotations('#DDB67D').entry,
+      entryPrice: {
+        type: 'line', yMin: 36, yMax: 36,
+        borderColor: 'rgba(255,255,255,0.2)', borderWidth: 1, borderDash: [4,4],
+        label: { display: true, content: 'ENTRY 36¢', position: 'end',
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" }, color: 'rgba(255,255,255,0.35)',
+          backgroundColor: 'rgba(10,8,4,0.8)', padding: { x: 6, y: 2 }, borderRadius: 2 }
+      },
+      forcedExit: {
+        type: 'line', xMin: 44, xMax: 44,
+        borderColor: 'rgba(255,68,68,0.6)', borderWidth: 2, borderDash: [6,3],
+        label: { display: true, content: '◼ FORCED EXIT 4:00 Q4', position: 'start',
+          font: { size: 9, weight: 700, family: "'JetBrains Mono'" }, color: '#ff4444',
+          backgroundColor: 'rgba(10,8,4,0.85)', padding: { x: 8, y: 4 }, borderRadius: 3 }
+      }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, min: 0, max: 65,
+      title: { display: true, text: 'Price (¢)', font: { size: 9 }, color: '#6b7a8d' },
+      ticks: { ...baseOpts().scales.y.ticks, callback: v => v + '¢' } } }
+  }
+});
+
+const ld3 = genLossInd3();
+new Chart(document.getElementById('loss-chart3'), {
+  type: 'line',
+  data: {
+    labels: GAME_LABELS,
+    datasets: [
+      { label: 'Score', data: ld3.score, borderColor: '#CC55FF', backgroundColor: 'rgba(204,85,255,0.06)', borderWidth: 2, fill: true, pointRadius: 0, tension: 0.3 },
+      { label: 'EMA(10)', data: ld3.ema, borderColor: 'rgba(204,85,255,0.4)', borderWidth: 1.5, borderDash: [5,3], fill: false, pointRadius: 0, tension: 0.4 }
+    ]
+  },
+  options: {
+    ...baseOpts({
+      halftime: makeAnnotations().halftime,
+      entry: makeAnnotations('#CC55FF').entry,
+      fragile: { type: 'box', yMin: 0, yMax: 40, backgroundColor: 'rgba(255,68,68,0.04)', borderWidth: 0,
+        label: { display: true, content: 'FRAGILE', position: { x: 'start', y: 'center' },
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" }, color: 'rgba(255,68,68,0.25)', backgroundColor: 'transparent' } },
+      durable: { type: 'box', yMin: 70, yMax: 100, backgroundColor: 'rgba(0,221,136,0.03)', borderWidth: 0,
+        label: { display: true, content: 'DURABLE — WARNING', position: { x: 'start', y: 'center' },
+          font: { size: 9, weight: 600, family: "'JetBrains Mono'" }, color: 'rgba(255,68,68,0.35)', backgroundColor: 'transparent' } }
+    }),
+    scales: { ...baseOpts().scales, y: { ...baseOpts().scales.y, min: 0, max: 100,
+      title: { display: true, text: 'Sustainability (0–100)', font: { size: 9 }, color: '#6b7a8d' } } }
+  }
+});
+</script>
+</body>
+</html>

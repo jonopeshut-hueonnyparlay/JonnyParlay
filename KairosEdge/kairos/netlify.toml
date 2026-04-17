@@ -1,0 +1,28 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# Public Kalshi market data — no auth needed, just CORS bypass
+# NOTE: api.elections.kalshi.com covers ALL Kalshi markets (NBA, sports, etc.) despite the name
+[[redirects]]
+  from = "/api/kalshi/*"
+  to = "https://api.elections.kalshi.com/trade-api/v2/:splat"
+  status = 200
+  force = true
+  [redirects.headers]
+    X-Forwarded-For = ""
+
+# Authenticated order placement — handled by Netlify Function
+# (already available at /.netlify/functions/kalshi-order, alias below)
+[[redirects]]
+  from = "/api/order"
+  to = "/.netlify/functions/kalshi-order"
+  status = 200
+  force = true
+
+# Polymarket CORS bypass
+[[redirects]]
+  from = "/api/polymarket/*"
+  to = "https://gamma-api.polymarket.com/:splat"
+  status = 200
+  force = true

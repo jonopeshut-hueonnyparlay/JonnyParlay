@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JonnyParlayPicks - Betting System</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e6edf3;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        h1 { font-size: 28px; color: #fff; margin-bottom: 5px; }
+        h1 span { color: #ff6b6b; }
+        .subtitle { color: #aaa; font-size: 14px; }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+        button.tab-btn {
+            padding: 10px 20px;
+            border: 2px solid transparent;
+            background: rgba(255,255,255,0.05);
+            color: #aaa;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 6px;
+            transition: all 0.3s;
+        }
+        button.tab-btn:hover { background: rgba(255,255,255,0.1); }
+        button.tab-btn.active {
+            background: #ff6b6b;
+            color: white;
+            border-color: #ff6b6b;
+        }
+        
+        .tab-content { display: none; animation: fadeIn 0.3s; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        
+        .card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .card h2 { margin-bottom: 15px; color: #fff; }
+        
+        .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
+        button.btn, input.search {
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.08);
+            color: #e6edf3;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        button.btn:hover { background: rgba(255,255,255,0.15); }
+        button.btn-primary {
+            background: #ff6b6b;
+            border-color: #ff6b6b;
+            color: white;
+        }
+        button.btn-primary:hover { background: #ff5252; }
+        input.search { flex: 1; min-width: 200px; }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(255,255,255,0.02);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            font-size: 14px;
+        }
+        th { background: rgba(255,255,255,0.05); font-weight: 600; color: #aaa; }
+        tr:hover { background: rgba(255,255,255,0.08); }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-over { background: #1abc9c; color: #fff; }
+        .badge-under { background: #e74c3c; color: #fff; }
+        .badge-pending { background: #f39c12; color: #fff; }
+        .badge-win { background: #27ae60; color: #fff; }
+        .badge-loss { background: #c0392b; color: #fff; }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            animation: fadeIn 0.2s;
+        }
+        .modal.active { display: flex; align-items: center; justify-content: center; }
+        .modal-content {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 500px;
+            border: 1px solid rgba(255,255,255,0.1);
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .modal-close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            cursor: pointer;
+        }
+        .modal-close:hover { color: #fff; }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #aaa;
+            font-size: 13px;
+        }
+        input, select {
+            width: 100%;
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #e6edf3;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #ff6b6b;
+            background: rgba(255,255,255,0.08);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-label { color: #aaa; font-size: 12px; margin-bottom: 5px; }
+        .stat-value { font-size: 24px; font-weight: bold; color: #ff6b6b; }
+        .stat-value.green { color: #1abc9c; }
+        
+        .empty, .loading { text-align: center; padding: 40px; color: #666; }
+        .error { color: #e74c3c; }
+        .success { color: #27ae60; }
+        
+        .message {
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        .message.success { background: rgba(39,174,96,0.2); color: #1abc9c; border: 1px solid #1abc9c; }
+        .message.error { background: rgba(231,76,60,0.2); color: #e74c3c; border: 1px solid #e74c3c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Jonny<span>Parlay</span>Picks</h1>
+            <p class="subtitle">Professional NBA Player Props Betting System</p>
+        </header>
+        
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('props')">📊 Props</button>
+            <button class="tab-btn" onclick="switchTab('bets')">📝 My Bets</button>
+            <button class="tab-btn" onclick="switchTab('stats')">📈 Stats</button>
+        </div>
+        
+        <!-- Props Tab -->
+        <div id="props" class="tab-content active">
+            <div class="card">
+                <h2>Available Props</h2>
+                <div class="controls">
+                    <button class="btn btn-primary" onclick="loadProps()">🔄 Reload Props</button>
+                    <input class="search" id="search-player" placeholder="Search player..." onkeyup="renderProps()">
+                </div>
+                <div id="props-message"></div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Player</th>
+                            <th>Stat</th>
+                            <th>Line</th>
+                            <th>Projection</th>
+                            <th>Edge %</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="props-body">
+                        <tr><td colspan="6" class="loading">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- My Bets Tab -->
+        <div id="bets" class="tab-content">
+            <div class="card">
+                <h2>Tracked Bets</h2>
+                <div class="controls">
+                    <button class="btn btn-primary" onclick="loadBets()">🔄 Reload Bets</button>
+                </div>
+                <div id="bets-message"></div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Player</th>
+                            <th>Stat</th>
+                            <th>Pick</th>
+                            <th>Line</th>
+                            <th>Odds</th>
+                            <th>Units</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bets-body">
+                        <tr><td colspan="8" class="loading">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Stats Tab -->
+        <div id="stats" class="tab-content">
+            <div class="card">
+                <h2>Your Statistics</h2>
+                <button class="btn btn-primary" onclick="loadStats()" style="margin-bottom: 15px;">🔄 Reload Stats</button>
+                <div id="stats-message"></div>
+                <div id="stats-container" class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Total Bets</div>
+                        <div class="stat-value" id="stat-total">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Wins</div>
+                        <div class="stat-value green" id="stat-wins">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Losses</div>
+                        <div class="stat-value" id="stat-losses">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-value" id="stat-wr">0%</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Profit</div>
+                        <div class="stat-value green" id="stat-profit">$0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">ROI</div>
+                        <div class="stat-value" id="stat-roi">0%</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Track Bet Modal -->
+    <div id="trackModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeTrackModal()">&times;</span>
+            <h2 style="margin-bottom: 20px;">Track New Bet</h2>
+            
+            <div class="form-group">
+                <label>Player:</label>
+                <input type="text" id="track-player" readonly>
+            </div>
+            <div class="form-group">
+                <label>Stat:</label>
+                <input type="text" id="track-stat" readonly>
+            </div>
+            <div class="form-group">
+                <label>Pick:</label>
+                <select id="track-pick">
+                    <option value="Over">Over</option>
+                    <option value="Under">Under</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Line:</label>
+                <input type="number" id="track-line" readonly>
+            </div>
+            <div class="form-group">
+                <label>Odds:</label>
+                <input type="number" id="track-odds" value="-110" step="1">
+            </div>
+            <div class="form-group">
+                <label>Edge %:</label>
+                <input type="number" id="track-edge" value="0" step="0.1">
+            </div>
+            <div class="form-group">
+                <label>Projection:</label>
+                <input type="number" id="track-projection" value="0" step="0.1">
+            </div>
+            <div class="form-group">
+                <label>Units:</label>
+                <input type="number" id="track-units" value="1.0" step="0.1" min="0.1" max="10">
+            </div>
+            <div class="form-group">
+                <label>Notes (Optional):</label>
+                <input type="text" id="track-notes" placeholder="Add any notes about this bet">
+            </div>
+            
+            <div id="track-message"></div>
+            
+            <button class="btn btn-primary" onclick="saveBet()" style="width: 100%; padding: 12px; margin-bottom: 10px;">💾 Save Bet</button>
+            <button class="btn" onclick="closeTrackModal()" style="width: 100%; padding: 12px;">Cancel</button>
+        </div>
+    </div>
+    
+    <script>
+        let allProps = [];
+        let allBets = [];
+        
+        // Switch tabs
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById(tab).classList.add('active');
+            event.target.classList.add('active');
+            
+            if (tab === 'props') loadProps();
+            if (tab === 'bets') loadBets();
+            if (tab === 'stats') loadStats();
+        }
+        
+        // Load props
+        async function loadProps() {
+            const msg = document.getElementById('props-message');
+            const body = document.getElementById('props-body');
+            
+            msg.innerHTML = '';
+            body.innerHTML = '<tr><td colspan="6" class="loading">Loading props...</td></tr>';
+            
+            try {
+                const res = await fetch('/api/props');
+                allProps = await res.json();
+                
+                if (!Array.isArray(allProps)) throw new Error('Invalid response');
+                if (allProps.length === 0) {
+                    body.innerHTML = '<tr><td colspan="6" class="empty">No props available</td></tr>';
+                    return;
+                }
+                
+                msg.innerHTML = `<div class="message success">✓ ${allProps.length} props loaded</div>`;
+                renderProps();
+            } catch (e) {
+                msg.innerHTML = `<div class="message error">✗ Error: ${e.message}</div>`;
+                body.innerHTML = `<tr><td colspan="6" class="error">Failed to load props</td></tr>`;
+            }
+        }
+        
+        // Render props
+        function renderProps() {
+            const search = (document.getElementById('search-player').value || '').toLowerCase();
+            const body = document.getElementById('props-body');
+            
+            let filtered = allProps;
+            if (search) {
+                filtered = allProps.filter(p => (p.player || '').toLowerCase().includes(search));
+            }
+            
+            if (filtered.length === 0) {
+                body.innerHTML = '<tr><td colspan="6" class="empty">No props match your search</td></tr>';
+                return;
+            }
+            
+            body.innerHTML = filtered.map(p => `
+                <tr>
+                    <td>${p.player || 'N/A'}</td>
+                    <td>${p.stat || 'N/A'}</td>
+                    <td>${p.line || 'N/A'}</td>
+                    <td>${p.projection || 'N/A'}</td>
+                    <td>${(p.edge || 0).toFixed(2)}%</td>
+                    <td><button class="btn btn-primary" onclick="openTrackModal('${p.player}', '${p.stat}', ${p.line}, ${p.projection || 0}, ${p.edge || 0})">Track</button></td>
+                </tr>
+            `).join('');
+        }
+        
+        // Open track modal
+        function openTrackModal(player, stat, line, proj, edge) {
+            document.getElementById('track-player').value = player;
+            document.getElementById('track-stat').value = stat;
+            document.getElementById('track-line').value = line;
+            document.getElementById('track-projection').value = proj;
+            document.getElementById('track-edge').value = edge;
+            document.getElementById('track-pick').value = 'Over';
+            document.getElementById('track-units').value = '1.0';
+            document.getElementById('track-notes').value = '';
+            document.getElementById('track-message').innerHTML = '';
+            document.getElementById('trackModal').classList.add('active');
+        }
+        
+        // Close modal
+        function closeTrackModal() {
+            document.getElementById('trackModal').classList.remove('active');
+        }
+        
+        // Save bet
+        async function saveBet() {
+            const msg = document.getElementById('track-message');
+            msg.innerHTML = '<div class="message">Saving...</div>';
+            
+            try {
+                const res = await fetch('/api/track', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        player: document.getElementById('track-player').value,
+                        stat: document.getElementById('track-stat').value,
+                        pick: document.getElementById('track-pick').value,
+                        line: parseFloat(document.getElementById('track-line').value),
+                        odds: parseInt(document.getElementById('track-odds').value),
+                        edge: parseFloat(document.getElementById('track-edge').value),
+                        projection: parseFloat(document.getElementById('track-projection').value),
+                        units: parseFloat(document.getElementById('track-units').value),
+                        notes: document.getElementById('track-notes').value
+                    })
+                });
+                
+                if (res.ok) {
+                    msg.innerHTML = '<div class="message success">✓ Bet saved successfully!</div>';
+                    setTimeout(() => {
+                        closeTrackModal();
+                        loadBets();
+                    }, 1000);
+                } else {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+            } catch (e) {
+                msg.innerHTML = `<div class="message error">✗ Error: ${e.message}</div>`;
+            }
+        }
+        
+        // Load bets
+        async function loadBets() {
+            const msg = document.getElementById('bets-message');
+            const body = document.getElementById('bets-body');
+            
+            msg.innerHTML = '';
+            body.innerHTML = '<tr><td colspan="8" class="loading">Loading bets...</td></tr>';
+            
+            try {
+                const res = await fetch('/api/bets');
+                const data = await res.json();
+                
+                // Handle both array and object response formats
+                allBets = Array.isArray(data) ? data : (data.bets || []);
+                
+                if (allBets.length === 0) {
+                    msg.innerHTML = '<div class="message success">No bets tracked yet. Start by tracking a prop!</div>';
+                    body.innerHTML = '<tr><td colspan="8" class="empty">No bets</td></tr>';
+                    return;
+                }
+                
+                msg.innerHTML = `<div class="message success">✓ ${allBets.length} bets loaded</div>`;
+                body.innerHTML = allBets.map(b => `
+                    <tr>
+                        <td>${b.game_date || b.date || 'N/A'}</td>
+                        <td>${b.player || 'N/A'}</td>
+                        <td>${b.stat || 'N/A'}</td>
+                        <td><span class="badge badge-${b.pick ? b.pick.toLowerCase() : 'pending'}">${b.pick || 'N/A'}</span></td>
+                        <td>${b.line || 'N/A'}</td>
+                        <td>${b.odds || 'N/A'}</td>
+                        <td>${b.units || 'N/A'}</td>
+                        <td><span class="badge badge-${b.result || 'pending'}">${b.result || 'pending'}</span></td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                msg.innerHTML = `<div class="message error">✗ Error: ${e.message}</div>`;
+                body.innerHTML = `<tr><td colspan="8" class="error">Failed to load bets</td></tr>`;
+            }
+        }
+        
+        // Load stats
+        async function loadStats() {
+            const msg = document.getElementById('stats-message');
+            msg.innerHTML = '';
+            
+            try {
+                const res = await fetch('/api/stats');
+                const stats = await res.json();
+                
+                document.getElementById('stat-total').textContent = stats.total_bets || 0;
+                document.getElementById('stat-wins').textContent = stats.wins || 0;
+                document.getElementById('stat-losses').textContent = stats.losses || 0;
+                document.getElementById('stat-wr').textContent = ((stats.win_rate || 0).toFixed(1)) + '%';
+                document.getElementById('stat-profit').textContent = '$' + ((stats.total_profit || 0).toFixed(2));
+                document.getElementById('stat-roi').textContent = ((stats.roi || 0).toFixed(2)) + '%';
+                
+                msg.innerHTML = '<div class="message success">✓ Stats updated</div>';
+            } catch (e) {
+                msg.innerHTML = `<div class="message error">✗ Error: ${e.message}</div>`;
+            }
+        }
+        
+        // Load on startup
+        window.onload = () => {
+            loadProps();
+            loadBets();
+            loadStats();
+        };
+    </script>
+</body>
+</html>

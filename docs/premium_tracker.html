@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>picksbyjonny — Premium Card Tracker</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0a;
+    color: #e0e0e0;
+    padding: 24px;
+    min-height: 100vh;
+  }
+  .header {
+    text-align: center;
+    margin-bottom: 32px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #222;
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.5px;
+  }
+  .header h1 span { color: #f59e0b; }
+  .header p {
+    color: #666;
+    font-size: 13px;
+    margin-top: 6px;
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .card {
+    background: #141414;
+    border: 1px solid #222;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .card-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #666;
+    margin-bottom: 8px;
+  }
+  .card-value {
+    font-size: 32px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .card-sub {
+    font-size: 14px;
+    color: #888;
+    margin-top: 4px;
+  }
+  .positive { color: #22c55e; }
+  .negative { color: #ef4444; }
+  .section {
+    margin-bottom: 32px;
+  }
+  .section h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #222;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    background: #141414;
+    color: #888;
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #222;
+  }
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  tr:hover { background: #141414; }
+  .chart-container {
+    background: #141414;
+    border: 1px solid #222;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 32px;
+    height: 320px;
+    position: relative;
+  }
+  .chart-container canvas { width: 100% !important; height: 100% !important; }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 768px) {
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge-gold { background: #422006; color: #f59e0b; }
+  .badge-blue { background: #0c1929; color: #3b82f6; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>picksbyjonny</span> Premium Card Tracker</h1>
+  <p>Last updated: April 14, 2026 (auto-graded) &bull; 3 days tracked</p>
+</div>
+
+<!-- KPI Cards -->
+<div class="cards">
+  <div class="card">
+    <div class="card-label"><span class="badge badge-gold">Premium 5</span> Record</div>
+    <div class="card-value">8-7</div>
+    <div class="card-sub">53.3% win rate</div>
+  </div>
+  <div class="card">
+    <div class="card-label"><span class="badge badge-gold">Premium 5</span> P&L</div>
+    <div class="card-value positive">+0.91u</div>
+    <div class="card-sub">Streak: 1W</div>
+  </div>
+  <div class="card">
+    <div class="card-label"><span class="badge badge-blue">Full Card</span> Record</div>
+    <div class="card-value">13-13</div>
+    <div class="card-sub">50.0% win rate</div>
+  </div>
+  <div class="card">
+    <div class="card-label"><span class="badge badge-blue">Full Card</span> P&L</div>
+    <div class="card-value negative">-0.82u</div>
+    <div class="card-sub">Streak: 1W</div>
+  </div>
+</div>
+
+<!-- Cumulative P&L Chart -->
+<div class="section">
+  <h2>Cumulative P&L</h2>
+  <div class="chart-container">
+    <canvas id="plChart"></canvas>
+  </div>
+</div>
+
+<!-- Daily Breakdown -->
+<div class="section">
+  <h2>Daily Breakdown</h2>
+  <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th><span class="badge badge-gold">Prem</span> Record</th>
+          <th>Win%</th>
+          <th>P&L</th>
+          <th><span class="badge badge-blue">Full</span> Record</th>
+          <th>Win%</th>
+          <th>P&L</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+            <td>2026-04-13</td>
+            <td>2-3</td>
+            <td>40%</td>
+            <td class="negative">-1.25u</td>
+            <td>2-3</td>
+            <td>40%</td>
+            <td class="negative">-1.25u</td>
+        </tr>
+        <tr>
+            <td>2026-04-12</td>
+            <td>3-2</td>
+            <td>60%</td>
+            <td class="positive">+0.75u</td>
+            <td>6-5</td>
+            <td>55%</td>
+            <td class="positive">+0.08u</td>
+        </tr>
+        <tr>
+            <td>2026-04-10</td>
+            <td>3-2</td>
+            <td>60%</td>
+            <td class="positive">+1.40u</td>
+            <td>5-5</td>
+            <td>50%</td>
+            <td class="positive">+0.35u</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Breakdowns -->
+<div class="grid-2">
+  <div class="section">
+    <h2>Premium by Sport</h2>
+    <table>
+      <thead><tr><th>Sport</th><th>Record</th><th>Win%</th><th>P&L</th></tr></thead>
+      <tbody>
+        <tr>
+            <td>MLB</td>
+            <td>2-0</td>
+            <td>100%</td>
+            <td class="positive">+1.54u</td>
+        </tr>
+        <tr>
+            <td>NBA</td>
+            <td>4-2</td>
+            <td>67%</td>
+            <td class="positive">+2.36u</td>
+        </tr>
+        <tr>
+            <td>NHL</td>
+            <td>2-5</td>
+            <td>29%</td>
+            <td class="negative">-3.00u</td>
+        </tr></tbody>
+    </table>
+  </div>
+  <div class="section">
+    <h2>Premium by Stat</h2>
+    <table>
+      <thead><tr><th>Stat</th><th>Record</th><th>Win%</th><th>P&L</th></tr></thead>
+      <tbody>
+        <tr>
+            <td>AST</td>
+            <td>2-0</td>
+            <td>100%</td>
+            <td class="positive">+2.15u</td>
+        </tr>
+        <tr>
+            <td>HRR</td>
+            <td>2-0</td>
+            <td>100%</td>
+            <td class="positive">+1.54u</td>
+        </tr>
+        <tr>
+            <td>REB</td>
+            <td>1-0</td>
+            <td>100%</td>
+            <td class="positive">+1.09u</td>
+        </tr>
+        <tr>
+            <td>ML_FAV</td>
+            <td>0-1</td>
+            <td>0%</td>
+            <td class="negative">-0.75u</td>
+        </tr>
+        <tr>
+            <td>PTS</td>
+            <td>1-2</td>
+            <td>33%</td>
+            <td class="negative">-0.88u</td>
+        </tr>
+        <tr>
+            <td>SOG</td>
+            <td>0-3</td>
+            <td>0%</td>
+            <td class="negative">-3.00u</td>
+        </tr>
+        <tr>
+            <td>SPREAD</td>
+            <td>2-2</td>
+            <td>50%</td>
+            <td class="positive">+0.49u</td>
+        </tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Best / Worst -->
+<div class="cards" style="margin-top:16px;">
+  <div class="card">
+    <div class="card-label">Best Premium Day</div>
+    <div class="card-value positive">+1.40u</div>
+    <div class="card-sub">2026-04-10 (3-2)</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Worst Premium Day</div>
+    <div class="card-value negative">-1.25u</div>
+    <div class="card-sub">2026-04-13 (2-3)</div>
+  </div>
+</div>
+
+<script>
+const premData = [{"date": "2026-04-10", "pl": 1.4}, {"date": "2026-04-12", "pl": 2.16}, {"date": "2026-04-13", "pl": 0.91}];
+const fullData = [{"date": "2026-04-10", "pl": 0.35}, {"date": "2026-04-12", "pl": 0.43}, {"date": "2026-04-13", "pl": -0.82}];
+
+const ctx = document.getElementById('plChart').getContext('2d');
+new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: premData.map(d => d.date.slice(5)),
+    datasets: [
+      {
+        label: 'Premium 5',
+        data: premData.map(d => d.pl),
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 4,
+        pointBackgroundColor: '#f59e0b',
+        borderWidth: 2,
+      },
+      {
+        label: 'Full Card',
+        data: fullData.map(d => d.pl),
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 4,
+        pointBackgroundColor: '#3b82f6',
+        borderWidth: 2,
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: { color: '#888', font: { size: 12 } }
+      }
+    },
+    scales: {
+      x: {
+        ticks: { color: '#555', font: { size: 11 } },
+        grid: { color: '#1a1a1a' }
+      },
+      y: {
+        ticks: {
+          color: '#555',
+          font: { size: 11 },
+          callback: function(v) { return v.toFixed(1) + 'u'; }
+        },
+        grid: { color: '#1a1a1a' }
+      }
+    }
+  }
+});
+</script>
+
+</body>
+</html>

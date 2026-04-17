@@ -1,0 +1,46 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# Public Kalshi market data — no auth needed, just CORS bypass
+# NOTE: api.elections.kalshi.com covers ALL Kalshi markets (NBA, sports, etc.) despite the name
+[[redirects]]
+  from = "/api/kalshi/*"
+  to = "https://api.elections.kalshi.com/trade-api/v2/:splat"
+  status = 200
+  force = true
+  [redirects.headers]
+    X-Forwarded-For = ""
+
+# Authenticated order placement — handled by Netlify Function
+# (already available at /.netlify/functions/kalshi-order, alias below)
+[[redirects]]
+  from = "/api/order"
+  to = "/.netlify/functions/kalshi-order"
+  status = 200
+  force = true
+
+# Polymarket CORS bypass — Gamma API for market discovery
+[[redirects]]
+  from = "/api/polymarket/*"
+  to = "https://gamma-api.polymarket.com/:splat"
+  status = 200
+  force = true
+
+# Polymarket CLOB API proxy — live orderbook prices (P1-NEW-5)
+# Do NOT use Gamma API for prices — its outcomePrices field is cached/stale.
+# CLOB API provides real-time bid/ask for accurate mid-price calculation.
+[[redirects]]
+  from = "/api/polymarket-clob/*"
+  to = "https://clob.polymarket.com/:splat"
+  status = 200
+  force = true
+
+# Historical NBA pregame spreads — handled by Netlify Function
+# API key (ODDS_API_KEY) stored in Netlify env vars, never exposed to browser
+# P0-NEW-3 fix: replaces ESPN pickcenter fallback in backtest pipeline
+[[redirects]]
+  from = "/api/odds-history"
+  to = "/.netlify/functions/odds-history"
+  status = 200
+  force = true
