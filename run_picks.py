@@ -166,12 +166,22 @@ MIN_BONUS_WIN_PROB = 0.65       # Minimum win probability to qualify for a bonus
 MIN_DAILY_LAY_PROB = 0.33       # Minimum combined cover probability before posting daily lay
 MIN_DAILY_LAY_MARGIN = 4.0      # Minimum projected margin (pts) for a team to qualify as a daily lay leg
 
-# ── KILLSHOT tier ─────────────────────────────────────────────
-KILLSHOT_SCORE_FLOOR  = 90.0   # Minimum Pick Score to auto-qualify
-KILLSHOT_MANUAL_FLOOR = 75.0   # Minimum score to allow manual --killshot promote
-KILLSHOT_WEEKLY_CAP   = 3      # Max KILLSHOTs per rolling 7 days
-# Sizing: replaces VAKE entirely for KILLSHOT picks
-KILLSHOT_SIZING = [(110, 999, 5.0), (100, 110, 4.0), (90, 100, 3.0)]
+# ── KILLSHOT tier (v2 — safer/tighter; see CLAUDE.md) ─────────
+# Auto-qualify gate: ALL must pass
+KILLSHOT_SCORE_FLOOR    = 90.0                             # Pick Score floor
+KILLSHOT_TIER_REQUIRED  = "T1"                             # v2: strict T1 only (excludes T1B, T2, T3)
+KILLSHOT_WIN_PROB_FLOOR = 0.65                             # v2: hard win-prob floor
+KILLSHOT_ODDS_MIN       = -200                             # v2: no razor-thin chalk
+KILLSHOT_ODDS_MAX       =  110                             # v2: no live dogs
+KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "REB", "AST", "SOG", "3PM"})  # v2: mainline counting stats only
+# Manual override (via --killshot NAME): bypasses v2 filters but still counts toward weekly cap
+KILLSHOT_MANUAL_FLOOR   = 75.0                             # Minimum score to allow manual promote
+KILLSHOT_WEEKLY_CAP     = 2                                # v2: was 3 — rarer = more signal
+# Sizing (v2): replaces VAKE for KILLSHOT picks. Flat-ish — safer plays don't argue for bigger size.
+KILLSHOT_SIZE_BASE       = 3.0   # default
+KILLSHOT_SIZE_BUMP       = 4.0   # bump ceiling
+KILLSHOT_BUMP_WIN_PROB   = 0.70  # bump requires BOTH wp and edge
+KILLSHOT_BUMP_EDGE       = 0.06
 BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636209221566625/JonnyParlaylogoRedBlack.png"
 
 # Shadow sports — evaluated + logged internally but NEVER posted to Discord.
@@ -3804,15 +3814,50 @@ def _log_bonus_pick(pick, run_id, today_str, save=True):
 #  KILLSHOT TIER
 # ============================================================
 
-def _killshot_size(score):
-    """Return KILLSHOT unit size based on Pick Score.
+def _killshot_size(pick):
+    """Return KILLSHOT unit size per v2 rules.
+    3u default. Bumps to 4u iff win_prob >= KILLSHOT_BUMP_WIN_PROB AND edge >= KILLSHOT_BUMP_EDGE.
     Replaces VAKE entirely for KILLSHOT picks.
-    90–99 → 3u · 100–109 → 4u · 110+ → 5u
     """
-    for lo, hi, size in KILLSHOT_SIZING:
-        if lo <= score < hi:
-            return size
-    return 3.0  # fallback floor
+    try:
+        wp   = float(pick.get("win_prob", 0))
+        edge = float(pick.get("edge", 0))
+    except (TypeError, ValueError):
+        return KILLSHOT_SIZE_BASE
+    if wp >= KILLSHOT_BUMP_WIN_PROB and edge >= KILLSHOT_BUMP_EDGE:
+        return KILLSHOT_SIZE_BUMP
+    return KILLSHOT_SIZE_BASE
+
+
+def _passes_killshot_v2_gate(pick):
+    """v2 auto-qualify gate. ALL checks must pass.
+    Returns (True, "") on pass, (False, reason) on fail.
+    Manual promotes bypass this gate.
+    """
+    if pick.get("tier") != KILLSHOT_TIER_REQUIRED:
+        return False, f"tier={pick.get('tier')!r} (need {KILLSHOT_TIER_REQUIRED})"
+    try:
+        score = float(pick.get("pick_score", 0))
+    except (TypeError, ValueError):
+        return False, "pick_score unparseable"
+    if score < KILLSHOT_SCORE_FLOOR:
+        return False, f"score={score:.1f} < {KILLSHOT_SCORE_FLOOR}"
+    try:
+        wp = float(pick.get("win_prob", 0))
+    except (TypeError, ValueError):
+        return False, "win_prob unparseable"
+    if wp < KILLSHOT_WIN_PROB_FLOOR:
+        return False, f"win_prob={wp:.3f} < {KILLSHOT_WIN_PROB_FLOOR}"
+    try:
+        odds = int(pick.get("odds", 0))
+    except (TypeError, ValueError):
+        return False, "odds unparseable"
+    if odds < KILLSHOT_ODDS_MIN or odds > KILLSHOT_ODDS_MAX:
+        return False, f"odds={odds:+d} outside [{KILLSHOT_ODDS_MIN},{KILLSHOT_ODDS_MAX}]"
+    stat = pick.get("stat", "")
+    if stat not in KILLSHOT_STAT_ALLOW:
+        return False, f"stat={stat!r} not in allowlist"
+    return True, ""
 
 
 def _killshots_this_week(today_str):
@@ -3836,15 +3881,21 @@ def _killshots_this_week(today_str):
 
 
 def select_killshots(qualified, today_str, manual_players=None):
-    """Identify KILLSHOT picks from the qualified pool.
+    """Identify KILLSHOT picks from the qualified pool (v2 rules).
 
-    Criteria:
-      - Pick Score >= KILLSHOT_SCORE_FLOOR (90)
-      - Manual promote: pick_score >= KILLSHOT_MANUAL_FLOOR (75) + player in manual_players set
-      - Weekly cap: max KILLSHOT_WEEKLY_CAP (3) per rolling 7 days
-      - Never duplicate a pick already in the same run
+    Auto-qualify (all must pass):
+      - tier == T1 strictly (no T1B/T2/T3)
+      - pick_score >= KILLSHOT_SCORE_FLOOR (90)
+      - win_prob >= KILLSHOT_WIN_PROB_FLOOR (0.65)
+      - odds in [KILLSHOT_ODDS_MIN, KILLSHOT_ODDS_MAX] ([-200, +110])
+      - stat in KILLSHOT_STAT_ALLOW ({PTS, REB, AST, SOG, 3PM})
 
-    Returns list of picks with tier='KILLSHOT' and KILLSHOT sizing applied.
+    Manual promote (--killshot NAME): bypasses v2 gate but still requires
+      pick_score >= KILLSHOT_MANUAL_FLOOR (75) and counts toward weekly cap.
+
+    Weekly cap: max KILLSHOT_WEEKLY_CAP (2) per rolling 7 days.
+
+    Returns picks with tier='KILLSHOT' and v2 sizing applied.
     """
     manual_players = manual_players or set()
     # CLI passes last names ("Pastrnak,McDavid") but pick rows store full names.
@@ -3867,11 +3918,18 @@ def select_killshots(qualified, today_str, manual_players=None):
 
     candidates = []
     for p in qualified:
-        score = p.get("pick_score", 0)
+        try:
+            score = float(p.get("pick_score", 0))
+        except (TypeError, ValueError):
+            score = 0.0
         player = p.get("player", "")
-        auto_qualify   = score >= KILLSHOT_SCORE_FLOOR
-        manual_qualify = _player_matches(player) and score >= KILLSHOT_MANUAL_FLOOR
-        if auto_qualify or manual_qualify:
+        # Manual promote: bypass v2 filters, only require MANUAL_FLOOR + name match
+        if _player_matches(player) and score >= KILLSHOT_MANUAL_FLOOR:
+            candidates.append(p)
+            continue
+        # Auto-qualify: must pass full v2 gate
+        ok, _reason = _passes_killshot_v2_gate(p)
+        if ok:
             candidates.append(p)
 
     # Sort by score desc, apply cap
@@ -3881,7 +3939,7 @@ def select_killshots(qualified, today_str, manual_players=None):
     # Apply KILLSHOT tier + sizing
     for p in killshots:
         p["tier"] = "KILLSHOT"
-        p["size"] = _killshot_size(p.get("pick_score", 0))
+        p["size"] = _killshot_size(p)
 
     if killshots:
         print(f"  [KILLSHOT] {len(killshots)} pick(s) qualified (weekly total: {already_posted + len(killshots)}/{KILLSHOT_WEEKLY_CAP})")
@@ -4888,7 +4946,7 @@ def main():
     for p in premium:
         if (p["player"], p["stat"], p["line"]) in ks_keys:
             p["tier"] = "KILLSHOT"
-            p["size"] = _killshot_size(p.get("pick_score", 0))
+            p["size"] = _killshot_size(p)
 
     # Log only premium card picks — only on first run of the day (skip if card already posted)
     today_str_log = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
