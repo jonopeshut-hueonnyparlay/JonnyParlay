@@ -17,19 +17,33 @@ Options:
 import argparse
 import csv
 import math
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+# Canonical locked-reader helper — every pick_log reader must take the same
+# FileLock as the writers (audit H-8 / M-series).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pick_log_io import load_rows  # noqa: E402
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
+# Audit M-26 (closed Apr 21 2026): path resolution now routes through
+# engine/paths.py so a $JONNYPARLAY_ROOT override works the same way here
+# as in every other tool. The previous engine-folder-heuristic is preserved
+# as a fallback inside paths.py's _resolve_project_root, so invoking
+# ``python clv_report.py`` from either the repo root or engine/ still works
+# with no env var set.
+from paths import (  # noqa: E402
+    DATA_DIR,
+    PICK_LOG_PATH as PICK_LOG,
+    PICK_LOG_MANUAL_PATH as PICK_LOG_MANUAL,
+    PICK_LOG_MLB_PATH,
+)
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-# Support running from engine/ or root
-ROOT_DIR = SCRIPT_DIR if (SCRIPT_DIR / "data").exists() else SCRIPT_DIR.parent
-DATA_DIR = ROOT_DIR / "data"
-PICK_LOG  = DATA_DIR / "pick_log.csv"
 SHADOW_LOGS = {
-    "MLB": DATA_DIR / "pick_log_mlb.csv",
+    "MLB": PICK_LOG_MLB_PATH,
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -111,37 +125,33 @@ def roi_grade(roi):
 # ── Load ──────────────────────────────────────────────────────────────────────
 
 def load_all_picks(days, sport_filter, tier_filter, include_shadow=False):
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    all_picks = []
+    """Load graded (W/L/P) picks from the main + manual + optional shadow
+    logs, filtered to the last ``days`` days, optional sport, optional tier.
+
+    Manual picks are real bets so their P&L/ROI is included.  They have no
+    CLV data (capture_clv skips the manual log) so they contribute to
+    volume/ROI but don't move CLV averages.
+
+    Arch note #3: row-reading + filtering goes through
+    ``pick_log_io.load_rows`` — one audited open+lock+filter path.
+    """
+    cutoff = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days)).strftime("%Y-%m-%d")
 
     log_files = [PICK_LOG]
+    if PICK_LOG_MANUAL.exists():
+        log_files.append(PICK_LOG_MANUAL)
     if include_shadow:
         log_files += [p for p in SHADOW_LOGS.values() if p.exists()]
-    for log_path in log_files:
-        if not log_path.exists():
-            continue
-        with open(log_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                date = row.get("date", "")
-                if date < cutoff:
-                    continue
-                if sport_filter and row.get("sport", "").upper() != sport_filter.upper():
-                    continue
-                tier = row.get("tier", "")
-                if tier_filter and tier.upper() != tier_filter.upper():
-                    continue
-                # Skip ungraded, parlays, and incomplete rows
-                result = (row.get("result") or "").strip()
-                stat = (row.get("stat") or "").strip()
-                run_type = (row.get("run_type") or "").strip()
-                if not result or result not in ("W", "L", "P"):
-                    continue
-                if run_type == "daily_lay" or stat == "PARLAY":
-                    continue
-                all_picks.append(row)
 
-    return all_picks
+    return load_rows(
+        log_files,
+        sports=[sport_filter] if sport_filter else None,
+        tiers=[tier_filter] if tier_filter else None,
+        since=cutoff,
+        exclude_run_types=["daily_lay"],
+        exclude_stats=["PARLAY"],
+        graded_only=True,
+    )
 
 
 # ── Analysis ──────────────────────────────────────────────────────────────────

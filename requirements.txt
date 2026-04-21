@@ -1,0 +1,29 @@
+# JonnyParlay — runtime Python dependencies.
+# Install: pip install -r requirements.txt --break-system-packages
+#
+# Versions are left unpinned to match Jono's existing Windows install.
+# Pin with `pip freeze > requirements.lock.txt` once production is stable.
+
+# ── Hard dependencies ───────────────────────────────────────────────────────
+# Cross-process file locking. Used for pick_log write safety (run_picks +
+# capture_clv + grade_picks), Discord guard RMW (discord_guard), and the
+# CLV daemon single-instance guard. No soft fallback (audit C-1).
+filelock
+
+# HTTP client for The Odds API + Discord webhooks.
+requests
+
+# Timezone handling. `backports.zoneinfo` is fallback for Python < 3.9.
+# Python 3.9+ has stdlib `zoneinfo`, so no runtime install needed there.
+# backports.zoneinfo; python_version < "3.9"
+
+# ── Optional dependencies ───────────────────────────────────────────────────
+# Required for weekly_recap.py xlsx attachment + analyze_picks.py --export.
+openpyxl
+
+# Required for results_graphic.py PNG rendering.
+Pillow
+
+# Context sanity system (disabled by default; enable with --context).
+# Only needed when you pass --context to run_picks.py.
+# anthropic

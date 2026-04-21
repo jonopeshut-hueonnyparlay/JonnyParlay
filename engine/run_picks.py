@@ -24,8 +24,32 @@ USAGE:
   python run_picks.py nba.csv --cooldown "Reaves,Sheppard"  # R12 cooldown list
 """
 
-import os, sys, csv, json, time, argparse, math, unicodedata, re, logging
+import os, sys, csv, json, time, argparse, math, unicodedata, re, logging, tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+
+# ── filelock (hard dep, shared with capture_clv.py + grade_picks.py) ──────────
+# Audit C-1: filelock is a required dependency. Fallback removed — a missing
+# lock silently re-enables the CLV daemon / grader race conditions Section 2
+# and Section 3 were designed to close.
+try:
+    from filelock import FileLock, Timeout as _FileLockTimeout
+except ImportError as e:
+    raise ImportError(
+        "filelock is required for pick_log/Discord-guard safety. "
+        "Install it: pip install filelock --break-system-packages"
+    ) from e
+
+@contextmanager
+def _pick_log_lock(log_path, timeout=30):
+    """Acquire exclusive lock on pick_log to prevent CLV daemon/grader races."""
+    lock_path = str(log_path) + ".lock"
+    try:
+        with FileLock(lock_path, timeout=timeout):
+            yield
+    except _FileLockTimeout:
+        print(f"  ⚠ pick_log lock timeout after {timeout}s — writing anyway (race risk)")
+        yield
 
 try:
     import anthropic as _anthropic
@@ -41,22 +65,45 @@ from collections import defaultdict, OrderedDict
 #  CONFIG
 # ============================================================
 
-ODDS_API_KEY  = "adb07e9742307895c8d7f14264f52aee"
+# Secrets (Odds API key + Discord webhooks) load from env / .env via
+# secrets_config.py. See engine/secrets_config.py for the .env search path.
+from secrets_config import (
+    ODDS_API_KEY,
+    DISCORD_WEBHOOK_URL,
+    DISCORD_BONUS_WEBHOOK,
+    DISCORD_ALT_PARLAY_WEBHOOK,
+    DISCORD_RECAP_WEBHOOK,
+    DISCORD_KILLSHOT_WEBHOOK,
+    DISCORD_MONTHLY_WEBHOOK,
+    DISCORD_ANNOUNCE_WEBHOOK,
+)
+
 CSV_FOLDER    = os.path.expanduser("~/Documents/JonnyParlay/projections")
+# Additional drop locations scanned by find_csvs(). Preserves backward compatibility
+# with the primary CSV_FOLDER while also picking up SaberSim exports from Downloads.
+CSV_FOLDER_FALLBACKS = [
+    os.path.expanduser("~/Downloads/projections"),
+    os.path.expanduser("~/Downloads"),
+]
 OUTPUT_FOLDER = os.path.expanduser("~/Documents/JonnyParlay/data/picks")
 PICK_LOG_PATH = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log.csv")
+# Manual picks (entered via --log-manual) go to their own file so they don't
+# pollute the model-generated log, don't burn CLV API calls (markets often
+# missing), and don't confuse analysis of model performance.
+PICK_LOG_MANUAL_PATH = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log_manual.csv")
 LOG_FILE_PATH = os.path.expanduser("~/Documents/JonnyParlay/data/jonnyparlay.log")
 DISCORD_GUARD_FILE = os.path.expanduser("~/Documents/JonnyParlay/data/discord_posted.json")
 
 # ── File logger setup (file only — console output stays as print()) ───────────
-_log_dir = Path(LOG_FILE_PATH).parent
-_log_dir.mkdir(parents=True, exist_ok=True)
+# Rotation is wired through engine/log_setup.attach_rotating_handler so
+# jonnyparlay.log can't grow unbounded. Audit M-25 closed Apr 20 2026. The
+# helper is idempotent, so if grade_picks.py is imported alongside this module
+# (happens in some tests) we don't end up with duplicate handlers on the
+# "jonnyparlay" logger.
+from log_setup import attach_rotating_handler  # noqa: E402
 logger = logging.getLogger("jonnyparlay")
 logger.setLevel(logging.INFO)
-if not logger.handlers:
-    _fh = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
-    _fh.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-    logger.addHandler(_fh)
+attach_rotating_handler(logger, LOG_FILE_PATH)
 logger.propagate = False  # Don't bubble up to root logger (avoids duplicate prints)
 
 ODDS_BASE    = "https://api.the-odds-api.com/v4"
@@ -68,31 +115,56 @@ SPORT_KEYS = {"NBA": "basketball_nba", "NHL": "icehockey_nhl",
               "NCAAB": "basketball_ncaab", "NCAAF": "americanfootball_ncaaf"}
 
 # Colorado-legal sportsbooks — line shopping filtered to these only.
-# API key "espnbet" maps to theScore Bet (display name updated in BOOK_DISPLAY).
-CO_LEGAL_BOOKS = {
-    "draftkings", "fanduel", "betmgm", "williamhill_us", "betrivers",
-    "bet365", "fanatics", "hardrockbet", "ballybet", "betparx",
-    "espnbet", "pointsbetus", "twinspires", "circasports", "superbook",
-    "tipico", "wynnbet", "betway",
-}
+# Canonical definition lives in book_names.py (audit H-13).
+from book_names import CO_LEGAL_BOOKS, BOOK_DISPLAY, norm_book as _norm_book, display_book  # noqa: E402
+
+# Canonical pick_log schema lives in pick_log_schema.py (audit H-3).
+# HEADER and BONUS_HEADER below are aliases of CANONICAL_HEADER — no drift possible.
+from pick_log_schema import (  # noqa: E402
+    CANONICAL_HEADER,
+    SCHEMA_VERSION as PICK_LOG_SCHEMA_VERSION,
+    assert_manual_row_valid as _assert_manual_row_valid,
+    migrate_row as _migrate_pick_row,
+    normalize_american_odds as _normalize_odds,
+    # M-3/M-10/M-11/M-12: write-time data-contract normalizers.
+    normalize_is_home as _normalize_is_home,
+    normalize_size as _normalize_size,
+    normalize_proj as _normalize_proj,
+    normalize_edge as _normalize_edge,
+    # M-13: sidecar writer — fires once per successful pick_log write.
+    write_schema_sidecar as _write_schema_sidecar,
+)
+
+# Canonical player-name folding (audit H-3). Every caller that compares
+# player names must go through fold_name so "Dončić" / "Doncic" collapse
+# to the same key.
+from name_utils import fold_name as _fold_name  # noqa: E402
+
+# Shared HTTP helpers (audit M-16). Canonical User-Agent on every outbound
+# Odds API request.
+from http_utils import default_headers  # noqa: E402
+
+# Centralized brand constants (audit L-7) — tagline lives in brand.py.
+from brand import BRAND_TAGLINE  # noqa: E402
+
+# Shared atomic-JSON writer (architectural note #2). Replaces the bespoke
+# tmp+fsync+replace dance that used to live inline at every guard-file save.
+from io_utils import atomic_write_json  # noqa: E402
 
 # Golf code removed — see archived_golf_code.py
 
 # ============================================================
 #  DISCORD WEBHOOK CONFIG
 # ============================================================
-# Paste webhook URLs after creating them in Discord (Phase 2).
+# Webhook URLs are imported from secrets_config.py at the top of this file.
+# To rotate, edit `.env` (gitignored) at project root or user home dir.
 # Bot display name on all webhooks: PicksByJonny
 
-DISCORD_WEBHOOK_URL        = "https://discord.com/api/webhooks/1493388060342091958/8J54-XRKRyVOdmVvEc3UhIS9I6ee3u124xD9Ultf8uaoh7uCaFJJFLsAocfyPNCvulmk"   # → #premium-portfolio
-DISCORD_BONUS_WEBHOOK      = "https://discord.com/api/webhooks/1493388215476944947/SOFSinJ1bLthupJ6KZRHF7gmzIpOfdBnUijoZQYTpr5HFDiQZKYAUVvvDyQYwWFVV7J0"   # → #bonus-drops
-DISCORD_ALT_PARLAY_WEBHOOK = "https://discord.com/api/webhooks/1493388490644263105/_uCAZufERfGx5-Hr2KugkFQxVMRY9TYBGkNGGjmsQiKNpIScgYKv26wITrNBiaO3kTtG"   # → #daily-lay
-DISCORD_RECAP_WEBHOOK      = "https://discord.com/api/webhooks/1493388658638848344/1RixaqCAX9kYdjrfDPt9bLKrr3Xn1LQmNvzWHAutT62k09dSsdhvOYBb18JhkS49mwU0"   # → #daily-recap
-DISCORD_KILLSHOT_WEBHOOK   = "https://discord.com/api/webhooks/1493388744739393609/pXaLY6oeln8loypUI_mMayo5z9lwKE-McxSx2yTQ15biPcVJC-qflo6SmUV5CIjOzXAE"   # → #killshot  (scaffold — trigger TBD)
-DISCORD_MONTHLY_WEBHOOK    = "https://discord.com/api/webhooks/1493398458357383420/YOxYOEjexatDSvAoGnNA-76dP1cX57jKj7frfvwR-4nosBjmXhCZkUKJ5efJ6dDoXkXr"  # → #monthly-tracker
-DISCORD_ANNOUNCE_WEBHOOK   = "https://discord.com/api/webhooks/1493399935515889768/GV9M__Wd2ZC037gJ_3zFhjWKGDE_srWzhzQYWIAvmUpAscgRO1p-XjgkS0zVLgK_4s_x"  # → #announcements
-
 BONUS_DAILY_CAP = 5             # Max bonus posts per calendar day
+MIN_BONUS_SCORE = 65            # Minimum pick_score to qualify for a bonus drop
+MIN_BONUS_WIN_PROB = 0.65       # Minimum win probability to qualify for a bonus drop
+MIN_DAILY_LAY_PROB = 0.33       # Minimum combined cover probability before posting daily lay
+MIN_DAILY_LAY_MARGIN = 4.0      # Minimum projected margin (pts) for a team to qualify as a daily lay leg
 
 # ── KILLSHOT tier ─────────────────────────────────────────────
 KILLSHOT_SCORE_FLOOR  = 90.0   # Minimum Pick Score to auto-qualify
@@ -182,10 +254,12 @@ GAME_SIGMA = {
 # First 5 innings sigmas (MLB only — starter matchup, no bullpen noise)
 F5_SIGMA = {"total": 2.6, "spread": 2.5, "team": 2.0}
 
-# Game line projection blending: anchor SaberSim to the market line
-# blended = market + BLEND_ALPHA * (saber - market)
-# 0.25 = trust SaberSim for 25% of the disagreement, market for 75%
-# This prevents massive edge calculations when SaberSim disagrees with Vegas by 10+ pts
+# Game line projection blending: anchor SaberSim to the market line.
+# Formula in prose: the blended projection equals the market line plus
+# BLEND_ALPHA of the gap between the SaberSim projection and the market.
+# 0.25 means we trust SaberSim for 25% of any disagreement and the
+# market for the remaining 75% — this prevents massive edge calculations
+# when SaberSim disagrees with Vegas by 10+ pts.
 BLEND_ALPHA = 0.25
 
 TIERS = {
@@ -205,9 +279,8 @@ VAKE_MULT = {
 
 # ── Context Sanity Layer ──────────────────────────────────────
 CONTEXT_API_MODEL       = "claude-haiku-4-5-20251001"
-CONTEXT_CONFLICT_MULT   = 0.80   # adj_edge multiplier on conflict verdict
 CONTEXT_MAX_WORKERS     = 8      # concurrent API calls
-_CONTEXT_CACHE          = {}     # {(sport, player, stat, line, direction, date_str): (verdict, reason)}
+_CONTEXT_CACHE          = {}     # {(sport, player, stat, line, direction, date_str): (verdict, reason, score)}
 
 def _build_context_prompt(sport, stat, player, direction, line, game, today, pregame_notes=""):
     """Build a sanity-check prompt for a single pick.
@@ -232,10 +305,11 @@ def _build_context_prompt(sport, stat, player, direction, line, game, today, pre
         f"   - {player} has been in strong recent form\n"
         f"   - A key opponent defender or teammate is out affecting this matchup\n"
         f"   - Any other clear positive context for this bet\n\n"
-        f'Output ONLY this JSON: {{"verdict": "conflicts"|"neutral"|"supports", "reason": "<10 words>"}}\n\n'
+        f'Output ONLY this JSON: {{"verdict": "conflicts"|"neutral"|"supports", "reason": "<10 words>", "score": 0-3}}\n\n'
         f'- "conflicts" = player OUT, DOUBTFUL, scratched, or serious new injury — ONLY for clear hard stops\n'
         f'- "supports"  = confirmed active OR any positive signal found — lean toward this when no red flag\n'
-        f'- "neutral"   = genuinely nothing found either way'
+        f'- "neutral"   = genuinely nothing found either way\n'
+        f'- score: 0 (nothing found) | 1 (weak signal) | 2 (solid signal) | 3 (strong confirmation)'
     )
 
 PICK_SCORE_MODES = {
@@ -244,34 +318,10 @@ PICK_SCORE_MODES = {
     "Aggressive":   (0.45, 0.55),
 }
 
-# Sportsbook display names (API key → clean name)
-BOOK_DISPLAY = {
-    "espnbet": "theScore Bet", "betonlineag": "BetOnline", "betmgm": "BetMGM",
-    "betrivers": "BetRivers", "betus": "BetUS", "bovada": "Bovada",
-    "williamhill_us": "Caesars", "draftkings": "DraftKings", "fanatics": "Fanatics",
-    "fanduel": "FanDuel", "lowvig": "LowVig", "mybookieag": "MyBookie",
-    "ballybet": "Bally Bet", "betanysports": "BetAnySports", "betparx": "BetParx",
-    "fliff": "Fliff", "hardrockbet": "Hard Rock Bet", "rebet": "ReBet",
-    "betopenly": "BetOpenly", "kalshi": "Kalshi", "novig": "Novig",
-    "polymarket": "Polymarket", "prophetx": "ProphetX",
-    "superbook": "SuperBook", "betway": "Betway",
-}
-
-def _norm_book(key: str) -> str:
-    """Normalize book key by stripping region suffix (e.g. hardrockbet_fl → hardrockbet).
-    Used when writing to pick_log so downstream tools always see the base key."""
-    if not key:
-        return key
-    base = key.rsplit("_", 1)[0] if "_" in key else key
-    return base if base in CO_LEGAL_BOOKS else key
-
-def display_book(api_key):
-    """Convert API book key to display name. Handles region suffixes like _az, _co."""
-    if api_key in BOOK_DISPLAY:
-        return BOOK_DISPLAY[api_key]
-    # Try stripping region suffix (e.g. hardrockbet_az → hardrockbet)
-    base = api_key.rsplit("_", 1)[0] if "_" in api_key else api_key
-    return BOOK_DISPLAY.get(base, api_key)
+# Sportsbook display / normalization — imported above from book_names (audit H-13).
+# Keeping CO_LEGAL_BOOKS, BOOK_DISPLAY, _norm_book, display_book callable at
+# module level for backwards-compat with legacy call sites that reference them
+# as run_picks.CO_LEGAL_BOOKS etc.
 
 # Team abbreviation reverse lookup (full API name → abbreviation)
 TEAM_ABBREV = {
@@ -453,7 +503,7 @@ def calc_edge(model_prob, over_odds, under_odds):
     imp_over = implied_prob(over_odds)
     imp_under = implied_prob(under_odds)
     nv_over, nv_under = no_vig(imp_over, imp_under)
-    # model_prob is P(over)
+    # Convention: model_prob is interpreted as the probability of the over.
     over_edge = model_prob - nv_over
     under_edge = (1.0 - model_prob) - nv_under
     return over_edge, under_edge, nv_over, nv_under
@@ -639,8 +689,10 @@ def auto_r12_from_log(today_str: str, window_days: int = 5) -> list[str]:
         return []
     try:
         cutoff = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=window_days - 1)).strftime("%Y-%m-%d")
-        with open(log_path, "r", newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
+        # Shared lock — must not race a concurrent capture_clv write (audit H-8).
+        with _pick_log_lock(log_path):
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
         losers = set()
         for r in rows:
             if r.get("result", "").upper() != "L":
@@ -665,13 +717,15 @@ def apply_r12_cooldown(picks, cooldown_players):
     cool_set = {normalize_name(n) for n in cooldown_players}
     return [p for p in picks if normalize_name(p["player"]) not in cool_set]
 
-def apply_soft_rules_premium(premium, all_qualifying):
+def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     """
     Apply R6, R7, R8, R9, R10 to build the Premium 5.
 
     R8 (updated): Reserve first 3 slots for T1/T1B (by PS desc).
     Fill remaining 2 slots by pure Pick Score from ALL tiers.
     This ensures T1 dominance while letting strong T2/T3 picks break through.
+
+    max_per_game — R7 override (default 2). Thin-slate nights can raise this.
     """
     T1_RESERVED = 3  # slots reserved for T1/T1B
 
@@ -693,7 +747,7 @@ def apply_soft_rules_premium(premium, all_qualifying):
     def can_add(p):
         game = p.get("game", "")
         key = (p["stat"], p["direction"])
-        if game_count[game] >= 2:  # R7
+        if game_count[game] >= max_per_game:  # R7
             return False
         if stat_dir_count[key] >= 2:  # R10
             return False
@@ -779,9 +833,11 @@ def apply_soft_rules_premium(premium, all_qualifying):
 
     return premium[:5]
 
-def apply_caps(picks, sport_totals):
+def apply_caps(picks, sport_totals, max_per_game=2):
     """Apply daily caps: per-stat, per-game, per-sport, daily total.
-    Includes G12: max 2 same-direction pitcher props per game."""
+    Includes G12: max 2 same-direction pitcher props per game.
+
+    max_per_game — R7 override (default 2). Thin-slate nights can raise this."""
     # Sort by pick_score descending so best picks get cap priority (fixes H4 bug)
     picks = sorted(picks, key=lambda p: p.get("pick_score", 0), reverse=True)
 
@@ -806,7 +862,7 @@ def apply_caps(picks, sport_totals):
 
         if stat_count[stat] >= STAT_CAP[stat]:
             continue
-        if game_count[game] >= 2:
+        if game_count[game] >= max_per_game:
             continue
         if sport_units[sport] + size > SPORT_UNIT_CAP.get(sport, 8.0):
             continue
@@ -849,6 +905,49 @@ def size_picks_base(picks):
             final = min(final, 0.75)
         p["size"] = final
     return picks
+
+def size_bonus_pick(pick):
+    """VAKE-style sizing for a standalone bonus drop.
+
+    Bonus drops are posted in isolation — no correlation or exposure penalty
+    applies (those are for a 5-pick card). But we still apply variance + tier
+    multipliers so a T3 3PM bonus doesn't end up at 1.25u while the same stat
+    on the Premium card is 0.50u.
+
+    Floor mirrors size_picks_base (0.25u for T3, 0.50u otherwise). Cap stays
+    at 1.25u. High-variance (<50% win prob) bets cap at 0.75u.
+
+    Audit H-9: returns ``None`` when the raw VAKE math rounds below the
+    tier floor. Previously we clamped up to the floor and shipped a dust
+    bet; the clamp was hiding an upstream edge miscalculation. If the math
+    says the pick isn't worth the floor, the right move is to drop it (and
+    log a warning) rather than size up to a "sure it'll fit" number. The
+    caller must treat ``None`` as "do not post / do not log".
+    """
+    edge = pick.get("adj_edge", 0)
+    tier = pick.get("tier", "T2")
+    base = base_units(edge)
+    var_m  = VAKE_MULT["variance"].get(tier, 0.85)
+    tier_m = VAKE_MULT["tier"].get(tier, 0.90)
+    raw = base * var_m * tier_m
+    final = round_units(raw)
+    floor = 0.25 if tier == "T3" else 0.50
+    # H-9: drop rather than clamp. The floor is a safety net for legitimate
+    # picks whose math lands close to it — it is NOT a way to manufacture
+    # size where the VAKE math says zero.
+    if final < floor:
+        print(
+            f"  [bonus-sizing] H-9 drop: {pick.get('player','?')} "
+            f"{pick.get('stat','?')} {pick.get('direction','?')} @ tier {tier} — "
+            f"raw VAKE {raw:.3f}u rounded to {final:.2f}u, below floor {floor}u. "
+            f"edge={edge:.3%}, win_prob={pick.get('win_prob', 0):.3f}. Not shipping."
+        )
+        return None
+    final = min(final, 1.25)
+    if pick.get("win_prob", 1.0) < 0.50:
+        final = min(final, 0.75)
+    return final
+
 
 def size_picks_vake(premium):
     """Apply full VAKE sizing to Premium 5 only, in Pick Score descending order.
@@ -908,12 +1007,14 @@ def size_picks_vake(premium):
 # ============================================================
 
 def normalize_name(name):
-    """Normalize a player name for matching."""
-    name = unicodedata.normalize("NFKD", name)
-    name = name.encode("ascii", "ignore").decode("ascii")
-    name = name.strip().lower()
-    name = re.sub(r"[^a-z\s]", "", name)
-    return name
+    """Normalize a player name for matching.
+
+    Thin wrapper around :func:`name_utils.fold_name` — the canonical folding
+    contract lives there so the grader, analyzer, and this module all agree
+    on whether ``"Dončić"`` == ``"Doncic"`` (it does — accents stripped).
+    Audit H-3.
+    """
+    return _fold_name(name)
 
 def name_key(name):
     """Generate a fuzzy match key: last name + first 3 chars of first name.
@@ -1055,9 +1156,11 @@ class OddsFetcher:
 
     def _get(self, url, params):
         params["apiKey"] = ODDS_API_KEY
+        # Audit M-16: canonical UA on every outbound Odds API call.
+        headers = default_headers()
         for attempt in range(3):
             try:
-                r = requests.get(url, params=params, timeout=15)
+                r = requests.get(url, params=params, headers=headers, timeout=15)
                 self.remaining = r.headers.get("x-requests-remaining")
                 if r.status_code == 200:
                     return r.json()
@@ -1077,7 +1180,9 @@ class OddsFetcher:
     def _load_cache(self, sport):
         """Load cached odds data if fresh enough (< 15 min old)."""
         cache_dir = Path(OUTPUT_FOLDER) / "cache"
-        cache_file = cache_dir / f"odds_{sport}_{datetime.now().strftime('%Y-%m-%d')}.json"
+        # Use ET for day boundary (matches pick_log date convention) so the
+        # cache file name doesn't drift across timezones (audit H-1).
+        cache_file = cache_dir / f"odds_{sport}_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')}.json"
         if cache_file.exists():
             age_min = (time.time() - cache_file.stat().st_mtime) / 60
             if age_min < 15:
@@ -1094,7 +1199,8 @@ class OddsFetcher:
         """Save odds data to cache."""
         cache_dir = Path(OUTPUT_FOLDER) / "cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"odds_{sport}_{datetime.now().strftime('%Y-%m-%d')}.json"
+        # ET day boundary — must match _load_cache (audit H-1).
+        cache_file = cache_dir / f"odds_{sport}_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')}.json"
         try:
             with open(cache_file, "w") as f:
                 json.dump(data, f, default=str)
@@ -1959,7 +2065,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             is_fav = ml_odds < 0
             stat_type = "ML_FAV" if is_fav else "ML_DOG"
             tier = "T2" if is_fav else "T3"
-            min_edge = 0.05 if is_fav else 0.06
+            min_edge = 0.05 if is_fav else 0.08  # Dogs need 8% edge — higher variance justifies stricter floor
 
             home_abbr = TEAM_ABBREV.get(home_name.lower(), home_name[:3].upper())
             away_abbr = TEAM_ABBREV.get(away_name.lower(), away_name[:3].upper())
@@ -2239,11 +2345,11 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                             (team1, t1_wp, edge1, odds1, nv1, ml_data[team1].get("book", "")),
                             (team2, t2_wp, edge2, odds2, nv2, ml_data[team2].get("book", "")),
                         ]:
-                            # FIX 3: Mirror full-game ML — favs T2 (5% min edge), dogs T3 (6% min edge)
+                            # FIX 3: Mirror full-game ML — favs T2 (5% min edge), dogs T3 (8% min edge)
                             is_fav = odds < 0
                             stat = "F5_ML"
                             tier = "T2" if is_fav else "T3"
-                            min_edge = 0.05 if is_fav else 0.06
+                            min_edge = 0.05 if is_fav else 0.08  # Dogs need 8% edge — higher variance
                             # BUG G3 fix: determine home/away using resolved abbrevs
                             t_abbr = resolve_team_abbrev(team_name)
                             h_abbr = resolve_team_abbrev(home)
@@ -2703,7 +2809,7 @@ def build_alt_spread_parlay(game_lines, team_proj_map, sport_sigmas, alt_spread_
             ("home", home, margin),
             ("away", away, -margin),
         ]:
-            if side_margin <= 0:
+            if side_margin < MIN_DAILY_LAY_MARGIN:
                 continue
             std_spread_info = home_spread_info if side == "home" else away_spread_info
             std_spread = std_spread_info.get("line", None)
@@ -2855,8 +2961,9 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
     """
     log_path = log_path_override if log_path_override else Path(PICK_LOG_PATH)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    run_date = datetime.now().strftime("%Y-%m-%d")
-    run_time = datetime.now().strftime("%H:%M")
+    _now_et  = datetime.now(ZoneInfo("America/New_York"))
+    run_date = _now_et.strftime("%Y-%m-%d")
+    run_time = _now_et.strftime("%H:%M")
 
     # Build card slot lookup: (player_lower, stat, line, direction) -> slot number
     card_slot_map = {}
@@ -2870,118 +2977,147 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
             )
             card_slot_map[key] = i
 
-    HEADER = [
-        "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
-        "direction", "proj", "win_prob", "edge", "odds", "book",
-        "tier", "pick_score", "size", "game", "mode", "result",
-        "closing_odds",      # CLV: closing line odds — filled by capture_clv.py pre-game
-        "clv",               # CLV: closing_implied - your_implied (positive = beat the close)
-        "card_slot",         # 1-5 = was on premium card; blank = qualified but not posted
-        "is_home",           # BUG G1/G2/G3 fix: True/False for SPREAD/ML/F5 picks; blank for props
-        "context_verdict",   # supports | neutral | conflicts | skipped
-        "context_reason",    # ≤12-word explanation from context check
-        "context_score",     # 0-3 confluence count (independent positive signals)
-    ]
+    # Canonical schema lives in pick_log_schema.py (audit H-3).
+    # Local alias kept so downstream code below can keep reading `HEADER`.
+    HEADER = CANONICAL_HEADER
 
-    # Load existing rows and build a set of today's pick keys
-    existing_rows = []
-    existing_keys = set()
-    old_header = None
-    if log_path.exists() and log_path.stat().st_size > 0:
-        with open(log_path, "r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            old_header = reader.fieldnames or []
-            for row in reader:
-                existing_rows.append(row)
-                if row.get("date", "") == run_date:
-                    # Key: (date, player, stat, line, direction)
-                    key = (
-                        row.get("date", ""),
-                        row.get("player", "").strip().lower(),
-                        row.get("stat", "").strip(),
-                        str(row.get("line", "")).strip(),
-                        row.get("direction", "").strip().lower(),
+    # Read-modify-write the pick_log under a single lock so the read, the
+    # conditional header rewrite, and the append can't be torn apart by a
+    # concurrent capture_clv.py flush or manual writer (audit H-8).
+    with _pick_log_lock(log_path):
+        # Load existing rows and build a set of today's pick keys
+        existing_rows = []
+        existing_keys = set()
+        old_header = None
+        if log_path.exists() and log_path.stat().st_size > 0:
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                old_header = reader.fieldnames or []
+                for row in reader:
+                    existing_rows.append(row)
+                    if row.get("date", "") == run_date:
+                        # Dedup key is a tuple of date, player, stat, line, direction.
+                        key = (
+                            row.get("date", ""),
+                            row.get("player", "").strip().lower(),
+                            row.get("stat", "").strip(),
+                            str(row.get("line", "")).strip(),
+                            row.get("direction", "").strip().lower(),
+                        )
+                        existing_keys.add(key)
+
+        # If header has changed (new columns added), rewrite the file with updated header.
+        # Atomic replace: write to tmp, fsync, then os.replace. Prevents truncation-to-empty
+        # if the engine is killed mid-rewrite (audit H-5).
+        if old_header and set(HEADER) != set(old_header):
+            tmp_path = log_path.with_suffix(log_path.suffix + ".tmp")
+            try:
+                with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=HEADER, extrasaction="ignore")
+                    writer.writeheader()
+                    for row in existing_rows:
+                        writer.writerow(row)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, log_path)
+            except Exception:
+                # Clean up orphaned tmp on failure so we don't accumulate cruft
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+            print(f"  📋 Updated pick_log header: added {set(HEADER) - set(old_header)}")
+
+        # Split qualified picks into new vs already-logged
+        new_picks = []
+        skipped = 0
+        for p in qualified:
+            key = (
+                run_date,
+                p.get("player", "").strip().lower(),
+                p.get("stat", "").strip(),
+                str(p.get("line", "")).strip(),
+                p.get("direction", "").strip().lower(),
+            )
+            if key in existing_keys:
+                skipped += 1
+            else:
+                new_picks.append(p)
+                existing_keys.add(key)  # prevent intra-run dupes too
+
+        # Append only new picks
+        write_header = not log_path.exists() or log_path.stat().st_size == 0
+        if new_picks:
+            with open(log_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(HEADER)
+                for p in new_picks:
+                    if not p.get("player") or not p.get("stat"):
+                        print(f"  ⚠ Skipping incomplete pick (missing player/stat): {p}")
+                        continue
+                    slot_key = (
+                        p.get("player", "").strip().lower(),
+                        p.get("stat", "").strip(),
+                        str(p.get("line", "")).strip(),
+                        p.get("direction", "").strip().lower(),
                     )
-                    existing_keys.add(key)
-
-    # If header has changed (new columns added), rewrite the file with updated header
-    if old_header and set(HEADER) != set(old_header):
-        with open(log_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=HEADER, extrasaction="ignore")
-            writer.writeheader()
-            for row in existing_rows:
-                writer.writerow(row)
-        print(f"  📋 Updated pick_log header: added {set(HEADER) - set(old_header)}")
-
-    # Split qualified picks into new vs already-logged
-    new_picks = []
-    skipped = 0
-    for p in qualified:
-        key = (
-            run_date,
-            p.get("player", "").strip().lower(),
-            p.get("stat", "").strip(),
-            str(p.get("line", "")).strip(),
-            p.get("direction", "").strip().lower(),
-        )
-        if key in existing_keys:
-            skipped += 1
-        else:
-            new_picks.append(p)
-            existing_keys.add(key)  # prevent intra-run dupes too
-
-    # Append only new picks
-    write_header = not log_path.exists() or log_path.stat().st_size == 0
-    if new_picks:
-        with open(log_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            if write_header:
-                writer.writerow(HEADER)
-            for p in new_picks:
-                if not p.get("player") or not p.get("stat"):
-                    print(f"  ⚠ Skipping incomplete pick (missing player/stat): {p}")
-                    continue
-                slot_key = (
-                    p.get("player", "").strip().lower(),
-                    p.get("stat", "").strip(),
-                    str(p.get("line", "")).strip(),
-                    p.get("direction", "").strip().lower(),
-                )
-                card_slot = card_slot_map.get(slot_key, "")
-                writer.writerow([
-                    run_date,
-                    run_time,
-                    "primary",          # run_type — primary picks
-                    p.get("sport", ""),
-                    p.get("player", ""),
-                    p.get("team_abbrev", ""),
-                    p.get("stat", ""),
-                    p.get("line", ""),
-                    p.get("direction", ""),
-                    f"{p.get('proj', 0):.2f}",
-                    f"{p.get('win_prob', 0):.4f}",
-                    f"{p.get('adj_edge', 0):.4f}",
-                    p.get("odds", ""),
-                    _norm_book(p.get("book", "")),
-                    p.get("tier", ""),
-                    f"{p.get('pick_score', 0):.1f}",
-                    f"{p.get('size', 0):.2f}",
-                    p.get("game", ""),
-                    mode,
-                    "",  # result — blank, fill in after games
-                    "",  # closing_odds — filled by capture_clv.py
-                    "",  # clv — filled by capture_clv.py
-                    card_slot,  # 1-5 if on premium card, blank otherwise
-                    p.get("is_home", ""),  # BUG G fix: True/False for SPREAD/ML/F5; blank for props
-                    p.get("context_verdict", ""),
-                    p.get("context_reason", ""),
-                    p.get("context_score", ""),
-                ])
+                    card_slot = card_slot_map.get(slot_key, "")
+                    writer.writerow([
+                        run_date,
+                        run_time,
+                        "primary",          # run_type — primary picks
+                        p.get("sport", ""),
+                        p.get("player", ""),
+                        p.get("team_abbrev", ""),
+                        p.get("stat", ""),
+                        p.get("line", ""),
+                        p.get("direction", ""),
+                        # M-11: 2-decimal canonical proj string.
+                        _normalize_proj(p.get("proj", 0)),
+                        f"{p.get('win_prob', 0):.4f}",
+                        # M-12: 4-decimal canonical edge (decimal, not %).
+                        _normalize_edge(p.get("adj_edge", 0)),
+                        # Odds normalized to canonical sign-prefixed form
+                        # (PICK_LOG_AUDIT H-3 — prevents analyze_picks.py
+                        # crashing on bare "105" and silently computing 0 profit).
+                        _normalize_odds(p.get("odds", "")),
+                        _norm_book(p.get("book", "")),
+                        p.get("tier", ""),
+                        f"{p.get('pick_score', 0):.1f}",
+                        # M-10: canonical 2-decimal size ("0.50" not "0.5").
+                        _normalize_size(p.get("size", 0)),
+                        p.get("game", ""),
+                        mode,
+                        "",  # result — blank, fill in after games
+                        "",  # closing_odds — filled by capture_clv.py
+                        "",  # clv — filled by capture_clv.py
+                        card_slot,  # 1-5 if on premium card, blank otherwise
+                        # M-3: canonical "True"/"False"/"" for is_home — set for
+                        # team-based stats, blank for props.
+                        _normalize_is_home(p.get("is_home", ""), p.get("stat", "")),
+                        p.get("context_verdict", ""),
+                        p.get("context_reason", ""),
+                        p.get("context_score", ""),
+                    ])
+                # Commit to disk before releasing the outer lock (audit H-5).
+                f.flush()
+                os.fsync(f.fileno())
 
     if skipped > 0:
         print(f"\n  📝 Logged {len(new_picks)} new picks to {log_path} (skipped {skipped} duplicates from earlier run)")
     else:
         print(f"\n  📝 Logged {len(new_picks)} picks to {log_path}")
+
+    # M-13: refresh the schema sidecar on every successful write. Cheap
+    # (< 1ms) and lets future readers verify the on-disk schema version
+    # without sniffing column names.
+    try:
+        _write_schema_sidecar(log_path)
+    except Exception as _sidecar_err:
+        # Sidecar failure must never block pick logging — log and carry on.
+        print(f"  ⚠ M-13 sidecar write failed for {log_path}: {_sidecar_err}")
 
 
 # ============================================================
@@ -3005,8 +3141,48 @@ def _confirm_post(label):
     return ans in ("y", "yes")
 
 
+_DISCORD_GUARD_TTL_DAYS = 90
+
+
+try:
+    from discord_guard import (
+        load_guard as _shared_load_guard,
+        save_guard as _shared_save_guard,
+        prune_guard as _shared_prune_guard,
+    )
+    _HAS_SHARED_GUARD = True
+except ImportError:
+    _HAS_SHARED_GUARD = False
+
+
+def _prune_discord_guard(guard):
+    """Drop guard keys older than _DISCORD_GUARD_TTL_DAYS (based on embedded YYYY-MM-DD token)."""
+    from datetime import datetime, timedelta
+    # Pin cutoff to ET (pick-log date convention). Strip tzinfo so the compare
+    # against naive strptime dates stays valid (audit H-1).
+    cutoff = datetime.now(ZoneInfo("America/New_York")).replace(tzinfo=None) - timedelta(days=_DISCORD_GUARD_TTL_DAYS)
+    pruned = {}
+    for key, val in guard.items():
+        keep = True
+        for p in key.split(":"):
+            if len(p) == 10 and p[4] == "-" and p[7] == "-":
+                try:
+                    dt = datetime.strptime(p, "%Y-%m-%d")
+                    if dt < cutoff:
+                        keep = False
+                    break
+                except ValueError:
+                    continue
+        if keep:
+            pruned[key] = val
+    return pruned
+
+
 def _load_discord_guard():
     """Load the Discord post de-dup registry from disk. Returns {} on miss."""
+    # Delegate to shared cross-process-safe helper if available
+    if _HAS_SHARED_GUARD:
+        return _shared_load_guard()
     try:
         with open(DISCORD_GUARD_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -3015,13 +3191,23 @@ def _load_discord_guard():
 
 
 def _save_discord_guard(guard):
-    """Persist the Discord post de-dup registry."""
+    """Persist the Discord post de-dup registry atomically with TTL pruning."""
+    # Delegate to shared cross-process-safe helper if available
+    if _HAS_SHARED_GUARD:
+        _shared_save_guard(guard)
+        return
     try:
-        os.makedirs(os.path.dirname(DISCORD_GUARD_FILE), exist_ok=True)
-        with open(DISCORD_GUARD_FILE, "w", encoding="utf-8") as f:
-            json.dump(guard, f, indent=2)
+        atomic_write_json(DISCORD_GUARD_FILE, _prune_discord_guard(guard))
     except Exception as e:
         logger.warning(f"[Discord] Guard write failed: {e}")
+        # Best-effort fallback
+        try:
+            with open(DISCORD_GUARD_FILE, "w", encoding="utf-8") as f:
+                json.dump(guard, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            pass
 
 
 def _discord_already_posted(key):
@@ -3039,6 +3225,12 @@ def _discord_mark_posted(key):
 def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
     """POST a JSON payload to a Discord webhook URL. Retries on failure with exponential backoff.
     If _CONFIRM_MODE is True, prompts for y/n confirmation before sending.
+
+    Audit M-4 / M-16 (closed Apr 20 2026): retry_after parsed via
+    http_utils.retry_after_secs so a non-JSON / empty 429 body can't
+    crash the poster, and the Retry-After header is preferred over the
+    (Discord-specific) JSON body. Canonical UA from default_headers()
+    stamps every outbound webhook post.
     """
     if not url:
         logger.warning("[Discord] Webhook URL not configured — skipping post.")
@@ -3047,11 +3239,13 @@ def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
         print(f"  [Confirm] ⏭️  Skipped: {label}")
         return False
     import requests as _req
+    from http_utils import default_headers as _dh, retry_after_secs as _ras
+    headers = _dh()
     for attempt in range(1, retries + 1):
         try:
-            r = _req.post(url, json=payload, timeout=10)
+            r = _req.post(url, json=payload, headers=headers, timeout=10)
             if r.status_code == 429:
-                retry_after = float(r.json().get("retry_after", backoff))
+                retry_after = _ras(r, default=backoff)
                 logger.warning(f"[Discord] Rate limited — waiting {retry_after:.1f}s (attempt {attempt}/{retries})")
                 time.sleep(retry_after)
                 continue
@@ -3118,7 +3312,7 @@ def build_premium_embed(premium, mode, today, suppress_ping=False):
             "description": "\n".join(lines),
             "color": 0xFFD700,  # Gold
             "thumbnail": {"url": BRAND_LOGO},
-            "footer": {"text": f"edge > everything · {now_et}"},
+            "footer": {"text": f"{BRAND_TAGLINE} · {now_et}"},
         }]
     }
 
@@ -3166,27 +3360,44 @@ def build_potd_embed(potd, today):
             "description": description,
             "color": 0xFF4500,  # OrangeRed
             "thumbnail": {"url": BRAND_LOGO},
-            "footer": {"text": f"edge > everything · {now_et}"},
+            "footer": {"text": f"{BRAND_TAGLINE} · {now_et}"},
         }]
     }
 
 
 def post_to_discord(premium, mode, today, suppress_ping=False):
-    """Post the premium card + standalone POTD embed to #premium-portfolio."""
+    """Post the premium card + standalone POTD embed to #premium-portfolio.
+
+    Uses discord_posted.json guard keys (premium_card:{date}, potd:{date}) to
+    prevent double-posts if run_picks.py is re-run. Guard is only marked on
+    real (non-test) successful posts — test mode can be re-run safely.
+    """
     if not premium:
         print("  [Discord] No premium picks — skipping premium post.")
         return
 
     # Premium card
-    payload = build_premium_embed(premium, mode, today, suppress_ping=suppress_ping)
-    if _webhook_post(DISCORD_WEBHOOK_URL, payload, label="premium card"):
-        print(f"  [Discord] ✅ Premium card posted ({len(premium[:5])} picks)")
+    premium_key = f"premium_card:{today}"
+    if _discord_already_posted(premium_key):
+        print(f"  [Discord] ⏭️  Premium card already posted for {today} — skipping")
+    else:
+        payload = build_premium_embed(premium, mode, today, suppress_ping=suppress_ping)
+        if _webhook_post(DISCORD_WEBHOOK_URL, payload, label="premium card"):
+            print(f"  [Discord] ✅ Premium card posted ({len(premium[:5])} picks)")
+            if not suppress_ping:
+                _discord_mark_posted(premium_key)
 
     # POTD — separate embed, same channel, same webhook
-    potd = premium[0]
-    potd_payload = build_potd_embed(potd, today)
-    if _webhook_post(DISCORD_WEBHOOK_URL, potd_payload, label=f"POTD: {potd['player']} {potd['stat']}"):
-        print(f"  [Discord] ✅ POTD posted: {potd['player']} {potd['stat']}")
+    potd_key = f"potd:{today}"
+    if _discord_already_posted(potd_key):
+        print(f"  [Discord] ⏭️  POTD already posted for {today} — skipping")
+    else:
+        potd = premium[0]
+        potd_payload = build_potd_embed(potd, today)
+        if _webhook_post(DISCORD_WEBHOOK_URL, potd_payload, label=f"POTD: {potd['player']} {potd['stat']}"):
+            print(f"  [Discord] ✅ POTD posted: {potd['player']} {potd['stat']}")
+            if not suppress_ping:
+                _discord_mark_posted(potd_key)
 
 
 def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
@@ -3196,6 +3407,11 @@ def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
         return
     legs = alt_spread_parlay.get("legs", [])
     if not legs:
+        return
+
+    combined_prob = alt_spread_parlay.get("combined_prob", 0)
+    if combined_prob < MIN_DAILY_LAY_PROB:
+        print(f"  [Discord] Daily Lay combined prob {combined_prob*100:.1f}% < {MIN_DAILY_LAY_PROB*100:.0f}% threshold — skipping weak parlay.")
         return
 
     guard_key = f"daily_lay:{today}"
@@ -3230,12 +3446,13 @@ def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
             "title": f"🎲 Daily Lay — {today}",
             "description": "\n".join(leg_lines),
             "color": 0x9B59B6,
-            "footer": {"text": f"edge > everything · {now_et}"}
+            "footer": {"text": f"{BRAND_TAGLINE} · {now_et}"}
         }]
     }
     if _webhook_post(DISCORD_ALT_PARLAY_WEBHOOK, payload, label=f"daily lay ({n_legs} legs @ {parlay_odds})"):
         print(f"  [Discord] ✅ Daily Lay posted to #daily-lay ({n_legs} legs @ {parlay_odds})")
-        _discord_mark_posted(guard_key)
+        if not suppress_ping:
+            _discord_mark_posted(guard_key)
         _log_daily_lay(alt_spread_parlay, today, save=save)
 
 
@@ -3249,9 +3466,9 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
     legs = alt_spread_parlay.get("legs", [])
     if not legs:
         return
-    run_time = datetime.now().strftime("%H:%M")
+    run_time = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M")
     parlay_odds = alt_spread_parlay.get("parlay_odds", 0)
-    book = alt_spread_parlay.get("book", "")
+    book = _norm_book(alt_spread_parlay.get("book", ""))
 
     # Single row summarising the whole parlay
     legs_desc = " / ".join(
@@ -3271,37 +3488,59 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
         "proj": "",
         "win_prob": "",
         "edge": "",
-        "odds": parlay_odds,
+        # Parlay odds normalized to canonical sign-prefixed form
+        # (PICK_LOG_AUDIT H-3). Bare int would trip analyze_picks.py for any
+        # positive parlay price (e.g. +540 → "540" → no sign prefix).
+        "odds": _normalize_odds(int(round(parlay_odds))) if parlay_odds else "",
         "book": book,
         "tier": "DAILY_LAY",
         "pick_score": "",
-        "size": 0.50,
+        # M-10: canonical "0.50" not bare 0.50 — string sort / xlsx display
+        # parity with other run_types.
+        "size": _normalize_size(0.50),
         "game": legs_desc,
         "mode": "",
         "result": "",
         "closing_odds": "",
+        "clv": "",
         "card_slot": "",
+        "is_home": "",
+        "context_verdict": "",
+        "context_reason": "",
+        "context_score": "",
     }]
 
     try:
-        with open(log_path, "r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            header = reader.fieldnames or []
-            existing = list(reader)
+        # Acquire lock for the ENTIRE read-check-write cycle so the CLV daemon
+        # can't rewrite pick_log.csv mid-operation (which is what truncated
+        # the 2026-04-19 daily_lay row to 17 fields).
+        with _pick_log_lock(log_path):
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                header = reader.fieldnames or []
+                existing = list(reader)
 
-        # Check not already logged today
-        already = any(
-            r.get("date") == today_str and r.get("run_type") == "daily_lay"
-            for r in existing
-        )
-        if already:
-            return
+            # Check not already logged today
+            already = any(
+                r.get("date") == today_str and r.get("run_type") == "daily_lay"
+                for r in existing
+            )
+            if already:
+                return
 
-        with open(log_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
-            for row in rows_to_add:
-                writer.writerow(row)
+            with open(log_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
+                for row in rows_to_add:
+                    writer.writerow(row)
+                # Commit to disk before releasing the outer lock (audit H-5).
+                f.flush()
+                os.fsync(f.fileno())
         print(f"  📝 Daily Lay logged ({len(rows_to_add)} legs)")
+        # M-13: refresh sidecar after a successful daily-lay append.
+        try:
+            _write_schema_sidecar(log_path)
+        except Exception as _sidecar_err:
+            print(f"  ⚠ M-13 sidecar write failed for {log_path}: {_sidecar_err}")
     except Exception as e:
         print(f"  ⚠ Daily Lay log failed: {e}")
 
@@ -3341,12 +3580,13 @@ def post_card_announcement(premium, mode, today, suppress_ping=False):
                 f"→ #premium-portfolio"
             ),
             "color": 0xFFD700,
-            "footer": {"text": f"edge > everything · {today}"}
+            "footer": {"text": f"{BRAND_TAGLINE} · {today}"}
         }]
     }
     if _webhook_post(DISCORD_ANNOUNCE_WEBHOOK, payload, label="card announcement"):
         print(f"  [Discord] ✅ Announcement posted to #announcements")
-        _discord_mark_posted(guard_key)
+        if not suppress_ping:
+            _discord_mark_posted(guard_key)
 
 
 def _card_already_posted_today(today_str):
@@ -3361,8 +3601,10 @@ def _card_already_posted_today(today_str):
         return False
     primary_markers = {"primary", "", None}
     try:
-        with open(log_path, "r", newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
+        # Shared lock — don't race a mid-flush CLV/grader write (audit H-8).
+        with _pick_log_lock(log_path):
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
         return any(
             r.get("date") == today_str and r.get("run_type") in primary_markers
             for r in rows
@@ -3386,7 +3628,8 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
         return
 
     today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
-    run_id = run_id or datetime.now().strftime("%H%M%S")
+    # ET for run_id so timestamp stays consistent with today_str (audit H-1).
+    run_id = run_id or datetime.now(ZoneInfo("America/New_York")).strftime("%H%M%S")
 
     # --- Check daily cap ---
     log_path = Path(PICK_LOG_PATH)
@@ -3394,25 +3637,27 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
     already_posted_keys = set()  # (player_lower, stat, line, direction)
 
     if log_path.exists() and log_path.stat().st_size > 0:
-        with open(log_path, "r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("date", "") != today_str:
-                    continue
-                # Count bonus posts
-                if row.get("run_type", "").lower() == "bonus":
-                    bonus_today_count += 1
-                # Only block re-posting if: was on the premium card OR already a bonus drop
-                # Qualified picks that didn't make the card ARE eligible for bonus
-                is_card_pick = row.get("card_slot", "").strip() not in ("", None)
-                is_bonus = row.get("run_type", "").lower() == "bonus"
-                if is_card_pick or is_bonus:
-                    already_posted_keys.add((
-                        row.get("player", "").strip().lower(),
-                        row.get("stat", "").strip(),
-                        str(row.get("line", "")).strip(),
-                        row.get("direction", "").strip().lower(),
-                    ))
+        # Shared lock — don't race a mid-flush CLV/grader write (audit H-8).
+        with _pick_log_lock(log_path):
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("date", "") != today_str:
+                        continue
+                    # Count bonus posts
+                    if row.get("run_type", "").lower() == "bonus":
+                        bonus_today_count += 1
+                    # Only block re-posting if: was on the premium card OR already a bonus drop
+                    # Qualified picks that didn't make the card ARE eligible for bonus
+                    is_card_pick = row.get("card_slot", "").strip() not in ("", None)
+                    is_bonus = row.get("run_type", "").lower() == "bonus"
+                    if is_card_pick or is_bonus:
+                        already_posted_keys.add((
+                            row.get("player", "").strip().lower(),
+                            row.get("stat", "").strip(),
+                            str(row.get("line", "")).strip(),
+                            row.get("direction", "").strip().lower(),
+                        ))
 
     if bonus_today_count >= BONUS_DAILY_CAP:
         print(f"  [Discord] Bonus cap reached ({BONUS_DAILY_CAP}/day) — skipping bonus post.")
@@ -3427,7 +3672,11 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
             str(p.get("line", "")).strip(),
             p.get("direction", "").strip().lower(),
         )
-        if key not in already_posted_keys and p.get("pick_score") is not None and p.get("tier") != "KILLSHOT":
+        if (key not in already_posted_keys
+                and p.get("pick_score") is not None
+                and p.get("pick_score", 0) >= MIN_BONUS_SCORE
+                and p.get("win_prob", 0) >= MIN_BONUS_WIN_PROB
+                and p.get("tier") != "KILLSHOT"):
             eligible.append(p)
 
     if not eligible:
@@ -3435,6 +3684,28 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
         return
 
     best = max(eligible, key=lambda p: p.get("pick_score", 0))
+
+    # --- Re-size the bonus pick with VAKE variance + tier multipliers ---
+    # The pick entered here with base sizing (from size_picks_base), which caps
+    # at 1.25u for any edge ≥ 9% regardless of tier. A standalone bonus drop
+    # should track Premium tier economics (T3 ≈ 0.50u, T2 ≈ 1.00u), so recompute.
+    # This overwrites the pick's `size` field, which _log_bonus_pick then reads.
+    _prev_size = best.get("size")
+    resized = size_bonus_pick(best)
+    if resized is None:
+        # Audit H-9: VAKE math rolled below the tier floor — refuse to ship
+        # a dust bet. size_bonus_pick already logged the reason. We don't
+        # try the next-best pick here: the bonus selector already filtered
+        # on MIN_BONUS_SCORE and MIN_BONUS_WIN_PROB, so the top eligible
+        # pick failing sizing is a real signal that today's bonus slate is
+        # too weak. Skip for the day rather than drilling down into the
+        # scraps.
+        print("  [Discord] Bonus drop skipped — top eligible pick failed H-9 sizing gate.")
+        return
+    best["size"] = resized
+    if _prev_size is not None and _prev_size != best["size"]:
+        print(f"  [Discord] Bonus sizing: {best['tier']} {best['stat']} "
+              f"{_prev_size:.2f}u → {best['size']:.2f}u (VAKE)")
 
     # --- Build embed ---
     dir_word = "Over" if best["direction"] == "over" else "Under"
@@ -3452,14 +3723,20 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
             "title": "💎 Bonus Drop",
             "description": "\n".join(lines),
             "color": 0x00BFFF,  # Deep sky blue
-            "footer": {"text": "edge > everything"},
+            "footer": {"text": BRAND_TAGLINE},
         }]
     }
 
     if _webhook_post(DISCORD_BONUS_WEBHOOK, payload, label=f"bonus drop: {best['player']} {best['stat']}"):
         print(f"  [Discord] ✅ Bonus drop posted: {best['player']} {best['stat']} (Score: {best.get('pick_score',0):.1f})")
-        # Log this bonus pick to pick_log.csv with run_type='bonus'
-        _log_bonus_pick(best, run_id, today_str, save=save)
+        # Log this bonus pick to pick_log.csv with run_type='bonus'.
+        # Discord post already succeeded — any log failure must NOT crash the run
+        # or we end up with a ghost post and no ledger entry for grade_picks/CLV.
+        try:
+            _log_bonus_pick(best, run_id, today_str, save=save)
+        except Exception as _log_err:
+            print(f"  [pick_log] ⚠ Bonus drop posted but logging failed: {_log_err}")
+            print(f"  [pick_log] ⚠ Backfill manually: {best['player']} {best['stat']} {best['direction']} {best['line']} @ {best['odds']} ({best['book']})")
 
 
 def _log_bonus_pick(pick, run_id, today_str, save=True):
@@ -3468,50 +3745,59 @@ def _log_bonus_pick(pick, run_id, today_str, save=True):
         return
     log_path = Path(PICK_LOG_PATH)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    run_time = datetime.now().strftime("%H:%M")
+    run_time = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M")
 
-    # Use the same HEADER as log_picks() to stay in sync
-    BONUS_HEADER = [
-        "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
-        "direction", "proj", "win_prob", "edge", "odds", "book",
-        "tier", "pick_score", "size", "game", "mode", "result",
-        "closing_odds", "clv", "card_slot", "is_home",
-        "context_verdict", "context_reason", "context_score",
-    ]
+    # Canonical schema (audit H-3). Using the exact same object as log_picks()
+    # means header drift between the primary and bonus writers is impossible.
+    BONUS_HEADER = CANONICAL_HEADER
     write_header = not log_path.exists() or log_path.stat().st_size == 0
-    with open(log_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=BONUS_HEADER, extrasaction="ignore")
-        if write_header:
-            writer.writeheader()
-        writer.writerow({
-            "date":       today_str,
-            "run_time":   run_time,
-            "run_type":   "bonus",
-            "sport":      pick.get("sport", ""),
-            "player":     pick.get("player", ""),
-            "team":       pick.get("team_abbrev", ""),
-            "stat":       pick.get("stat", ""),
-            "line":       pick.get("line", ""),
-            "direction":  pick.get("direction", ""),
-            "proj":       f"{pick.get('proj', 0):.2f}",
-            "win_prob":   f"{pick.get('win_prob', 0):.4f}",
-            "edge":       f"{pick.get('adj_edge', 0):.4f}",
-            "odds":       pick.get("odds", ""),
-            "book":       pick.get("book", ""),
-            "tier":       pick.get("tier", ""),
-            "pick_score": f"{pick.get('pick_score', 0):.1f}",
-            "size":       f"{pick.get('size', 0):.2f}",
-            "game":       pick.get("game", ""),
-            "mode":       "",
-            "result":     "",
-            "closing_odds": "",
-            "clv":        "",
-            "card_slot":        "",  # blank for bonus picks
-            "is_home":          pick.get("is_home", ""),
-            "context_verdict":  pick.get("context_verdict", ""),
-            "context_reason":   pick.get("context_reason", ""),
-            "context_score":    pick.get("context_score", ""),
-        })
+    with _pick_log_lock(log_path):
+        with open(log_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=BONUS_HEADER, extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerow({
+                "date":       today_str,
+                "run_time":   run_time,
+                "run_type":   "bonus",
+                "sport":      pick.get("sport", ""),
+                "player":     pick.get("player", ""),
+                "team":       pick.get("team_abbrev", ""),
+                "stat":       pick.get("stat", ""),
+                "line":       pick.get("line", ""),
+                "direction":  pick.get("direction", ""),
+                # M-11 / M-12 / M-10: canonical numeric formatting.
+                "proj":       _normalize_proj(pick.get("proj", 0)),
+                "win_prob":   f"{pick.get('win_prob', 0):.4f}",
+                "edge":       _normalize_edge(pick.get("adj_edge", 0)),
+                # Normalized to sign-prefixed form (PICK_LOG_AUDIT H-3).
+                "odds":       _normalize_odds(pick.get("odds", "")),
+                "book":       _norm_book(pick.get("book", "")),
+                "tier":       pick.get("tier", ""),
+                "pick_score": f"{pick.get('pick_score', 0):.1f}",
+                "size":       _normalize_size(pick.get("size", 0)),
+                "game":       pick.get("game", ""),
+                "mode":       "",
+                "result":     "",
+                "closing_odds": "",
+                "clv":        "",
+                "card_slot":        "",  # blank for bonus picks
+                # M-3: canonical "True"/"False"/"" for is_home.
+                "is_home":          _normalize_is_home(pick.get("is_home", ""),
+                                                        pick.get("stat", "")),
+                "context_verdict":  pick.get("context_verdict", ""),
+                "context_reason":   pick.get("context_reason", ""),
+                "context_score":    pick.get("context_score", ""),
+            })
+            # Commit to disk before releasing the outer lock (audit H-5).
+            f.flush()
+            os.fsync(f.fileno())
+
+    # M-13: refresh sidecar after a successful bonus append.
+    try:
+        _write_schema_sidecar(log_path)
+    except Exception as _sidecar_err:
+        print(f"  ⚠ M-13 sidecar write failed for {log_path}: {_sidecar_err}")
 
 
 # ============================================================
@@ -3536,8 +3822,10 @@ def _killshots_this_week(today_str):
         return 0
     cutoff = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=6)).strftime("%Y-%m-%d")
     try:
-        with open(log_path, "r", newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
+        # Shared lock — don't race a mid-flush CLV/grader write (audit H-8).
+        with _pick_log_lock(log_path):
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
         return sum(
             1 for r in rows
             if r.get("tier") == "KILLSHOT"
@@ -3624,22 +3912,33 @@ def build_killshot_embed(pick, today, suppress_ping=False):
             "description": desc,
             "color":       0xFF0000,
             "thumbnail":   {"url": BRAND_LOGO},
-            "footer":      {"text": f"{today} · edge > everything · high conviction only"},
+            "footer":      {"text": f"{today} · {BRAND_TAGLINE} · high conviction only"},
         }]
     }
 
 
 def post_killshots_to_discord(killshots, today, today_str, suppress_ping=False):
-    """Post each KILLSHOT pick to #killshot channel."""
+    """Post each KILLSHOT pick to #killshot channel.
+
+    Uses per-pick guard keys (killshot:{date}:{player}:{stat}) so a rerun of
+    run_picks.py doesn't re-fire pings for already-posted KILLSHOTS. Guard
+    is only marked on real (non-test) successful posts.
+    """
     if not killshots:
         return
     if not DISCORD_KILLSHOT_WEBHOOK:
         print("  [Discord] DISCORD_KILLSHOT_WEBHOOK not configured — skipping KILLSHOT posts.")
         return
     for pick in killshots:
+        ks_key = f"killshot:{today_str}:{pick.get('player','').strip().lower()}:{pick.get('stat','')}:{pick.get('direction','')}:{pick.get('line','')}"
+        if _discord_already_posted(ks_key):
+            print(f"  [Discord] ⏭️  KILLSHOT already posted: {pick['player']} {pick['stat']} — skipping")
+            continue
         payload = build_killshot_embed(pick, today, suppress_ping=suppress_ping)
         if _webhook_post(DISCORD_KILLSHOT_WEBHOOK, payload, label=f"KILLSHOT: {pick['player']} {pick['stat']}"):
             print(f"  [Discord] 🎯 KILLSHOT posted: {pick['player']} {pick['stat']} ({pick.get('size', 0):.2f}u · Score {pick.get('pick_score', 0):.1f})")
+            if not suppress_ping:
+                _discord_mark_posted(ks_key)
         else:
             print(f"  [Discord] ⚠ KILLSHOT post failed: {pick['player']} {pick['stat']}")
 
@@ -3801,6 +4100,7 @@ def run_context_check(pick, today_str, pregame_notes=""):
 
         # Parse JSON verdict
         verdict, reason, score = "neutral", "", 0
+        parsed_ok = False
 
         m = re.search(r'\{[^{}]+\}', result_text, re.DOTALL)
         if m:
@@ -3808,11 +4108,16 @@ def run_context_check(pick, today_str, pregame_notes=""):
                 data    = json.loads(m.group())
                 verdict = data.get("verdict", "neutral").lower()
                 reason  = data.get("reason", "")
+                try:
+                    score = max(0, min(3, int(data.get("score", 0))))
+                except (TypeError, ValueError):
+                    score = 0
+                parsed_ok = True
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
 
-        # Fallback: keyword scan if JSON didn't parse or reason missing
-        if not reason or verdict not in ("conflicts", "neutral"):
+        # Fallback: keyword scan if JSON didn't parse at all OR verdict is invalid
+        if not parsed_ok or verdict not in ("conflicts", "neutral", "supports"):
             tl = result_text.lower()
             _conflict_words = (
                 "out ", "ruled out", "scratch", "doubtful", "injured", "injury",
@@ -3832,7 +4137,7 @@ def run_context_check(pick, today_str, pregame_notes=""):
         reason = re.sub(r'^[—–\-\s:]+', '', reason).strip()
         reason = " ".join(reason.split()[:10])
 
-        if verdict not in ("conflicts", "neutral"):
+        if verdict not in ("conflicts", "neutral", "supports"):
             verdict = "neutral"
 
     except Exception as e:
@@ -3847,20 +4152,37 @@ def apply_context_sanity(qualified, today_str, skip=False, mode="Default"):
     """Post-gate context sanity layer — runs after all math gates, before sizing.
 
     For each qualifying pick:
-      - Fires a Claude API call (web search enabled) using a sport-specific prompt
-      - Returns structured verdict: 'supports' | 'neutral' | 'conflicts'
-      - On 'conflicts': multiplies conf by CONTEXT_CONFLICT_MULT → recomputes
-        adj_edge and pick_score → re-checks tier minimum edge
-      - Picks that drop below tier min are moved to context_rejects
-        (logged as gate_result = 'CONTEXT_CONFLICT' in diagnostics)
+      - Fires a Claude API call (optional pregame web_search) using a sport-specific prompt
+      - Returns structured verdict: 'supports' | 'neutral' | 'conflicts' + score 0-3
+      - On 'conflicts': pick is cut entirely (moved to context_rejects,
+        gate_result = 'CONTEXT_CONFLICT' in diagnostics)
+      - On 'supports' / 'neutral' / 'skipped' / 'timeout' / 'api error': pick passes
 
     Returns (still_qualified, context_rejects).
-    Pass skip=True (--no-context flag) to bypass entirely.
+    Pass skip=True (--no-context default) to bypass entirely.
+
+    Audit H-11: when the feature is globally disabled (skip=True), we mark
+    the verdict as ``"disabled"`` — NOT ``"skipped"``. These are different
+    states:
+      * ``disabled``  — Jono didn't ask for the context layer. Feature is
+                       dark. Rows with this value were never evaluated.
+      * ``skipped``   — feature was on but we short-circuited for a specific
+                       reason (e.g. anthropic package missing).
+      * ``neutral``   — evaluated, no flags either way.
+      * ``supports``  — evaluated, positive signal.
+      * ``conflicts`` — evaluated, red flag (pick is cut; see caller).
+
+    Keeping them distinct means future schema migrations can tell "never
+    looked" apart from "looked and punted", and any logging bug on the
+    context side fails loudly (unexpected verdict) instead of silently
+    poisoning a blank column.
     """
     if skip or not qualified:
+        # H-11: "disabled" when feature is globally off, not "skipped".
         for p in qualified:
-            p["context_verdict"] = "skipped"
+            p["context_verdict"] = "disabled"
             p["context_reason"]  = ""
+            p["context_score"]   = 0
         return qualified, []
 
     print(f"\n  [Context] Running sanity layer on {len(qualified)} qualifying picks...")
@@ -3923,7 +4245,7 @@ def apply_context_sanity(qualified, today_str, skip=False, mode="Default"):
 
 
 def format_output(premium, safest5, all_qualified, all_picks, mode, today,
-                   safest6_parlay=None, alt_spread_parlay=None):
+                   safest6_parlay=None, alt_spread_parlay=None, max_per_game=2):
     """Format the full output (sections A-J + parlays)."""
     out = []
 
@@ -4006,7 +4328,10 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     out.append("")
 
     # === G. CONTEXT FLAGS ===
-    ctx_picks = [p for p in all_qualified if p.get("context_verdict") not in ("neutral", "skipped", "")]
+    # H-11: "disabled" joins "neutral"/"skipped"/"" as a non-flag verdict —
+    # a disabled-feature row has nothing to report.
+    ctx_picks = [p for p in all_qualified
+                 if p.get("context_verdict") not in ("neutral", "skipped", "disabled", "")]
     if ctx_picks:
         out.append(f"{'='*50}")
         out.append("G. CONTEXT FLAGS")
@@ -4143,7 +4468,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8 enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5", not has_g8_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
-        (f"R7 enforced: Max per game = {max_game}", max_game <= 2),
+        (f"R7 enforced: Max per game = {max_game} (cap: {max_per_game})", max_game <= max_per_game),
         (f"G11 enforced: Max pitcher props per pitcher = {max_pitcher_props}", max_pitcher_props <= 1),
         (f"G11b enforced: Max batter corr props per batter = {max_batter_corr}", max_batter_corr <= 1),
         (f"All sizes ≤ 1.25u", all(p.get("size",0) <= 1.25 for p in all_qualified)),
@@ -4177,12 +4502,31 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
 # ============================================================
 
 def find_csvs(folder=None):
-    folder = Path(folder or CSV_FOLDER)
-    if not folder.exists():
-        return []
-    csvs = sorted(folder.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+    """Scan primary CSV_FOLDER plus fallbacks (Downloads\\projections, Downloads\\).
+    If `folder` is given, only that folder is scanned (preserves legacy behavior).
+    De-duplicates by resolved path so the same CSV shows only once.
+    """
+    if folder is not None:
+        scan_dirs = [Path(folder)]
+    else:
+        scan_dirs = [Path(CSV_FOLDER)] + [Path(p) for p in CSV_FOLDER_FALLBACKS]
+
+    collected = []
+    seen = set()
+    for d in scan_dirs:
+        if not d.exists():
+            continue
+        for c in d.glob("*.csv"):
+            key = str(c.resolve()).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            collected.append(c)
+
+    collected.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
     result = []
-    for c in csvs[:20]:
+    for c in collected[:20]:
         try:
             with open(c, "r", encoding="utf-8-sig") as f:
                 hdr = f.readline().lower()
@@ -4212,6 +4556,8 @@ def main():
     parser.add_argument("--killshot", default="", help="Manually promote picks to KILLSHOT tier (comma-separated player last names, e.g. 'Pastrnak,McDavid')")
     parser.add_argument("--log-manual", action="store_true", help="Log a manually posted pick to pick_log.csv (interactive prompt)")
     parser.add_argument("--confirm",    action="store_true", help="Prompt y/n before every Discord post")
+    parser.add_argument("--max-per-game", type=int, default=2,
+                        help="R7 override: max picks per game (default 2). Use on thin-slate nights e.g. --max-per-game 5")
 
     args = parser.parse_args()
 
@@ -4238,7 +4584,8 @@ def main():
             sys.exit(1)
         print(f"  Found {len(found)} CSV(s):\n")
         for i, f in enumerate(found[:10]):
-            mt = datetime.fromtimestamp(f.stat().st_mtime).strftime("%m/%d %H:%M")
+            # Display mtime in ET for consistency with pick_log dates (audit H-1).
+            mt = datetime.fromtimestamp(f.stat().st_mtime, tz=ZoneInfo("America/New_York")).strftime("%m/%d %H:%M")
             print(f"    [{i+1}] {f.name} ({mt})")
         choice = input(f"\n  Select (e.g. '1' or '1,2'): ").strip()
         if not choice:
@@ -4257,7 +4604,7 @@ def main():
     cooldown = [s.strip() for s in args.cooldown.split(",") if s.strip()]
 
     # Auto-R12: merge pick_log losses (last 5 days) into cooldown list automatically
-    today_str_main = datetime.now().strftime("%Y-%m-%d")
+    today_str_main = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     auto_cool = auto_r12_from_log(today_str_main, window_days=5)
     if auto_cool:
         # Merge: manual --cooldown takes precedence, auto adds any not already listed
@@ -4347,7 +4694,8 @@ def main():
     if args.dry_run:
         out_path = Path(OUTPUT_FOLDER)
         out_path.mkdir(parents=True, exist_ok=True)
-        dp = out_path / f"odds_dry_{datetime.now().strftime('%Y-%m-%d')}.json"
+        # ET date for dry-run filename (audit H-1).
+        dp = out_path / f"odds_dry_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')}.json"
         with open(dp, "w") as f:
             json.dump(odds_data, f, indent=2, default=str)
         print(f"\n  Dry run saved: {dp}")
@@ -4418,7 +4766,8 @@ def main():
             sport_sigmas[sport] = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])
         alt_spread_parlay = build_alt_spread_parlay(all_game_lines, all_team_proj, sport_sigmas, all_alt_spreads)
 
-        today = datetime.now().strftime("%B %d, %Y")
+        # ET-aware date header (audit H-1).
+        today = datetime.now(ZoneInfo("America/New_York")).strftime("%B %d, %Y")
         pout = []
         pout.append(f"{'='*50}")
         pout.append(f"ALT SPREAD PARLAY — {today}")
@@ -4474,7 +4823,7 @@ def main():
     qualified     = [p for p in qualified if p.get("sport") not in SHADOW_SPORTS]
 
     # ── Context sanity layer (disabled — pass --context to enable) ───────────
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     today_str_cs = today_str
     qualified, context_rejects = apply_context_sanity(
         qualified, today_str_cs, skip=not args.context, mode=args.mode
@@ -4499,16 +4848,20 @@ def main():
     )[:15]
     if interesting_fails:
         print(f"\n  Top filtered picks (edge > 3% but failed gates):")
-        print(f"  {'Player':<25} {'Stat':<6} {'Line':>5} {'Dir':<6} {'WP':>6} {'Edge':>6} {'Odds':>6} {'Gate':<12}")
-        print(f"  {'-'*85}")
+        print(f"  {'Player':<25} {'Stat':<6} {'Line':>5} {'Dir':<6} {'WP':>6} {'Edge':>6} {'Odds':>6} {'Gate':<8} {'Game'}")
+        print(f"  {'-'*125}")
         for p in interesting_fails:
-            print(f"  {p['player']:<25} {p['stat']:<6} {p['line']:>5} {p['direction']:<6} {p['win_prob']*100:>5.1f}% {p['adj_edge']*100:>5.1f}% {p['odds']:>6} {p.get('gate_result','?'):<12}")
+            game_str = p.get("game", "")
+            print(f"  {p['player']:<25} {p['stat']:<6} {p['line']:>5} {p['direction']:<6} {p['win_prob']*100:>5.1f}% {p['adj_edge']*100:>5.1f}% {p['odds']:>6} {p.get('gate_result','?'):<8} {game_str}")
 
     if not qualified:
         print("\n  [!] No qualifying picks found. Check CSV data and odds availability.")
         return
 
     # Log shadow picks to their own CSVs (never touches main pick_log)
+    # Apply base sizing first so shadow logs have real unit sizes (not 0)
+    if shadow_picks:
+        shadow_picks = size_picks_base(shadow_picks)
     if not args.no_save:
         for sport, path in SHADOW_LOG_PATHS.items():
             sport_shadow = [p for p in shadow_picks if p.get("sport") == sport]
@@ -4519,10 +4872,10 @@ def main():
     qualified = size_picks_base(qualified) if qualified else []
 
     # Apply caps
-    qualified = apply_caps(qualified, {}) if qualified else []
+    qualified = apply_caps(qualified, {}, max_per_game=args.max_per_game) if qualified else []
 
     # Build Premium 5
-    premium = apply_soft_rules_premium([], qualified) if qualified else []
+    premium = apply_soft_rules_premium([], qualified, max_per_game=args.max_per_game) if qualified else []
 
     # Apply VAKE sizing to Premium 5 only (overwrites base sizing for these 5)
     premium = size_picks_vake(premium) if premium else []
@@ -4538,7 +4891,7 @@ def main():
             p["size"] = _killshot_size(p.get("pick_score", 0))
 
     # Log only premium card picks — only on first run of the day (skip if card already posted)
-    today_str_log = datetime.now().strftime("%Y-%m-%d")
+    today_str_log = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     _card_was_already_up = _card_already_posted_today(today_str_log)
     if not args.no_save and not _card_was_already_up:
         log_picks(premium, args.mode, premium_picks=premium)
@@ -4553,7 +4906,8 @@ def main():
         sport_sigmas[sport] = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])
     alt_spread_parlay = build_alt_spread_parlay(all_game_lines, all_team_proj, sport_sigmas, all_alt_spreads)
 
-    today = datetime.now().strftime("%B %d, %Y")
+    # ET-aware date header (audit H-1).
+    today = datetime.now(ZoneInfo("America/New_York")).strftime("%B %d, %Y")
 
     # === PARLAYS-ONLY MODE ===
     if args.parlays_only:
@@ -4603,7 +4957,8 @@ def main():
 
     # Format full output
     output = format_output(premium, safest5, qualified, all_picks, args.mode, today,
-                           safest6_parlay=safest6_parlay, alt_spread_parlay=alt_spread_parlay)
+                           safest6_parlay=safest6_parlay, alt_spread_parlay=alt_spread_parlay,
+                           max_per_game=args.max_per_game)
 
     # Print
     print("\n" + "=" * 60)
@@ -4614,21 +4969,22 @@ def main():
     if not args.no_save:
         folder = Path(OUTPUT_FOLDER)
         folder.mkdir(parents=True, exist_ok=True)
-        out_path = args.output or str(folder / f"picks_{datetime.now().strftime('%Y-%m-%d')}.txt")
+        # ET date for output filename (matches today_str + pick_log; audit H-1).
+        out_path = args.output or str(folder / f"picks_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')}.txt")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(output)
         print(f"\n  Saved: {out_path}")
 
     # Post to Discord
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     suppress_ping = args.test  # --test suppresses @everyone on all posts
 
     # ── Manual pick logging mode ──────────────────────────────────────────────────
     if args.log_manual:
         print("\n  Log a manually posted pick to pick_log.csv")
         print("  (Use this for picks you posted in Discord without running the model)\n")
-        today_manual = datetime.now().strftime("%Y-%m-%d")
-        run_time_manual = datetime.now().strftime("%H:%M")
+        today_manual = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        run_time_manual = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M")
         player   = input("  Player name: ").strip()
         sport    = input("  Sport (NBA/NHL/MLB/NFL): ").strip().upper()
         team     = input("  Team abbreviation: ").strip().upper()
@@ -4636,29 +4992,87 @@ def main():
         line     = input("  Line (e.g. 24.5): ").strip()
         direction = input("  Direction (over/under): ").strip().lower()
         odds     = input("  Odds (e.g. -115 or +105): ").strip()
-        book     = input("  Book (e.g. draftkings): ").strip().lower()
-        size     = input("  Size in units (e.g. 1.25): ").strip()
+        book     = _norm_book(input("  Book (e.g. draftkings): ").strip().lower())
+        # Size must parse to float — downstream grade_picks/recap math calls float(size).
+        while True:
+            size_raw = input("  Size in units (e.g. 1.25): ").strip()
+            try:
+                size_f = float(size_raw)
+                if size_f <= 0:
+                    print("    ❌ Size must be > 0. Try again.")
+                    continue
+                size = f"{size_f:g}"
+                break
+            except ValueError:
+                print(f"    ❌ '{size_raw}' is not a valid number. Try again.")
         game     = input("  Game (e.g. 'Boston Celtics @ Miami Heat'): ").strip()
         tier     = input("  Tier (T1/T1B/T2/T3/KILLSHOT or leave blank): ").strip().upper() or "MANUAL"
-        log_path = Path(PICK_LOG_PATH)
+        # is_home prompt — required for SPREAD/ML/F5/TEAM_TOTAL so grade_picks resolves the right side.
+        _home_stats = {"SPREAD", "ML_FAV", "ML_DOG", "TEAM_TOTAL",
+                       "F5_SPREAD", "F5_ML", "F5_TOTAL", "NRFI", "YRFI"}
+        is_home_val = ""
+        if stat in _home_stats:
+            ih = input("  Is picked side HOME? (y/n): ").strip().lower()
+            if ih.startswith("y"):
+                is_home_val = "True"
+            elif ih.startswith("n"):
+                is_home_val = "False"
+            # anything else → blank, _resolve_pick_is_home fallback handles it
+        # Normalize odds to canonical sign-prefixed form at write time
+        # (PICK_LOG_AUDIT H-3). Blank -> blank (validator below will catch
+        # it as a missing required field).
+        odds_norm = _normalize_odds(odds)
+
+        # Pre-flight row so we can run the required-field validator BEFORE
+        # acquiring the lock / opening the file. Rejecting here means we
+        # never persist a half-typed manual pick (PICK_LOG_AUDIT H-4).
+        manual_row = {
+            "date": today_manual,
+            "sport": sport,
+            "stat": stat,
+            "line": line,
+            "direction": direction,
+            "odds": odds_norm,
+            "book": book,
+            "size": size,
+        }
+        try:
+            _assert_manual_row_valid(manual_row)
+        except Exception as e:
+            print(f"\n  ❌ Manual pick rejected: {e}")
+            print("  Nothing was written. Try again with every field filled.")
+            return
+
+        # Manual picks go to their own log — keeps model-generated pick_log.csv clean.
+        log_path = Path(PICK_LOG_MANUAL_PATH)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         write_header = not log_path.exists() or log_path.stat().st_size == 0
-        with open(log_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            if write_header:
+        # Shared FileLock for the manual log too, so the grader/analyzer can't
+        # read mid-append and see a partial row (audit H-5 / H-8).
+        with _pick_log_lock(log_path):
+            with open(log_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(CANONICAL_HEADER)
                 writer.writerow([
-                    "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
-                    "direction", "proj", "win_prob", "edge", "odds", "book",
-                    "tier", "pick_score", "size", "game", "mode", "result",
-                    "closing_odds", "clv", "card_slot", "is_home",
-                    "context_verdict", "context_reason", "context_score",
+                    today_manual, run_time_manual, "manual", sport, player, team, stat, line,
+                    direction, "", "", "", odds_norm, book,
+                    # M-10: canonical 2-decimal size for manual rows too.
+                    # M-3: canonical is_home (handles "1"/"true"/etc).
+                    tier, "", _normalize_size(size), game, "Default", "", "", "", "",
+                    _normalize_is_home(is_home_val, stat),
+                    "", "", "",  # context_verdict, context_reason, context_score
                 ])
-            writer.writerow([
-                today_manual, run_time_manual, "manual", sport, player, team, stat, line,
-                direction, "", "", "", odds, book,
-                tier, "", size, game, "Default", "", "", "", "", "",
-                "", "", "",  # context_verdict, context_reason, context_score
-            ])
-        print(f"\n  ✅ Logged: {player} {direction.upper()} {line} {stat} ({sport}) to pick_log.csv")
+                # Commit to disk before releasing the outer lock (audit H-5).
+                f.flush()
+                os.fsync(f.fileno())
+        # M-13: refresh the manual log's sidecar — manual and main logs
+        # share the 27-column schema but each gets its own versioned sidecar.
+        try:
+            _write_schema_sidecar(log_path)
+        except Exception as _sidecar_err:
+            print(f"  ⚠ M-13 sidecar write failed for {log_path}: {_sidecar_err}")
+        print(f"\n  ✅ Logged: {player} {direction.upper()} {line} {stat} ({sport}) to pick_log_manual.csv")
         print("\n  Done. Let's eat.\n")
         return
 
@@ -4666,10 +5080,13 @@ def main():
     if args.repost:
         log_path = Path(PICK_LOG_PATH)
         if log_path.exists():
-            with open(log_path, "r", newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                repost_rows = [r for r in reader if r.get("run_type", "primary") == "primary"
-                               and r.get("date", "") == today_str]
+            # Shared reader lock — don't race a mid-flush CLV/grader write (audit H-8).
+            with _pick_log_lock(log_path):
+                with open(log_path, "r", newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    repost_rows = [r for r in reader
+                                   if r.get("run_type", "") in {"primary", "", None}
+                                   and r.get("date", "") == today_str]
             if repost_rows:
                 # Reconstruct minimal pick dicts from log
                 repost_picks = []

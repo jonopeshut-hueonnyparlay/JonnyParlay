@@ -12,7 +12,7 @@ Discord bot display name: **PicksByJonny**
 | Name | What |
 |------|------|
 | **JonnyParlay** | Python betting engine — run_picks.py + grade_picks.py. Runs on Windows at `C:\Users\jono4\Documents\JonnyParlay\` |
-| **Discord Overhaul** | Full server rebuild. Phase 1 = design (locked). Phase 2 = manual Discord build (in progress). |
+| **Discord Overhaul** | Full server rebuild — **done**. Phase 1 design + Phase 2 manual build both shipped. |
 | **KILLSHOT** | Premium tier. Live and fully wired. Score ≥ 90 auto-qualifies. Sizing: 90-100 → 3u, 100-110 → 4u, 110+ → 5u. Weekly cap: 3. Posts to #killshot with @everyone. |
 | **KairosEdge** | Halftime trade system — buying trailing team YES in full-game winner market. Tracked separately from props. |
 

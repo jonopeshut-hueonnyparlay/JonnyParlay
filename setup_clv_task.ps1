@@ -25,12 +25,13 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances    IgnoreNew `
     -ExecutionTimeLimit   (New-TimeSpan -Hours 12) `
     -StartWhenAvailable   `
+    -WakeToRun            `
     -DontStopIfGoingOnBatteries `
     -AllowStartIfOnBatteries
 
 $principal = New-ScheduledTaskPrincipal `
     -UserId    $env:USERNAME `
-    -LogonType Interactive `
+    -LogonType S4U `
     -RunLevel  Highest
 
 Register-ScheduledTask `
