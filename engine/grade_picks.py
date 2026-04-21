@@ -10,10 +10,26 @@ Usage:
     python grade_picks.py --dry-run        # Show what would be graded without writing
 """
 
-import csv, json, os, sys, time, argparse, calendar, logging
+import csv, json, os, sys, time, argparse, logging, tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
+
+# filelock is a hard dependency (audit C-1). A missing lock re-opens the race
+# conditions Section 2 (fsync) and Section 3 (Discord guard) closed.
+try:
+    from filelock import FileLock, Timeout as FileLockTimeout
+except ImportError as e:
+    raise ImportError(
+        "filelock is required for pick_log/Discord-guard safety. "
+        "Install it: pip install filelock --break-system-packages"
+    ) from e
+
+# Canonical locked-reader helper lives in pick_log_io.py and is used by every
+# other reader of pick_log (analyze_picks, clv_report, weekly_recap,
+# morning_preview, results_graphic). Grade_picks.py keeps a local wrapper
+# (_read_rows_locked below) with the same semantics so fall-through warnings
+# route through the grader's file logger. Audit H-8 / M-series, closed Apr 20 2026.
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -24,35 +40,71 @@ except ImportError:
     print("  pip install requests --break-system-packages")
     sys.exit(1)
 
-# ── Config ──────────────────────────────────────────────────
-PICK_LOG_PATH      = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log.csv")
-PICK_LOG_MLB_PATH  = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log_mlb.csv")
-DISCORD_GUARD_FILE = os.path.expanduser("~/Documents/JonnyParlay/data/discord_posted.json")
-LOG_FILE_PATH      = os.path.expanduser("~/Documents/JonnyParlay/data/jonnyparlay.log")
+# Canonical player-name folding (audit H-3). Before this import, grade_picks
+# used a local _norm that did NOT strip accents, so "Dončić" (API) never
+# matched "Doncic" (ledger). That pick stayed ungraded forever.
+from name_utils import fold_name as _fold_name  # noqa: E402
 
-# All log paths — main log first, then shadow sport logs
-ALL_LOG_PATHS = [PICK_LOG_PATH, PICK_LOG_MLB_PATH]
+# Shared HTTP helpers (audit M-4 + M-16). Canonical UA on every outbound
+# request + robust Retry-After parsing for 429s.
+from http_utils import JONNYPARLAY_UA, default_headers, retry_after_secs  # noqa: E402
+
+# ── Config ──────────────────────────────────────────────────
+# Audit M-26 (closed Apr 21 2026): all path constants now resolve via
+# engine/paths.py. A $JONNYPARLAY_ROOT env var overrides the historical
+# ~/Documents/JonnyParlay hardcode — that's the clean Cowork escape hatch
+# and replaces the symlink workaround documented in CLAUDE.md. On Windows
+# with no env var set, paths.py falls back to ~/Documents/JonnyParlay, so
+# existing deployments see zero behavioral change.
+#
+# Values are coerced to str() so downstream str+"." concatenation in the
+# discord_posted.json tempfile path still works — several callers build
+# the tempfile prefix off os.path.basename(DISCORD_GUARD_FILE) + ".".
+from paths import (  # noqa: E402
+    PICK_LOG_PATH as _PICK_LOG_PATH_P,
+    PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
+    PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
+    LOG_FILE_PATH as _LOG_FILE_PATH_P,
+)
+PICK_LOG_PATH        = str(_PICK_LOG_PATH_P)
+PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
+PICK_LOG_MLB_PATH    = str(_PICK_LOG_MLB_PATH_P)
+DISCORD_GUARD_FILE   = str(_DISCORD_GUARD_FILE_P)
+LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
+
+# All log paths — main log first, then manual, then shadow sport logs.
+# Manual picks are graded alongside primary/bonus so recap totals are accurate,
+# but live in their own file to keep model-generated data clean.
+ALL_LOG_PATHS = [PICK_LOG_PATH, PICK_LOG_MANUAL_PATH, PICK_LOG_MLB_PATH]
 # Shadow sports: grade silently, no Discord post
 SHADOW_SPORTS = {"MLB"}
 
 BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636209221566625/JonnyParlaylogoRedBlack.png"
 
 # ── File logger setup (file only — console output stays as print()) ───────────
-_log_dir = Path(LOG_FILE_PATH).parent
-_log_dir.mkdir(parents=True, exist_ok=True)
+# Rotation is wired through engine/log_setup.attach_rotating_handler so
+# jonnyparlay.log can't grow unbounded. Audit M-25 closed Apr 20 2026 — swapping
+# a plain FileHandler for a RotatingFileHandler keeps the on-disk path identical
+# but caps total history at ROTATION_MAX_BYTES × (ROTATION_BACKUP_COUNT + 1).
+# Since run_picks.py ALSO attaches to the "jonnyparlay" logger, the helper is
+# idempotent — whichever module imports first wins, the second call is a no-op.
+from log_setup import attach_rotating_handler  # noqa: E402
 logger = logging.getLogger("jonnyparlay")
 logger.setLevel(logging.INFO)
-if not logger.handlers:
-    _fh = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
-    _fh.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-    logger.addHandler(_fh)
+attach_rotating_handler(logger, LOG_FILE_PATH)
 logger.propagate = False  # Don't bubble up to root logger (avoids duplicate prints)
 
-# ── Discord Webhooks ─────────────────────────────────────────
-DISCORD_RECAP_WEBHOOK   = "https://discord.com/api/webhooks/1493388658638848344/1RixaqCAX9kYdjrfDPt9bLKrr3Xn1LQmNvzWHAutT62k09dSsdhvOYBb18JhkS49mwU0"
-DISCORD_MONTHLY_WEBHOOK = "https://discord.com/api/webhooks/1493398458357383420/YOxYOEjexatDSvAoGnNA-76dP1cX57jKj7frfvwR-4nosBjmXhCZkUKJ5efJ6dDoXkXr"
-DISCORD_ANNOUNCE_WEBHOOK = "https://discord.com/api/webhooks/1493399935515889768/GV9M__Wd2ZC037gJ_3zFhjWKGDE_srWzhzQYWIAvmUpAscgRO1p-XjgkS0zVLgK_4s_x"  # → #announcements
-ODDS_API_KEY = "adb07e9742307895c8d7f14264f52aee"
+# ── Secrets (Odds API key + Discord webhooks) ────────────────
+# Loaded from environment or .env file — see secrets_config.py.
+# Covers audit findings C-5 (hardcoded API key) + C-6 (hardcoded webhooks).
+from secrets_config import (
+    ODDS_API_KEY,
+    DISCORD_RECAP_WEBHOOK,       # → #daily-recap
+    DISCORD_MONTHLY_WEBHOOK,     # → #monthly-tracker
+    DISCORD_ANNOUNCE_WEBHOOK,    # → #announcements
+)
+
 ODDS_BASE = "https://api.the-odds-api.com/v4"
 SPORT_KEYS = {
     "NBA": "basketball_nba", "NHL": "icehockey_nhl",
@@ -79,45 +131,59 @@ GAME_LINE_STATS = {"TOTAL", "SPREAD", "TEAM_TOTAL", "ML_FAV", "ML_DOG",
                    "F5_TOTAL", "F5_SPREAD", "F5_ML", "NRFI", "YRFI",
                    "GOLF_WIN"}
 
-
-_BOOK_DISPLAY = {
-    # CO_LEGAL_BOOKS — must match keys used by run_picks.py exactly
-    "espnbet":        "theScore Bet",
-    "hardrockbet":    "Hard Rock Bet",
-    "draftkings":     "DraftKings",
-    "fanduel":        "FanDuel",
-    "williamhill_us": "Caesars",
-    "betmgm":         "BetMGM",
-    "betrivers":      "BetRivers",
-    "ballybet":       "Bally Bet",
-    "betparx":        "BetParx",
-    "pointsbetus":    "PointsBet",
-    "bet365":         "bet365",
-    "fanatics":       "Fanatics",
-    "twinspires":     "TwinSpires",
-    "circasports":    "Circa",
-    "superbook":      "SuperBook",
-    "tipico":         "Tipico",
-    "wynnbet":        "WynnBET",
-    "betway":         "Betway",
-    # Sharp / offshore / other books used in CLV comparison
-    "unibet_us":      "Unibet",
-    "lowvig":         "LowVig",
-    "novig":          "Novig",
-    "betonlineag":    "BetOnline",
-    "mybookieag":     "MyBookie",
-    "pinnacle":       "Pinnacle",
-    "fliff":          "Fliff",
-}
+# Terminal grader states (audit M-23, closed Apr 20 2026).
+#
+# Once a row's `result` column holds any of these values it is considered
+# permanently graded — the grader must never re-fetch boxscores for it,
+# re-grade it, or overwrite the value on a later run. Treat this as the
+# single source of truth for "is this pick done?".
+#
+#   W     — won
+#   L     — lost
+#   P     — push (stake refunded, excluded from ROI denominator)
+#   VOID  — canceled / DNP (stake refunded, excluded from ROI denominator)
+#
+# Refunded outcomes (P + VOID) must be excluded from risked/ROI math — see
+# weekly_recap._REFUNDED_RESULTS (audit H-5) and results_graphic.daily_stats
+# (audit M-23). Downstream readers should compare case-insensitively and
+# .strip() first to tolerate whitespace from manual edits.
+TERMINAL_RESULTS = frozenset({"W", "L", "P", "VOID"})
 
 
-def display_book(key: str) -> str:
-    """Map internal API book key to display name. Handles region suffixes (e.g. hardrockbet_fl)."""
-    key_lower = key.lower()
-    if key_lower in _BOOK_DISPLAY:
-        return _BOOK_DISPLAY[key_lower]
-    base = key_lower.rsplit("_", 1)[0] if "_" in key_lower else key_lower
-    return _BOOK_DISPLAY.get(base, key.title())
+def _is_terminal_result(raw: object) -> bool:
+    """Case-insensitive, whitespace-tolerant membership test for TERMINAL_RESULTS.
+
+    Centralizes the "has this row been graded?" question so every call site
+    uses the same rule. Empty strings, None, and unknown values all return
+    False, which means the row is still eligible for grading.
+    """
+    if raw is None:
+        return False
+    return str(raw).strip().upper() in TERMINAL_RESULTS
+
+
+# Sportsbook display contract — canonical definition in book_names.py (audit H-13).
+# Kept _BOOK_DISPLAY as an alias for backwards-compat with any call site that
+# references it directly.
+from book_names import BOOK_DISPLAY as _BOOK_DISPLAY, display_book  # noqa: E402
+
+# Locale-independent English month names (audit M-22). ``calendar.month_name``
+# returns localized strings on non-en-US Windows installs — picksbyjonny is
+# an English brand and monthly summary posts must stay English regardless
+# of the host's LC_ALL / system locale.
+from month_names import MONTH_NAMES  # noqa: E402
+
+# Centralized brand tagline (audit L-7).
+from brand import BRAND_TAGLINE  # noqa: E402
+
+# Shared atomic-JSON writer (architectural note #2) — replaces the inline
+# tmp+fsync+replace fallback in _save_guard.
+from io_utils import atomic_write_json  # noqa: E402
+
+# Schema sidecar writer (audit arch note #5). Every writer path must refresh
+# the sidecar after a successful write so readers can fail-fast on forward-
+# incompatible schema drift without sniffing the CSV header.
+from pick_log_schema import write_schema_sidecar as _write_schema_sidecar  # noqa: E402
 
 
 def fmt_date(date_str: str) -> str:
@@ -140,7 +206,9 @@ def fetch_scores(sport, date_str):
         "daysFrom": 3,  # look back 3 days
     }
     try:
-        r = requests.get(f"{ODDS_BASE}/sports/{sk}/scores", params=params, timeout=15)
+        # Audit M-16: canonical UA on every outbound API call.
+        r = requests.get(f"{ODDS_BASE}/sports/{sk}/scores", params=params,
+                         headers=default_headers(), timeout=15)
         r.raise_for_status()
         scores = r.json()
         # Filter to completed games on the target date
@@ -175,7 +243,8 @@ def fetch_nba_boxscore(date_str):
     espn_date = date_str.replace("-", "")
     try:
         r = requests.get(f"{ESPN_NBA_BASE}/scoreboard",
-                         params={"dates": espn_date}, timeout=15)
+                         params={"dates": espn_date},
+                         headers=default_headers(), timeout=15)
         r.raise_for_status()
         events = r.json().get("events", [])
         player_stats = {}
@@ -184,7 +253,8 @@ def fetch_nba_boxscore(date_str):
             event_id = event.get("id")
             try:
                 box = requests.get(f"{ESPN_NBA_BASE}/summary",
-                                   params={"event": event_id}, timeout=15)
+                                   params={"event": event_id},
+                                   headers=default_headers(), timeout=15)
                 box.raise_for_status()
                 box_data = box.json()
 
@@ -220,7 +290,8 @@ def fetch_nba_boxscore(date_str):
 def fetch_nhl_boxscores(date_str):
     """Fetch NHL player stats from NHL API."""
     try:
-        r = requests.get(f"{NHL_STATS_BASE}/score/{date_str}", timeout=15)
+        r = requests.get(f"{NHL_STATS_BASE}/score/{date_str}",
+                         headers=default_headers(), timeout=15)
         r.raise_for_status()
         data = r.json()
         player_stats = {}
@@ -228,7 +299,8 @@ def fetch_nhl_boxscores(date_str):
         for game in data.get("games", []):
             game_id = game.get("id")
             try:
-                box = requests.get(f"{NHL_STATS_BASE}/gamecenter/{game_id}/boxscore", timeout=15)
+                box = requests.get(f"{NHL_STATS_BASE}/gamecenter/{game_id}/boxscore",
+                                   headers=default_headers(), timeout=15)
                 box.raise_for_status()
                 box_data = box.json()
 
@@ -262,7 +334,8 @@ def fetch_mlb_boxscores(date_str):
     """Fetch MLB player stats from MLB Stats API."""
     try:
         r = requests.get(f"{MLB_STATS_BASE}/schedule",
-                        params={"sportId": 1, "date": date_str}, timeout=15)
+                        params={"sportId": 1, "date": date_str},
+                        headers=default_headers(), timeout=15)
         r.raise_for_status()
         data = r.json()
         player_stats = {}
@@ -271,7 +344,8 @@ def fetch_mlb_boxscores(date_str):
             for game in date_entry.get("games", []):
                 game_pk = game.get("gamePk")
                 try:
-                    box = requests.get(f"{MLB_STATS_BASE}/game/{game_pk}/boxscore", timeout=15)
+                    box = requests.get(f"{MLB_STATS_BASE}/game/{game_pk}/boxscore",
+                                       headers=default_headers(), timeout=15)
                     box.raise_for_status()
                     box_data = box.json()
 
@@ -331,7 +405,8 @@ def fetch_mlb_linescores(date_str):
     """
     try:
         r = requests.get(f"{MLB_STATS_BASE}/schedule",
-                         params={"sportId": 1, "date": date_str}, timeout=15)
+                         params={"sportId": 1, "date": date_str},
+                         headers=default_headers(), timeout=15)
         r.raise_for_status()
         data = r.json()
         linescores = {}
@@ -347,7 +422,8 @@ def fetch_mlb_linescores(date_str):
                 if not game_pk or not home or not away:
                     continue
                 try:
-                    ls = requests.get(f"{MLB_STATS_BASE}/game/{game_pk}/linescore", timeout=15)
+                    ls = requests.get(f"{MLB_STATS_BASE}/game/{game_pk}/linescore",
+                                      headers=default_headers(), timeout=15)
                     ls.raise_for_status()
                     innings = ls.json().get("innings", [])
                     game_key = f"{away} @ {home}".lower()
@@ -395,8 +471,71 @@ NBA_ABBREV = {
 }
 
 
+# ── Ambiguous 2-letter team codes ─────────────────────────────────────────────
+# Audit H-4: a raw "LA" in the ledger's team field matches both Lakers and
+# Clippers on substring — whichever NBA game was seen first in the scores
+# dict "wins" the match. Same with "NY" (Knicks vs Nets), "SF" (49ers vs
+# Giants), "SD" (old Padres).
+#
+# We refuse to best-guess these. A caller that sees an ambiguous code treats
+# the pick as ungraded (returns None) and logs a loud warning so Jono can
+# fix the ledger entry. The authoritative 3-letter forms (LAL, LAC, NYK,
+# BKN, etc.) are unambiguous and keep working.
+#
+# Values are the list of full 3-letter codes the ambiguous short form might
+# have meant — used purely for the warning text so the message tells Jono
+# which specific teams he might have intended.
+AMBIGUOUS_TEAM_CODES: dict[str, list[str]] = {
+    "LA":  ["LAL", "LAC"],   # Lakers vs Clippers
+    "NY":  ["NYK", "BKN"],   # Knicks vs Nets (treating BKN as "New York area")
+    "SF":  [],                # 49ers vs Giants (NFL + MLB cross-sport)
+    "SD":  [],                # Old Padres SD — formally dead but still appears
+}
+
+
+def is_ambiguous_team_code(code: str | None) -> bool:
+    """True when a raw team code is known to collide across two teams.
+
+    Case-insensitive. Blank / None → False (nothing to disambiguate).
+    """
+    if not code:
+        return False
+    return str(code).strip().upper() in AMBIGUOUS_TEAM_CODES
+
+
+def describe_team_ambiguity(code: str | None) -> str:
+    """Human-readable warning text for an ambiguous 2-letter code.
+
+    Used in grader log messages so Jono can see which specific codes he
+    should have used. Example::
+
+        >>> describe_team_ambiguity("LA")
+        "'LA' is ambiguous between LAL / LAC — use a 3-letter code."
+    """
+    if not code:
+        return ""
+    k = str(code).strip().upper()
+    candidates = AMBIGUOUS_TEAM_CODES.get(k, [])
+    if candidates:
+        return f"'{k}' is ambiguous between {' / '.join(candidates)} — use a 3-letter code."
+    return f"'{k}' is a known ambiguous 2-letter team code — use a 3-letter code."
+
+
 def grade_daily_lay(row, all_scores):
-    """Grade the daily lay parlay (always NBA). All legs must cover for W."""
+    """Grade the daily lay parlay (always NBA). All legs must cover for W.
+
+    Push handling: pushing legs drop out of the parlay and the remainder is
+    regraded. If every leg pushes, the parlay is a push. Any losing leg = L.
+
+    Invariants (tested in test_grade_daily_lay.py, covers audit C-10):
+        * Any leg with result_val < 0 → function returns "L" IMMEDIATELY
+          inside the loop. Subsequent legs are not evaluated.
+        * Therefore the "return 'W'" fall-through at the bottom is only
+          reachable when zero legs lost — it's safe as a default because
+          an all-loss parlay cannot reach that line.
+        * "return 'P'" fall-through is only reachable when every leg pushed.
+        * Unparseable/unmatched leg → return None (pick stays ungraded).
+    """
     game_desc = row.get("game", "")
     date_str  = row.get("date", "")
     nba_scores = all_scores.get((date_str, "NBA"), {})
@@ -407,20 +546,54 @@ def grade_daily_lay(row, all_scores):
     if not legs_raw:
         return None
 
+    pushed = 0
+    won    = 0
     for leg in legs_raw:
         parts = leg.strip().split()
         if len(parts) < 2:
             return None
-        abbrev = parts[0].upper()
-        try:
-            spread = float(parts[1])
-        except ValueError:
+        # Spread is the LAST signed-number token (handles multi-word team names)
+        spread = None
+        team_tokens = []
+        for tok in parts:
+            try:
+                # Accept "+4.5", "-6.5", "4.5"
+                f = float(tok.lstrip("+"))
+                spread = f
+                if tok.startswith("-"):
+                    spread = -abs(spread)
+            except ValueError:
+                team_tokens.append(tok)
+        if spread is None or not team_tokens:
             return None
 
-        team_frag = NBA_ABBREV.get(abbrev, abbrev).lower()
+        team_str = " ".join(team_tokens).strip()
+        team_upper = team_str.upper()
+
+        # H-4: refuse to best-guess ambiguous 2-letter codes ("LA", "NY").
+        # Substring-matching "LA" against "Los Angeles Lakers @ Los Angeles
+        # Clippers" would match both halves of the game. A daily lay leg with
+        # an ambiguous team is unresolvable — drop the whole parlay as
+        # ungraded and warn so Jono can fix the source row.
+        if is_ambiguous_team_code(team_upper):
+            logger.warning(
+                f"[grade_daily_lay] {describe_team_ambiguity(team_upper)} "
+                f"(leg={leg!r}, game={game_desc!r}) — parlay stays ungraded."
+            )
+            return None
+
+        # Accept both abbreviations ("OKC") and full names ("Oklahoma City Thunder")
+        team_frag = NBA_ABBREV.get(team_upper, team_str).lower()
+
         matched = None
         for key, gdata in nba_scores.items():
-            if team_frag in key.lower():
+            key_lower = key.lower()
+            if team_frag in key_lower or team_str.lower() in key_lower:
+                matched = gdata
+                break
+            # Token-wise match: any meaningful (len>=4) token present in key
+            meaningful = [t.lower() for t in team_tokens if len(t) >= 4]
+            if meaningful and any(m in key_lower for m in meaningful):
                 matched = gdata
                 break
         if not matched:
@@ -431,16 +604,22 @@ def grade_daily_lay(row, all_scores):
             return None
 
         home_team = matched.get("home_team", "").lower()
-        is_away = team_frag not in home_team
+        # Team is home if its fragment (or any meaningful token) appears in home_team
+        meaningful = [t.lower() for t in team_tokens if len(t) >= 4]
+        is_home = team_frag in home_team or any(m in home_team for m in meaningful)
+        is_away = not is_home
         margin = (away_score - home_score) if is_away else (home_score - away_score)
         result_val = margin + spread
         if result_val < 0:
-            return "L"
+            return "L"            # any leg lost → parlay lost
         if result_val == 0:
-            return "P"
-        # leg covered — continue
+            pushed += 1           # leg pushes, drop from parlay
+            continue
+        won += 1                  # leg covered
 
-    return "W"
+    if won == 0 and pushed == len(legs_raw):
+        return "P"               # every leg pushed
+    return "W"                    # remaining legs all covered
 
 
 def _find_linescore_innings(game_str, linescores):
@@ -467,8 +646,22 @@ def _find_linescore_innings(game_str, linescores):
 
 def _resolve_pick_is_home(pick, away_team):
     """BUG G1/G2/G3 fix: determine if pick is on home team.
-    Uses is_home field (logged since fix) when available; falls back to string
-    matching for legacy rows that pre-date the fix.
+
+    Returns:
+        True  — pick is on the home side.
+        False — pick is on the away side.
+        None  — can't reliably determine (ambiguous team code on a legacy row
+                with no is_home field). Caller should treat the pick as
+                ungraded rather than best-guess.
+
+    Uses ``is_home`` field (logged since fix) when available; falls back to
+    string matching for legacy rows that pre-date the fix.
+
+    Audit H-4: fallback path refuses to guess for ambiguous 2-letter codes
+    (LA / NY / SF / SD). Previously, "LA" in the team field would substring-
+    match Lakers, Clippers, Los Angeles Angels, etc. — whichever was
+    iterated first. Now we log a warning and return None so the caller can
+    skip grading.
     """
     is_home_field = pick.get("is_home", "")
     if is_home_field is not None and str(is_home_field).strip() != "":
@@ -476,9 +669,33 @@ def _resolve_pick_is_home(pick, away_team):
     # Fallback for old rows: string-match pick identifiers against away_team full name
     pick_team = pick.get("team", "").strip()
     player_field = pick.get("player", "").strip()
+    away_lower = (away_team or "").lower()
+    if not away_lower:
+        return True  # no away team info; assume home (caller's usual default)
+
+    # H-4 guard: ambiguous 2-letter team codes can't be resolved by substring
+    # match. Bail out loudly instead of silently grading against the wrong
+    # side. Only triggers on the legacy-fallback path — modern rows have
+    # is_home populated and hit the short-circuit above.
+    if is_ambiguous_team_code(pick_team):
+        logger.warning(
+            f"[_resolve_pick_is_home] {describe_team_ambiguity(pick_team)} "
+            f"No is_home field on pick (game={pick.get('game','?')!r}, "
+            f"player={player_field!r}) — refusing to best-guess. Pick stays ungraded."
+        )
+        return None
+
     is_away = False
     for identifier in [pick_team, player_field]:
-        if identifier and any(t.lower() in away_team.lower() for t in identifier.split() if len(t) > 2):
+        if not identifier:
+            continue
+        # Whole-identifier substring check (handles 2-char abbrevs like "LA", "NY")
+        if identifier.lower() in away_lower or away_lower in identifier.lower():
+            is_away = True
+            break
+        # Token-level check for multi-word identifiers
+        tokens = [t for t in identifier.split() if len(t) >= 2]
+        if any(t.lower() in away_lower for t in tokens):
             is_away = True
             break
     return not is_away
@@ -492,7 +709,11 @@ def grade_game_line(pick, scores_by_game, linescores=None):
     stat = pick["stat"]
     game = pick["game"]
     direction = pick["direction"]
-    line = float(pick["line"])
+    try:
+        line = float(pick["line"])
+    except (ValueError, TypeError, KeyError):
+        logger.warning(f"[grade_game_line] Bad line value for {pick.get('game','?')} {stat}: {pick.get('line','')!r} — skipping")
+        return None
 
     # Find matching game in scores
     matched = None
@@ -536,6 +757,8 @@ def grade_game_line(pick, scores_by_game, linescores=None):
 
     elif stat == "SPREAD":
         pick_is_home = _resolve_pick_is_home(pick, away_team)
+        if pick_is_home is None:
+            return None  # H-4: ambiguous team code, ungradable
         if pick_is_home:
             margin = home_score - away_score
         else:
@@ -547,6 +770,8 @@ def grade_game_line(pick, scores_by_game, linescores=None):
 
     elif stat in ("ML_FAV", "ML_DOG"):
         pick_is_home = _resolve_pick_is_home(pick, away_team)
+        if pick_is_home is None:
+            return None  # H-4: ambiguous team code, ungradable
         if pick_is_home:
             return "W" if home_score > away_score else ("L" if away_score > home_score else "P")
         else:
@@ -576,6 +801,8 @@ def grade_game_line(pick, scores_by_game, linescores=None):
         # Previous substring match on player field was broken: 3-char abbreviations
         # were filtered by len(w) > 3, so it always graded against home score.
         pick_is_home = _resolve_pick_is_home(pick, away_team)
+        if pick_is_home is None:
+            return None  # H-4: ambiguous team code, ungradable
         team_score = home_score if pick_is_home else away_score
         if direction == "over":
             if team_score > line: return "W"
@@ -613,6 +840,8 @@ def grade_game_line(pick, scores_by_game, linescores=None):
 
         elif stat == "F5_SPREAD":
             pick_is_home = _resolve_pick_is_home(pick, away_team)
+            if pick_is_home is None:
+                return None  # H-4: ambiguous team code, ungradable
             margin = (f5_home - f5_away) if pick_is_home else (f5_away - f5_home)
             result_val = margin + line
             if result_val > 0: return "W"
@@ -621,6 +850,8 @@ def grade_game_line(pick, scores_by_game, linescores=None):
 
         else:  # F5_ML
             pick_is_home = _resolve_pick_is_home(pick, away_team)
+            if pick_is_home is None:
+                return None  # H-4: ambiguous team code, ungradable
             if pick_is_home:
                 return "W" if f5_home > f5_away else ("L" if f5_away > f5_home else "P")
             else:
@@ -671,7 +902,11 @@ def grade_prop(pick, player_stats, scores_by_game=None):
     """
     player = pick["player"].lower()
     stat = pick["stat"]
-    line = float(pick["line"])
+    try:
+        line = float(pick["line"])
+    except (ValueError, TypeError, KeyError):
+        logger.warning(f"[grade_prop] Bad line value for {pick.get('player','?')} {stat}: {pick.get('line','')!r} — skipping")
+        return None
     direction = pick["direction"]
 
     # Gate: only grade if we can confirm the game is finished
@@ -681,15 +916,42 @@ def grade_prop(pick, player_stats, scores_by_game=None):
 
     # Try exact match first, then partial
     actual = None
-    if player in player_stats:
-        actual = player_stats[player].get(stat)
-    else:
-        # Fuzzy: try last name match
-        last_name = player.split()[-1].lower() if player else ""
+    # Shared canonical folding (audit H-3) — accent-stripping, lowercasing,
+    # punctuation removal live in name_utils.fold_name so the grader and
+    # run_picks agree on name identity. Using the local helper keeps call
+    # sites short while the contract is defined in one place.
+    def _norm(s):
+        return _fold_name(s)
+
+    player_norm = _norm(player)
+    # Exact match on normalized keys
+    for name, stats in player_stats.items():
+        if _norm(name) == player_norm:
+            actual = stats.get(stat)
+            break
+
+    if actual is None:
+        # Fuzzy: last name match, suffix-aware
+        _SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+        tokens = [t for t in player_norm.split() if t and t not in _SUFFIXES]
+        last_name = tokens[-1] if tokens else ""
+        first_name = tokens[0] if tokens else ""
+        # Prefer matches with BOTH first + last name to avoid collisions
+        best_candidate = None
         for name, stats in player_stats.items():
-            if last_name and last_name in name.lower():
-                actual = stats.get(stat)
-                break
+            name_norm = _norm(name)
+            name_tokens = set(name_norm.split())
+            if last_name and last_name in name_tokens:
+                if first_name and first_name in name_tokens:
+                    # Strong match — first + last name both present
+                    actual = stats.get(stat)
+                    best_candidate = None
+                    break
+                elif best_candidate is None:
+                    # Weak fallback — last name only
+                    best_candidate = stats.get(stat)
+        if actual is None and best_candidate is not None:
+            actual = best_candidate
 
     if actual is None:
         # Game is confirmed complete but player not in any boxscore → DNP/scratch
@@ -733,17 +995,22 @@ def _confirm_post(label):
 def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
     """POST a JSON payload to a Discord webhook. Retries on failure with exponential backoff.
     If _CONFIRM_MODE is True, prompts for y/n confirmation before sending.
+
+    Audit M-4 / M-16: routes through http_utils.retry_after_secs (which
+    prefers the ``Retry-After`` header and tolerates empty / non-JSON 429
+    bodies) and carries the canonical JonnyParlay User-Agent.
     """
     if not url:
         return False
     if not _confirm_post(label):
         print(f"  [Confirm] ⏭️  Skipped: {label}")
         return False
+    headers = default_headers()
     for attempt in range(1, retries + 1):
         try:
-            r = requests.post(url, json=payload, timeout=10)
+            r = requests.post(url, json=payload, headers=headers, timeout=10)
             if r.status_code == 429:
-                retry_after = float(r.json().get("retry_after", backoff))
+                retry_after = retry_after_secs(r, default=backoff)
                 logger.warning(f"[Discord] Rate limited — waiting {retry_after:.1f}s (attempt {attempt}/{retries})")
                 time.sleep(retry_after)
                 continue
@@ -761,17 +1028,37 @@ def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
 
 
 def compute_pl(size, odds_str, result):
-    """Compute units won/lost for a single pick."""
+    """Compute units won/lost for a single pick.
+
+    Returns 0.0 for pushes/unknown results, negative for losses, positive for wins.
+    If size or odds can't be parsed, logs a warning and returns 0.0 (treated as
+    unscorable — caller should check for this via the warning log rather than
+    silently trusting a zero).
+    """
     try:
         size = float(size)
         odds = int(float(str(odds_str).replace("+", "")))
     except (ValueError, TypeError):
+        logger.warning(f"[compute_pl] Unparseable size/odds: size={size!r} odds={odds_str!r} result={result!r} — returning 0.0")
+        return 0.0
+    if odds == 0:
+        logger.warning(f"[compute_pl] Zero odds for result={result!r} size={size} — returning 0.0")
         return 0.0
     if result == "W":
         return round(size * (100 / abs(odds)), 4) if odds < 0 else round(size * (odds / 100), 4)
     elif result == "L":
         return round(-size, 4)
-    return 0.0  # Push
+    return 0.0  # Push / VOID / blank
+
+
+def _safe_float(v, default=0.0):
+    """Coerce v to float, returning default on blank/None/non-numeric input."""
+    try:
+        if v in (None, ""):
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
 
 
 def daily_stats(picks):
@@ -780,7 +1067,7 @@ def daily_stats(picks):
     l  = sum(1 for p in picks if p.get("result") == "L")
     pu = sum(1 for p in picks if p.get("result") == "P")
     pl = sum(compute_pl(p.get("size", 0), p.get("odds", "-110"), p.get("result", "")) for p in picks)
-    risked = sum(float(p.get("size", 0)) for p in picks if p.get("result") != "P")
+    risked = sum(_safe_float(p.get("size")) for p in picks if p.get("result") != "P")
     roi = (pl / risked * 100) if risked > 0 else 0.0
     return w, l, pu, round(pl, 2), round(roi, 1)
 
@@ -815,23 +1102,53 @@ def compute_streak(grouped_by_date):
     return streak, round(total_pl, 2), total_w, total_l
 
 
+def compute_pick_streak(all_rows):
+    """Return (count, direction) for the current consecutive W/L pick streak.
+    Counts model picks only (primary + bonus + daily_lay), excludes shadow sports and manual.
+    Sorted by date then run_time so intra-day ordering is preserved.
+    Returns (0, '') if no graded picks exist.
+    """
+    MODEL_RUN_TYPES = {"primary", "bonus", "daily_lay"}
+    picks = [
+        r for r in all_rows
+        if r.get("result") in ("W", "L")
+        and r.get("run_type", "") in MODEL_RUN_TYPES
+        and r.get("sport", "") not in SHADOW_SPORTS
+    ]
+    picks.sort(key=lambda r: (r.get("date", ""), r.get("run_time", "")))
+    if not picks:
+        return 0, ""
+    streak_dir = picks[-1]["result"]
+    count = 0
+    for p in reversed(picks):
+        if p["result"] == streak_dir:
+            count += 1
+        else:
+            break
+    return count, streak_dir
+
+
 def get_week_picks(all_rows, ref_date_str):
-    """Return all graded picks in the calendar week (Mon–Sun) of ref_date, up to ref_date."""
+    """Return all graded picks in the calendar week (Mon–Sun) of ref_date, up to ref_date.
+    Shadow sports (e.g. MLB) are excluded so week/month totals match the recap."""
     ref = datetime.strptime(ref_date_str, "%Y-%m-%d")
     monday = ref - timedelta(days=ref.weekday())
     mon_str = monday.strftime("%Y-%m-%d")
     return [r for r in all_rows
             if r.get("result") in ("W", "L", "P")
             and r.get("run_type", "primary") in COUNTED_RUN_TYPES
+            and r.get("sport", "") not in SHADOW_SPORTS
             and mon_str <= r["date"] <= ref_date_str]
 
 
 def get_month_picks(all_rows, year, month, up_to_date=None):
-    """Return all graded picks in the given year/month, optionally capped at up_to_date."""
+    """Return all graded picks in the given year/month, optionally capped at up_to_date.
+    Shadow sports (e.g. MLB) are excluded so week/month totals match the recap."""
     prefix = f"{year}-{month:02d}-"
     return [r for r in all_rows
             if r.get("result") in ("W", "L", "P")
             and r.get("run_type", "primary") in COUNTED_RUN_TYPES
+            and r.get("sport", "") not in SHADOW_SPORTS
             and r["date"].startswith(prefix)
             and (up_to_date is None or r["date"] <= up_to_date)]
 
@@ -900,10 +1217,19 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     roi_str = f"+{roi:.1f}%" if roi >= 0 else f"{roi:.1f}%"
     record  = f"**{w}-{l}{'-%dP' % pu if pu else ''} · {pl_str} · ROI {roi_str}**"
 
-    # Streak
+    # Profitable-day streak
     grouped = get_graded_primary(all_rows)
     streak, _, _, _ = compute_streak(grouped)
     streak_line = f"\n🔥 **{streak} profitable days running**" if streak >= 2 else ""
+
+    # Current pick-level W/L streak (model picks only, shown when >= 3)
+    pick_streak_n, pick_streak_dir = compute_pick_streak(all_rows)
+    if pick_streak_dir == "W" and pick_streak_n >= 3:
+        pick_streak_line = f"\n📈 **{pick_streak_n} pick W streak**"
+    elif pick_streak_dir == "L" and pick_streak_n >= 3:
+        pick_streak_line = f"\n🧊 **{pick_streak_n}L run — model correction incoming**"
+    else:
+        pick_streak_line = ""
 
     # Pick lines
     pick_lines = [_recap_pick_line(p) for p in day_picks]
@@ -923,7 +1249,7 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     color = 0x2ECC71 if pl >= 0 else 0xFF4444
 
     desc = (
-        f"{record}{streak_line}\n\n"
+        f"{record}{streak_line}{pick_streak_line}\n\n"
         + "\n".join(pick_lines)
         + f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + f"**This week:** {ww}-{wl} · {wpl_str}\n"
@@ -940,14 +1266,14 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
             "description": desc,
             "color": color,
             "thumbnail": {"url": BRAND_LOGO},
-            "footer": {"text": f"edge > everything · full transparency · {now_str}"}
+            "footer": {"text": f"{BRAND_TAGLINE} · full transparency · {now_str}"}
         }]
     }
 
 
 def build_monthly_embed(year, month, all_rows):
     """Build the monthly summary embed for a completed month."""
-    month_name = calendar.month_name[month]
+    month_name = MONTH_NAMES[month]
     picks = get_month_picks(all_rows, year, month)
     if not picks:
         return None
@@ -993,7 +1319,7 @@ def build_monthly_embed(year, month, all_rows):
         desc += f"\n\n**Best pick:** {pick_label(*best)}"
     if worst and worst != best:
         desc += f"\n**Worst pick:** {pick_label(*worst)}"
-    desc += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\nedge > everything"
+    desc += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n{BRAND_TAGLINE}"
 
     color = 0xFFD700 if pl >= 0 else 0xFF4444
 
@@ -1004,7 +1330,7 @@ def build_monthly_embed(year, month, all_rows):
             "title": f"📅 {month_name} {year} — Final",
             "description": desc,
             "color": color,
-            "footer": {"text": f"picksbyjonny · {calendar.month_name[(month % 12) + 1]} starts now"}
+            "footer": {"text": f"picksbyjonny · {MONTH_NAMES[(month % 12) + 1]} starts now"}
         }]
     }
 
@@ -1042,13 +1368,129 @@ def build_streak_embed(streak, streak_pl=0.0, streak_w=0, streak_l=0):
             "description": desc,
             "color": 0xFF8C00,
             "thumbnail": {"url": BRAND_LOGO},
-            "footer": {"text": "edge > everything"},
+            "footer": {"text": BRAND_TAGLINE},
         }]
     }
 
 
+def _read_rows_locked(log_path, lock_timeout=30):
+    """Grader-flavoured wrapper: shares the same lock/read semantics as
+    pick_log_io.read_rows_locked but routes the fall-through warning
+    through the grader's file logger. The canonical helper lives in
+    pick_log_io.py (audit H-8 / M-series)."""
+    log_path_s = str(log_path)
+    lock_path = log_path_s + ".lock"
+
+    def _do_read():
+        with open(log_path_s, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = reader.fieldnames or []
+        return rows, fieldnames
+
+    try:
+        with FileLock(lock_path, timeout=lock_timeout):
+            return _do_read()
+    except FileLockTimeout:
+        logger.error(
+            f"[grade_picks] Could not acquire read lock on {lock_path} within "
+            f"{lock_timeout}s — reading anyway (RISK OF STALE/PARTIAL DATA)"
+        )
+        return _do_read()
+
+
+def _atomic_write_rows(log_path, fieldnames, rows, lock_timeout=30):
+    """Atomically rewrite a pick_log CSV using a lockfile + tmp+rename.
+
+    Matches the pattern in capture_clv.py so grade_picks and the CLV daemon
+    can never clobber each other's writes. Falls back to a best-effort direct
+    write with a loud warning if filelock isn't installed.
+    """
+    log_path = str(log_path)
+    lock_path = log_path + ".lock"
+
+    def _do_write():
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=os.path.basename(log_path) + ".",
+            suffix=".tmp",
+            dir=os.path.dirname(log_path) or ".",
+        )
+        try:
+            with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(rows)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, log_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    try:
+        with FileLock(lock_path, timeout=lock_timeout):
+            _do_write()
+    except FileLockTimeout:
+        logger.error(f"[grade_picks] Could not acquire lock on {lock_path} within {lock_timeout}s — writing anyway (RISK OF CLOBBER)")
+        _do_write()
+
+    # Arch note #5: refresh the schema sidecar on every successful write so
+    # readers can fail-fast on forward-incompatible drift. Sidecar failure
+    # must never block grading — log and carry on.
+    try:
+        _write_schema_sidecar(log_path)
+    except Exception as _sidecar_err:
+        logger.warning(f"[grade_picks] schema sidecar write failed for {log_path}: {_sidecar_err}")
+
+
+_GUARD_TTL_DAYS = 90
+
+try:
+    from discord_guard import (
+        load_guard as _shared_load_guard,
+        save_guard as _shared_save_guard,
+        prune_guard as _shared_prune_guard,
+    )
+    _HAS_SHARED_GUARD = True
+except ImportError:
+    _HAS_SHARED_GUARD = False
+
+
+def _prune_guard(guard):
+    """Drop guard keys older than _GUARD_TTL_DAYS.
+
+    Keys embed a YYYY-MM-DD date (e.g. 'recap:2026-04-14', 'killshot:2026-04-15:...').
+    Any key that parses a date and exceeds the TTL is dropped. Keys without a
+    parseable date are preserved.
+    """
+    # Use ET (naive) to match the ET convention used everywhere else in grade_picks.
+    cutoff = datetime.now(ZoneInfo("America/New_York")).replace(tzinfo=None) - timedelta(days=_GUARD_TTL_DAYS)
+    pruned = {}
+    for key, val in guard.items():
+        parts = key.split(":")
+        keep = True
+        for p in parts:
+            if len(p) == 10 and p[4] == "-" and p[7] == "-":
+                try:
+                    dt = datetime.strptime(p, "%Y-%m-%d")
+                    if dt < cutoff:
+                        keep = False
+                    break  # first date token is authoritative
+                except ValueError:
+                    continue
+        if keep:
+            pruned[key] = val
+    return pruned
+
+
 def _load_guard():
     """Load the discord_posted guard file. Returns a dict of {event_key: True}."""
+    # Delegate to shared cross-process-safe helper if available
+    if _HAS_SHARED_GUARD:
+        return _shared_load_guard()
     try:
         with open(DISCORD_GUARD_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -1057,10 +1499,24 @@ def _load_guard():
 
 
 def _save_guard(guard):
-    """Save the discord_posted guard file."""
-    os.makedirs(os.path.dirname(DISCORD_GUARD_FILE), exist_ok=True)
-    with open(DISCORD_GUARD_FILE, "w", encoding="utf-8") as f:
-        json.dump(guard, f, indent=2)
+    """Save the discord_posted guard file atomically (tmp+rename).
+
+    Also prunes entries older than _GUARD_TTL_DAYS so the file doesn't grow
+    unboundedly. Falls back to a best-effort direct write if the atomic
+    rename fails (rare, e.g. cross-device).
+    """
+    # Delegate to shared cross-process-safe helper if available
+    if _HAS_SHARED_GUARD:
+        _shared_save_guard(guard)
+        return
+    try:
+        atomic_write_json(DISCORD_GUARD_FILE, _prune_guard(guard))
+    except Exception as e:
+        logger.warning(f"[grade_picks] Atomic guard write failed ({e}) — falling back to direct write")
+        with open(DISCORD_GUARD_FILE, "w", encoding="utf-8") as f:
+            json.dump(guard, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
 
 
 def _already_posted(guard, event_key):
@@ -1099,13 +1555,19 @@ def post_grading_results(date_str, day_picks, all_rows, suppress_ping=False, for
                 _mark_posted(guard, recap_key)
 
     # ── Results graphic PNG ───────────────────────────────────
-    try:
-        from results_graphic import post_results_graphic
-        post_results_graphic(date_str, day_picks, suppress_ping=suppress_ping)
-    except ImportError:
-        pass   # results_graphic.py not present or pillow not installed — non-fatal
-    except Exception as _rg_err:
-        print(f"  ⚠ Results graphic failed: {_rg_err}")
+    graphic_key = f"graphic:{date_str}"
+    if not force and _already_posted(guard, graphic_key):
+        print(f"  [Discord] ⏭️  Results graphic already posted for {date_str} — skipping")
+    else:
+        try:
+            from results_graphic import post_results_graphic
+            if post_results_graphic(date_str, day_picks, suppress_ping=suppress_ping):
+                if not suppress_ping:
+                    _mark_posted(guard, graphic_key)
+        except ImportError:
+            pass   # results_graphic.py not present or pillow not installed — non-fatal
+        except Exception as _rg_err:
+            print(f"  ⚠ Results graphic failed: {_rg_err}")
 
     # ── Streak announcement (skip in test mode) ───────────────
     if not suppress_ping:
@@ -1129,13 +1591,13 @@ def post_grading_results(date_str, day_picks, all_rows, suppress_ping=False, for
             prev_month = today.month - 1 if today.month > 1 else 12
             prev_year  = today.year if today.month > 1 else today.year - 1
             monthly_key = f"monthly:{prev_year}-{prev_month:02d}"
-            if _already_posted(guard, monthly_key):
-                print(f"  [Discord] ⏭️  Monthly summary already posted for {calendar.month_name[prev_month]} {prev_year} — skipping")
+            if not force and _already_posted(guard, monthly_key):
+                print(f"  [Discord] ⏭️  Monthly summary already posted for {MONTH_NAMES[prev_month]} {prev_year} — skipping")
             else:
                 monthly_payload = build_monthly_embed(prev_year, prev_month, all_rows)
                 if monthly_payload and _webhook_post(DISCORD_MONTHLY_WEBHOOK, monthly_payload,
-                                                     label=f"monthly summary {calendar.month_name[prev_month]} {prev_year}"):
-                    print(f"  [Discord] ✅ Monthly summary posted for {calendar.month_name[prev_month]} {prev_year}")
+                                                     label=f"monthly summary {MONTH_NAMES[prev_month]} {prev_year}"):
+                    print(f"  [Discord] ✅ Monthly summary posted for {MONTH_NAMES[prev_month]} {prev_year}")
                     _mark_posted(guard, monthly_key)
 
 
@@ -1143,27 +1605,56 @@ def post_grading_results(date_str, day_picks, all_rows, suppress_ping=False, for
 #  END DISCORD AUTOMATION
 # ============================================================
 
-def _grade_one_log(log_path_str, args, is_shadow=False):
-    """Grade a single pick log file. Returns True if any picks were graded.
+def _load_log_rows(path_str):
+    """Read a CSV log into list of dicts. Returns [] on missing/empty.
+
+    Uses the pick_log FileLock so concurrent CLV-daemon writes can't serve
+    a partial file (audit C-9).
+    """
+    p = Path(path_str)
+    if not p.exists():
+        return []
+    try:
+        rows, _ = _read_rows_locked(p)
+        return rows
+    except Exception as e:
+        print(f"  ⚠ Could not read {p.name}: {e}")
+        return []
+
+
+def _grade_one_log(log_path_str, args, is_shadow=False,
+                   recap_merge_logs=None, extra_dates=None):
+    """Grade a single pick log file.
 
     is_shadow: if True, grades silently with no Discord post.
+    recap_merge_logs: list of extra log paths to include in Discord recap aggregation
+                      (e.g. pick_log_manual.csv rows merged into main log's recap).
+    extra_dates: additional dates (set) that should trigger recap posting,
+                 typically dates newly graded in a merge log.
+
+    Returns tuple (graded_any: bool, dates_graded: set[str]).
     """
+    extra_dates = set(extra_dates or [])
+    recap_merge_logs = list(recap_merge_logs or [])
+
     log_path = Path(log_path_str)
     if not log_path.exists():
         if not is_shadow:
             print(f"  No pick log found at {log_path}")
-        return False
+        # Still allow recap from extra_dates if merge logs have graded rows
+        if not is_shadow and extra_dates and not args.dry_run:
+            _post_merged_recaps(extra_dates, [], recap_merge_logs, args)
+        return (False, set())
 
-    # ── Read all rows ──────────────────────────────────────────
-    with open(log_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-        fieldnames = reader.fieldnames or []
+    # ── Read all rows (audit C-9: locked read, matches writer) ──
+    rows, fieldnames = _read_rows_locked(log_path)
 
     if not rows:
         if not is_shadow:
             print("  Pick log is empty")
-        return False
+        if not is_shadow and extra_dates and not args.dry_run:
+            _post_merged_recaps(extra_dates, [], recap_merge_logs, args)
+        return (False, set())
 
     label = f"[{log_path.name}]"
 
@@ -1172,21 +1663,30 @@ def _grade_one_log(log_path_str, args, is_shadow=False):
         date_str = args.date
         if not date_str:
             print(f"  {label} --repost requires --date YYYY-MM-DD")
-            return False
+            return (False, set())
+        # Repost: model picks only — no manual merge, no shadow sports
         day_picks = [r for r in rows
-                     if r.get("date") == date_str and r.get("result") in ("W", "L", "P")]
+                     if r.get("date") == date_str
+                     and r.get("result") in ("W", "L", "P")
+                     and r.get("sport", "") not in SHADOW_SPORTS]
         if not day_picks:
             print(f"  {label} No graded picks found for {date_str}")
-            return False
+            return (False, set())
         print(f"  {label} Reposting recap for {date_str} ({len(day_picks)} picks)…")
         post_grading_results(date_str, day_picks, rows,
                              suppress_ping=args.test, force=True)
-        return True
+        return (True, {date_str})
 
     # ── Find ungraded picks ────────────────────────────────────
+    # Audit M-23: use the inverse of TERMINAL_RESULTS as the allow-list.
+    # A blank `result` ("" / None / whitespace) is ungraded; any of W/L/P/VOID
+    # is terminal and must never be re-fetched or re-graded. Earlier code
+    # used `result == ""` which coincidentally handled VOID correctly but
+    # made the invariant implicit — a future maintainer adding a new
+    # placeholder (e.g. "PENDING") would silently re-grade it.
     ungraded = []
     for i, row in enumerate(rows):
-        if (row.get("result") or "").strip() == "":
+        if not _is_terminal_result(row.get("result")):
             if args.date and row.get("date") != args.date:
                 continue
             ungraded.append((i, row))
@@ -1194,7 +1694,10 @@ def _grade_one_log(log_path_str, args, is_shadow=False):
     if not ungraded:
         if not is_shadow:
             print(f"  {label} All picks already graded!")
-        return False
+        # Still fire recap if merge logs had new grades for dates here
+        if not is_shadow and extra_dates and not args.dry_run:
+            _post_merged_recaps(extra_dates, rows, recap_merge_logs, args)
+        return (False, set())
 
     if not is_shadow:
         print(f"\n  {label} Found {len(ungraded)} ungraded picks")
@@ -1261,6 +1764,20 @@ def _grade_one_log(log_path_str, args, is_shadow=False):
                                 scores_by_game=all_scores.get((date_str, sport), {}))
 
         if result:
+            # Defensive idempotency guard (audit M-23). The ungraded filter
+            # above should already keep terminal rows out of this loop, but
+            # if a future code path bypasses the filter we refuse to clobber
+            # an existing W/L/P/VOID silently. Log the collision and skip.
+            existing = rows[idx].get("result")
+            if _is_terminal_result(existing):
+                if not is_shadow:
+                    print(
+                        f"  ⚠ M-23 skip: row {idx} already terminal "
+                        f"({str(existing).strip().upper()}) — refusing to overwrite "
+                        f"with fresh grade {result!r}. "
+                        f"player={row.get('player','')!r} stat={stat!r} date={date_str}"
+                    )
+                continue
             rows[idx]["result"] = result
             graded_count += 1
             if not is_shadow:
@@ -1275,28 +1792,44 @@ def _grade_one_log(log_path_str, args, is_shadow=False):
 
     # ── Write back ─────────────────────────────────────────────
     if not args.dry_run and graded_count > 0:
-        with open(log_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
+        _atomic_write_rows(log_path, fieldnames, rows)
         if not is_shadow:
             print(f"  ✅ Updated {log_path}")
     elif args.dry_run and not is_shadow:
         print("  (dry run — no changes written)")
 
-    # ── Discord posting (skip for shadow sports) ───────────────
-    if not is_shadow and not args.dry_run and graded_count > 0:
-        # Collect ALL graded picks for each date (not just newly-graded ones)
-        # This fixes the straggler bug: one late pick shouldn't give a partial recap
-        # Only trigger recap for dates that have at least one W/L/P (not just VOIDs)
-        dates_graded = {row["date"] for _, row in ungraded
-                        if rows[_].get("result") in ("W", "L", "P")}
-        for date_str in sorted(dates_graded):
-            day_picks = [r for r in rows
-                         if r.get("date") == date_str and r.get("result") in ("W", "L", "P")]
-            post_grading_results(date_str, day_picks, rows, suppress_ping=args.test)
+    # ── Dates with new grades in this log ──────────────────────
+    dates_from_this = {row["date"] for idx, row in ungraded
+                       if rows[idx].get("result") in ("W", "L", "P")}
 
-    return graded_count > 0
+    # ── Discord posting (skip for shadow sports) ───────────────
+    if not is_shadow and not args.dry_run:
+        dates_for_recap = dates_from_this | extra_dates
+        if dates_for_recap:
+            _post_merged_recaps(dates_for_recap, rows, recap_merge_logs, args)
+
+    return (graded_count > 0, dates_from_this)
+
+
+def _post_merged_recaps(dates_for_recap, main_rows, recap_merge_logs, args):
+    """Post Discord daily recaps for given dates.
+
+    Only model-generated picks reach Discord (primary / bonus / daily_lay from
+    the main log). Manual picks live in pick_log_manual.csv for personal
+    tracking but are intentionally excluded from the recap. Shadow-sport picks
+    that landed in pick_log.csv (e.g. a manually-overridden MLB bonus) are
+    also excluded so they don't appear on the card.
+    """
+    # Note: recap_merge_logs is intentionally ignored here — manual picks
+    # are not shown in Discord recaps. The parameter is kept for API compat.
+    for date_str in sorted(dates_for_recap):
+        day_picks = [r for r in main_rows
+                     if r.get("date") == date_str
+                     and r.get("result") in ("W", "L", "P")
+                     and r.get("sport", "") not in SHADOW_SPORTS]
+        if day_picks:
+            post_grading_results(date_str, day_picks, main_rows,
+                                 suppress_ping=args.test)
 
 
 def main():
@@ -1318,6 +1851,9 @@ Examples:
     parser.add_argument("--test",    action="store_true", help="Suppress @everyone ping (safe preview)")
     parser.add_argument("--repost",  action="store_true", help="Re-fire Discord recap for --date (skip grading)")
     parser.add_argument("--confirm", action="store_true", help="Prompt y/n before every Discord post")
+    parser.add_argument("--pick-log-path", default=None,
+                        help="Override main pick log path (default: ~/Documents/JonnyParlay/data/pick_log.csv). "
+                             "Shadow logs are skipped when overridden.")
     args = parser.parse_args()
 
     if args.repost and not args.date:
@@ -1327,12 +1863,25 @@ Examples:
     global _CONFIRM_MODE
     _CONFIRM_MODE = args.confirm
 
-    # ── Grade main log (posts to Discord) ─────────────────────
-    _grade_one_log(PICK_LOG_PATH, args, is_shadow=False)
+    # ── Grade manual log silently FIRST (no Discord post of its own) ──
+    # Manual picks live in their own file but are aggregated into the main
+    # Discord daily recap so W/L totals and P&L are accurate.
+    main_log_path = args.pick_log_path or PICK_LOG_PATH
+    use_default_paths = not args.pick_log_path
 
-    # ── Grade shadow logs silently (no Discord post) ───────────
-    if not args.repost:
-        for shadow_path in ALL_LOG_PATHS[1:]:
+    manual_dates: set[str] = set()
+    if use_default_paths and not args.repost:
+        _, manual_dates = _grade_one_log(PICK_LOG_MANUAL_PATH, args, is_shadow=True)
+
+    # ── Grade main log (posts to Discord, includes manual rows in recap) ──
+    merge_logs = [PICK_LOG_MANUAL_PATH] if use_default_paths else []
+    _grade_one_log(main_log_path, args, is_shadow=False,
+                   recap_merge_logs=merge_logs,
+                   extra_dates=manual_dates)
+
+    # ── Grade shadow sport logs silently (no Discord post) ────
+    if not args.repost and use_default_paths:
+        for shadow_path in (PICK_LOG_MLB_PATH,):
             _grade_one_log(shadow_path, args, is_shadow=True)
 
 
