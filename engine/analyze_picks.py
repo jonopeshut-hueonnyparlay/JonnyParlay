@@ -166,16 +166,17 @@ def edge_bucket(edge):
 def pick_score_bucket(ps):
     """Bucket a Pick Score onto the canonical 0–120 scale (audit M-13).
 
-    Real scores observed in ``data/pick_log.csv`` range roughly 13 → 95,
-    and CLAUDE.md defines the KILLSHOT sizing tiers at 90-100 / 100-110 /
-    110+. The pre-M-13 bucketing (``< 3 / 3-5 / 5-8 / 8-12 / 12+``) was
+    Real scores observed in ``data/pick_log.csv`` range roughly 13 → 95.
+    Under KILLSHOT v2 (Apr 21 2026), pick_score >= 90 is the qualification
+    floor — sizing is no longer bucketed by score (it's driven by win_prob
+    + edge). The pre-M-13 bucketing (``< 3 / 3-5 / 5-8 / 8-12 / 12+``) was
     calibrated to an older Pick Score scale and dumped every real pick
     into ``12+``, which made the breakdown useless.
 
-    The buckets below are aligned to the current scale: low-conviction
-    buckets capture sub-KILLSHOT picks and the top three buckets mirror
-    the KILLSHOT sizing tiers so the report tells you whether each
-    sizing band is pulling its weight.
+    The buckets below capture sub-KILLSHOT conviction in the lower bands
+    and split the KILLSHOT floor (≥90) into three high-conviction bins so
+    the report tells you whether the top of the distribution is pulling
+    its weight.
     """
     try:
         ps = float(ps)
@@ -185,9 +186,9 @@ def pick_score_bucket(ps):
     elif ps < 60:   return "40-60"
     elif ps < 75:   return "60-75"
     elif ps < 90:   return "75-90"
-    elif ps < 100:  return "90-100 (KS 3u)"
-    elif ps < 110:  return "100-110 (KS 4u)"
-    else:           return "110+ (KS 5u)"
+    elif ps < 95:   return "90-95 (KS floor)"
+    elif ps < 100:  return "95-100"
+    else:           return "100+"
 
 
 def streak_analysis(picks):

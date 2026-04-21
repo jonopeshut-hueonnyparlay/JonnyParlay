@@ -205,33 +205,40 @@ def test_pick_short_label_prop_branch_still_works():
     (74.9,  "60-75"),
     (75,    "75-90"),
     (89.9,  "75-90"),
-    (90,    "90-100 (KS 3u)"),
-    (99.9,  "90-100 (KS 3u)"),
-    (100,   "100-110 (KS 4u)"),
-    (109.9, "100-110 (KS 4u)"),
-    (110,   "110+ (KS 5u)"),
-    (130,   "110+ (KS 5u)"),
+    # KILLSHOT v2 (Apr 21 2026): score >= 90 is the qualification floor.
+    # Sizing is no longer tiered by score - it's driven by win_prob + edge -
+    # so buckets split the >=90 range into three bins for conviction visibility.
+    (90,    "90-95 (KS floor)"),
+    (94.9,  "90-95 (KS floor)"),
+    (95,    "95-100"),
+    (99.9,  "95-100"),
+    (100,   "100+"),
+    (109.9, "100+"),
+    (110,   "100+"),
+    (130,   "100+"),
 ])
 def test_pick_score_bucket_aligned_to_killshot_sizing(ps, bucket):
-    """Bucket boundaries must align with CLAUDE.md KILLSHOT sizing tiers
-    (90-100 / 100-110 / 110+) and with the real-world score range
-    observed in pick_log.csv (~13 → 95).
+    """Bucket boundaries must align with the KILLSHOT v2 qualification floor
+    (pick_score >= 90) and with the real-world score range observed in
+    pick_log.csv (~13 -> 95). v2 no longer tiers sizing by score.
     """
     from analyze_picks import pick_score_bucket
     assert pick_score_bucket(ps) == bucket, (
-        f"pick_score_bucket({ps}) → {pick_score_bucket(ps)!r}, expected {bucket!r}"
+        f"pick_score_bucket({ps}) -> {pick_score_bucket(ps)!r}, expected {bucket!r}"
     )
 
 
 def test_pick_score_bucket_top_label_calls_out_killshot():
-    """The three KILLSHOT buckets must be labeled so the analyze report
-    makes the sizing tier obvious at a glance — no need to cross-reference
-    CLAUDE.md to know what "90-100" means.
+    """The 90-95 bucket must call out that it's the KILLSHOT qualification
+    floor - v2 no longer splits the >=90 range by sizing tier, so the label
+    is a conviction marker rather than a sizing hint.
     """
     from analyze_picks import pick_score_bucket
-    assert "KS" in pick_score_bucket(92)
-    assert "KS" in pick_score_bucket(105)
-    assert "KS" in pick_score_bucket(115)
+    assert "KS" in pick_score_bucket(92)     # 90-95 (KS floor)
+    # 95+ buckets deliberately drop the KS tag - sizing isn't score-driven
+    # under v2, so over-labeling would mislead the reader.
+    assert pick_score_bucket(97) == "95-100"
+    assert pick_score_bucket(115) == "100+"
 
 
 def test_pick_score_bucket_handles_unknown():
@@ -249,7 +256,7 @@ def test_pick_score_bucket_old_thresholds_are_gone():
     """Source-level check: the pre-M-13 thresholds ("< 3", "3-5", "5-8",
     "8-12", "12+") must not survive anywhere in pick_score_bucket. If the
     old copy ever gets resurrected by a bad rebase, the report will go
-    silent (every real pick → "12+").
+    silent (every real pick -> "12+").
     """
     src = (HERE / "engine" / "analyze_picks.py").read_text(encoding="utf-8")
     # Pull just the function body.
@@ -257,7 +264,7 @@ def test_pick_score_bucket_old_thresholds_are_gone():
         r"def pick_score_bucket\(ps\):.*?(?=\n(?:def |class |\Z))",
         src, re.DOTALL,
     )
-    assert m, "pick_score_bucket not found — test harness out of sync"
+    assert m, "pick_score_bucket not found - test harness out of sync"
     body = m.group(0)
     assert '"< 3"' not in body
     assert '"3-5"' not in body
@@ -273,7 +280,7 @@ def test_pick_score_bucket_old_thresholds_are_gone():
 def test_game_line_stats_matches_between_grade_picks_and_weekly_recap():
     """grade_picks and weekly_recap each carry their own GAME_LINE_STATS
     set. They serve slightly different purposes (grading vs. labeling)
-    but PARLAY-as-game-line must agree between them — otherwise a pick
+    but PARLAY-as-game-line must agree between them - otherwise a pick
     grades fine but its recap label is garbage (or vice versa).
 
     grade_picks does NOT need PARLAY in GAME_LINE_STATS (daily_lay rows

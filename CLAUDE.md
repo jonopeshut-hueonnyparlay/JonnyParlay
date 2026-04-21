@@ -54,7 +54,7 @@ ARCHIVE: (collapsed)
 | VAKE | Bankroll sizing system (proprietary) |
 | Pick Score | Model ranking score for each pick |
 | POTD | Pick of the Day — standalone embed, posted after premium card |
-| KILLSHOT | Highest-conviction tier. Score ≥ 90 auto-qualifies. Weekly cap: 3. @everyone ping. |
+| KILLSHOT | Highest-conviction tier. v2 gate (Apr 21 2026): tier=T1 strict, score≥90, win_prob≥0.65, odds ∈ [-200,+110], stat ∈ {PTS,REB,AST,SOG,3PM}. Sizing: 3u default, 4u iff wp≥0.70 AND edge≥0.06. Weekly cap: 2. @everyone ping. |
 | Premium | Top 5 picks from the model each day |
 | Bonus Drop | Single highest-scoring NEW pick per run (max 5/day) |
 | Daily Lay | Alt spread parlay — 3-leg, model-identified mispriced lines |
@@ -76,7 +76,7 @@ ARCHIVE: (collapsed)
 - Audit C-1 closed Apr 19 2026 — `filelock` is hard-required everywhere. If it's missing, the engine fails fast at import with a clear install hint.
 
 ## Audit Status
-- **Closed Apr 21 2026 — 78/78 items resolved.** Section 40 (schema-version fail-fast via sidecar) + Section 41 (print → logging via `engine/engine_logger.py`) were the final two items. Full regression suite: 717 passed, 2 skipped.
+- **Closed Apr 21 2026 — 78/78 items resolved.** Section 40 (schema-version fail-fast via sidecar) + Section 41 (print → logging via `engine/engine_logger.py`) were the final two items. Full regression suite: 756 passed, 2 skipped.
 
 ## pick_log.csv Schema (current)
 `date, run_time, run_type, sport, player, team, stat, line, direction, proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode, result, closing_odds, clv, card_slot, is_home, context_verdict, context_reason, context_score`

@@ -196,6 +196,26 @@ def test_size_handles_non_numeric_fields():
     assert size == 3.0
 
 
+def test_size_reads_adj_edge_when_edge_absent():
+    """Production regression: internal pick dicts use adj_edge, not edge.
+    Was silently defaulting edge to 0 and never bumping (LaRavia 2026-04-21).
+    """
+    pick = {"win_prob": 0.73, "adj_edge": 0.18}   # no 'edge' key at all
+    assert _killshot_size(pick) == 4.0
+
+
+def test_size_prefers_adj_edge_over_edge_when_both_present():
+    """If both keys exist, adj_edge wins (it's the canonical internal key)."""
+    pick = {"win_prob": 0.73, "adj_edge": 0.18, "edge": 0.01}
+    assert _killshot_size(pick) == 4.0
+
+
+def test_size_falls_back_to_edge_when_adj_edge_absent():
+    """Rows reconstructed from pick_log.csv carry 'edge' only - must still work."""
+    pick = {"win_prob": 0.73, "edge": 0.18}   # no 'adj_edge'
+    assert _killshot_size(pick) == 4.0
+
+
 # ─── select_killshots integration ────────────────────────────────────────────────
 
 def test_select_includes_clean_T1_pick():

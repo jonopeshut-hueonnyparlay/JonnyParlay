@@ -3818,10 +3818,14 @@ def _killshot_size(pick):
     """Return KILLSHOT unit size per v2 rules.
     3u default. Bumps to 4u iff win_prob >= KILLSHOT_BUMP_WIN_PROB AND edge >= KILLSHOT_BUMP_EDGE.
     Replaces VAKE entirely for KILLSHOT picks.
+
+    Reads `adj_edge` (canonical internal key used throughout run_picks.py)
+    with fallback to `edge` — the CSV column name and the key used by tests
+    and by rows reconstructed from pick_log.csv.
     """
     try:
         wp   = float(pick.get("win_prob", 0))
-        edge = float(pick.get("edge", 0))
+        edge = float(pick.get("adj_edge", pick.get("edge", 0)))
     except (TypeError, ValueError):
         return KILLSHOT_SIZE_BASE
     if wp >= KILLSHOT_BUMP_WIN_PROB and edge >= KILLSHOT_BUMP_EDGE:
