@@ -48,7 +48,7 @@ def _pick_log_lock(log_path, timeout=30):
         with FileLock(lock_path, timeout=timeout):
             yield
     except _FileLockTimeout:
-        print(f"  ⚠ pick_log lock timeout after {timeout}s — writing anyway (race risk)")
+        logger.warning(f"pick_log lock timeout after {timeout}s — writing anyway (race risk)")
         yield
 
 try:
@@ -76,6 +76,8 @@ from secrets_config import (
     DISCORD_KILLSHOT_WEBHOOK,
     DISCORD_MONTHLY_WEBHOOK,
     DISCORD_ANNOUNCE_WEBHOOK,
+    DISCORD_LONGSHOT_WEBHOOK,
+    DISCORD_SGP_WEBHOOK,
 )
 
 CSV_FOLDER    = os.path.expanduser("~/Documents/JonnyParlay/projections")
@@ -163,8 +165,14 @@ from io_utils import atomic_write_json  # noqa: E402
 BONUS_DAILY_CAP = 5             # Max bonus posts per calendar day
 MIN_BONUS_SCORE = 65            # Minimum pick_score to qualify for a bonus drop
 MIN_BONUS_WIN_PROB = 0.65       # Minimum win probability to qualify for a bonus drop
-MIN_DAILY_LAY_PROB = 0.33       # Minimum combined cover probability before posting daily lay
+MIN_DAILY_LAY_PROB = 0.47       # Minimum combined cover probability before posting daily lay
+                                 # Math: at 0.47 combined, a 2-3 leg parlay has positive Kelly
+                                 # at realistic odds (-130 to +100). Old 0.33 allowed zero-EV posts.
 MIN_DAILY_LAY_MARGIN = 4.0      # Minimum projected margin (pts) for a team to qualify as a daily lay leg
+MIN_LEG_EDGE_DAILY = 0.025      # Minimum per-leg edge for daily lay legs (screens out noise)
+MIN_LEG_COVER_PROB_DAILY = 0.58 # Minimum per-leg cover probability for daily lay legs
+LONGSHOT_SIZE = 0.25            # Unit size for longshot parlay (high variance, small stake)
+SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_builder.SGP_SIZE)
 
 # ── KILLSHOT tier (v2 — safer/tighter; see CLAUDE.md) ─────────
 # Auto-qualify gate: ALL must pass
@@ -1177,7 +1185,7 @@ class OddsFetcher:
                 elif r.status_code == 422:
                     return []
                 elif r.status_code == 401:
-                    print("[ERROR] Invalid Odds API key.")
+                    logger.error("Invalid Odds API key.")
                     sys.exit(1)
                 else:
                     print(f"  [!] API {r.status_code}")
@@ -2759,9 +2767,25 @@ def prob_to_american(prob):
         return ((1.0 - prob) / prob) * 100
 
 def build_safest6_parlay(qualified):
-    """Build a longshot parlay from the 6 safest picks by win probability."""
-    daily = qualified
-    safest = sorted(daily, key=lambda p: p["win_prob"], reverse=True)[:6]
+    """Build a longshot parlay from the 6 safest picks by win probability.
+
+    Per-game cap of 2: prevents same-game correlation from dominating the
+    combined probability estimate (which assumes independence across legs).
+    If the top 6 by WP would pull 3+ from one game, the 3rd+ are skipped
+    and replaced by the next-best picks from other games.
+    """
+    LONGSHOT_MAX_PER_GAME = 2
+    ranked = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
+    game_counts: dict = {}
+    safest = []
+    for p in ranked:
+        g = p.get("game", "")
+        if game_counts.get(g, 0) >= LONGSHOT_MAX_PER_GAME:
+            continue
+        game_counts[g] = game_counts.get(g, 0) + 1
+        safest.append(p)
+        if len(safest) == 6:
+            break
     if len(safest) < 6:
         return None
     combined_prob = 1.0
@@ -2770,31 +2794,45 @@ def build_safest6_parlay(qualified):
     parlay_odds = prob_to_american(combined_prob)
     return {"legs": safest, "combined_prob": combined_prob, "parlay_odds": parlay_odds}
 
-def build_alt_spread_parlay(game_lines, team_proj_map, sport_sigmas, alt_spread_data=None):
+def build_alt_spread_parlay(game_lines, team_proj_map, sport_sigmas, alt_spread_data=None, debug=False):
     """
-    Build alt spread parlay (NBA ONLY):
-    - 3 legs at ~-500 each when 3+ favorites available
-    - 2 legs at ~-285 each when only 2 favorites (lighter slate)
-    - ALL legs from the SAME book
-    - Target combined parlay: -110 to -130
+    Build alt spread parlay (NBA ONLY).
+    Selects legs by edge (model cover prob vs implied prob from odds).
+    Tries 3 legs → 2 → 1 per book, one leg per game.
+    Only posts if combined parlay odds >= -130.
     """
     if alt_spread_data is None:
         alt_spread_data = []
 
-    # Step 1: Identify NBA favorites by projected margin
-    favorites = []
+    def dbg(msg):
+        if debug:
+            print(f"  [daily-lay-debug] {msg}")
+
+    MIN_COMBINED_ODDS_VAL = -130  # combined parlay must be -130 or longer
+    MAX_COMBINED_ODDS_VAL = 100   # combined parlay must not exceed +100
+
+    def american_to_decimal(odds):
+        if odds > 0:
+            return 1.0 + odds / 100.0
+        return 1.0 + 100.0 / abs(odds)
+
+    def decimal_to_american(dec):
+        if dec >= 2.0:
+            return (dec - 1.0) * 100.0
+        return -100.0 / (dec - 1.0)
+
+    # Step 1: Build per-team projection info from NBA game lines
+    team_game_info = {}
+    nba_games = []
     for gl in game_lines:
         if gl.get("sport", "").upper() != "NBA":
             continue
         home = gl["home"]
         away = gl["away"]
-        sport = gl.get("sport", "NBA")
-        sigma = sport_sigmas.get(sport, sport_sigmas.get("NBA", {})).get("spread", 12.0)
+        sigma = sport_sigmas.get("NBA", sport_sigmas.get("NBA", {})).get("spread", 12.0)
+        sport_prefix = "NBA_"
 
-        home_proj = None
-        away_proj = None
-        sport_prefix = sport.upper() + "_"
-
+        home_proj = away_proj = None
         for full_name, abbr in TEAM_ABBREV.items():
             sport_key = sport_prefix + abbr
             if full_name in home.lower() and sport_key in team_proj_map:
@@ -2806,131 +2844,156 @@ def build_alt_spread_parlay(game_lines, team_proj_map, sport_sigmas, alt_spread_
                 if ap > 0:
                     away_proj = ap
 
-        if home_proj is None or away_proj is None:
-            continue
-
-        margin = home_proj - away_proj
-
         spread_data = gl.get("spread", {})
-        home_spread_info = spread_data.get(home, {})
-        away_spread_info = spread_data.get(away, {})
+        home_std = spread_data.get(home, {}).get("line")
+        away_std = spread_data.get(away, {}).get("line")
 
-        for side, side_name, side_margin in [
-            ("home", home, margin),
-            ("away", away, -margin),
-        ]:
-            if side_margin < MIN_DAILY_LAY_MARGIN:
-                continue
-            std_spread_info = home_spread_info if side == "home" else away_spread_info
-            std_spread = std_spread_info.get("line", None)
-            if std_spread is None:
-                continue
-
-            favorites.append({
-                "team": side_name,
-                "team_abbrev": get_team_abbrev(gl["game"], ""),
-                "game": gl["game"],
-                "margin": side_margin,
-                "std_spread": std_spread,
-                "sigma": sigma,
-                "sport": sport,
-            })
-
-    favorites.sort(key=lambda f: f["margin"], reverse=True)
-
-    # Decide legs + target per-leg odds based on available favorites
-    # 3 legs: ~-500 each → combined ~-130
-    # 2 legs: ~-285 each → combined ~-125
-    if len(favorites) >= 3:
-        num_legs = 3
-        target_per_leg = -500
-        odds_range = (-700, -350)
-    elif len(favorites) >= 2:
-        num_legs = 2
-        target_per_leg = -285
-        odds_range = (-450, -180)
-    else:
-        return None
-
-    top_favs = favorites[:num_legs]
-    top_teams = {f["team"] for f in top_favs}
-
-    # Step 2: Index alt spread data by book → team → list of (line, odds)
-    book_lines = defaultdict(lambda: defaultdict(list))
-    for entry in alt_spread_data:
-        if entry["team"] in top_teams and entry["odds"] < 0:
-            book_lines[entry["book"]][entry["team"]].append((entry["line"], entry["odds"]))
-
-    # Step 3: For each book, find the best line (closest to target) per team
-    best_book = None
-    best_parlay_odds = float("-inf")
-    best_legs = None
-
-    for book, team_lines in book_lines.items():
-        if not all(team in team_lines for team in top_teams):
-            continue
-
-        legs = []
-        for fav in top_favs:
-            team = fav["team"]
-            available = team_lines[team]
-
-            # Find line closest to target per-leg odds
-            closest = min(available, key=lambda x: abs(x[1] - target_per_leg))
-            line_val, odds_val = closest
-
-            # Must be within acceptable range
-            if odds_val > odds_range[1] or odds_val < odds_range[0]:
-                break
-
-            bought_pts = line_val - fav["std_spread"]
-            cover_prob = 1.0 - normal_cdf(-line_val, fav["margin"], fav["sigma"])
-
-            legs.append({
-                "team": fav["team"],
-                "team_abbrev": fav["team_abbrev"],
-                "game": fav["game"],
-                "margin": fav["margin"],
-                "std_spread": fav["std_spread"],
-                "alt_spread": line_val,
-                "bought_pts": bought_pts,
-                "alt_cover_prob": cover_prob,
-                "real_odds": odds_val,
-                "real_book": display_book(book),
-                "book_key": book,
-                "sport": fav["sport"],
-            })
-
-        if len(legs) != num_legs:
-            continue
-
-        # Calculate parlay odds for this book
-        combined_decimal = 1.0
-        for leg in legs:
-            ro = leg["real_odds"]
-            dec = 1.0 + (100.0 / abs(ro))
-            leg["decimal_odds"] = dec
-            combined_decimal *= dec
-
-        if combined_decimal >= 2.0:
-            parlay_odds = (combined_decimal - 1.0) * 100.0
+        if home_proj is not None and away_proj is not None:
+            margin = home_proj - away_proj
+            dbg(f"GAME {gl['game']}: home={home_proj:.1f} away={away_proj:.1f} margin={margin:+.1f}")
+            team_game_info[home] = {"margin": margin,  "sigma": sigma, "game": gl["game"], "sport": "NBA", "std_spread": home_std}
+            team_game_info[away] = {"margin": -margin, "sigma": sigma, "game": gl["game"], "sport": "NBA", "std_spread": away_std}
         else:
-            parlay_odds = -100.0 / (combined_decimal - 1.0)
+            dbg(f"SKIP proj {gl['game']}: home_proj={home_proj} away_proj={away_proj}")
+            team_game_info[home] = {"margin": None, "sigma": sigma, "game": gl["game"], "sport": "NBA", "std_spread": home_std}
+            team_game_info[away] = {"margin": None, "sigma": sigma, "game": gl["game"], "sport": "NBA", "std_spread": away_std}
 
-        if parlay_odds > best_parlay_odds:
-            best_parlay_odds = parlay_odds
-            best_book = book
-            best_legs = legs
+        nba_games.append(gl["game"])
 
-    if not best_legs:
+    if not nba_games:
+        dbg("No NBA games found")
         return None
+
+    # Step 2: Score every alt spread entry by edge + quality filters
+    scored = []
+    for entry in alt_spread_data:
+        team = entry["team"]
+        if team not in team_game_info:
+            continue
+        info = team_game_info[team]
+        if info["margin"] is None:
+            continue
+
+        odds = entry["odds"]
+        line = entry["line"]
+        margin = info["margin"]
+        sigma = info["sigma"]
+
+        implied = abs(odds) / (abs(odds) + 100.0) if odds < 0 else 100.0 / (odds + 100.0)
+        cover_prob = 1.0 - normal_cdf(-line, margin, sigma)
+        edge = cover_prob - implied
+
+        # Per-leg quality gates: screen out noise before composite scoring
+        if edge < MIN_LEG_EDGE_DAILY:
+            dbg(f"  {team} {line:+.1f} @ {odds}: SKIP edge {edge:.3f} < {MIN_LEG_EDGE_DAILY}")
+            continue
+        if cover_prob < MIN_LEG_COVER_PROB_DAILY:
+            dbg(f"  {team} {line:+.1f} @ {odds}: SKIP cover_prob {cover_prob:.3f} < {MIN_LEG_COVER_PROB_DAILY}")
+            continue
+
+        # Composite leg score: edge weighted 60%, excess cover prob weighted 40%.
+        # The 0.58 floor clips the baseline — only rewarding probability meaningfully
+        # above the minimum, not raw implied probability (which penalises tight lines).
+        # Odds quality bonus: legs in -145 to -100 range get a 5% boost (market is
+        # less certain = better value signal than -200+ juice).
+        prob_excess = max(0.0, cover_prob - MIN_LEG_COVER_PROB_DAILY)
+        odds_quality = 1.05 if -145 <= odds <= -100 else 1.00
+        leg_score = (edge * 0.60 + prob_excess * 0.40) * odds_quality
+
+        dbg(f"  {team} {line:+.1f} @ {odds} [{entry['book']}]: cover={cover_prob:.3f} implied={implied:.3f} edge={edge:+.3f} leg_score={leg_score:.4f}")
+
+        scored.append({
+            "team": team,
+            "game": info["game"],
+            "sport": info["sport"],
+            "std_spread": info["std_spread"],
+            "margin": margin,
+            "sigma": sigma,
+            "line": line,
+            "odds": odds,
+            "book": entry["book"],
+            "cover_prob": cover_prob,
+            "edge": edge,
+            "leg_score": leg_score,
+        })
+
+    if not scored:
+        dbg("No scored entries — no alt spread data passed per-leg quality gates")
+        return None
+
+    # Step 3: Per book, pick best leg-score line per game, then try 3→2 legs (min 2)
+    book_game_best = defaultdict(dict)
+    for s in scored:
+        bk, gm = s["book"], s["game"]
+        if gm not in book_game_best[bk] or s["leg_score"] > book_game_best[bk][gm]["leg_score"]:
+            book_game_best[bk][gm] = s
+
+    best_result = None
+    best_score = float("-inf")
+
+    for book, game_bests in book_game_best.items():
+        # Sort by composite leg_score (edge × 0.60 + prob_excess × 0.40 × odds_quality)
+        entries = sorted(game_bests.values(), key=lambda x: x["leg_score"], reverse=True)
+        dbg(f"Book {book}: {len(entries)} game(s)")
+        for e in entries:
+            dbg(f"  {e['game']} → {e['team']} {e['line']:+.1f} @ {e['odds']} edge={e['edge']:+.3f} leg_score={e['leg_score']:.4f}")
+
+        # Min 2 legs — a single alt spread leg is a straight bet, not a parlay product
+        for num_legs in [3, 2]:
+            if len(entries) < num_legs:
+                continue
+            leg_entries = entries[:num_legs]
+            combined_dec = 1.0
+            for e in leg_entries:
+                combined_dec *= american_to_decimal(e["odds"])
+            parlay_odds = decimal_to_american(combined_dec)
+
+            dbg(f"  {book} {num_legs}-leg combined: {parlay_odds:.0f}")
+
+            if parlay_odds < MIN_COMBINED_ODDS_VAL:
+                dbg(f"  {book} {num_legs}-leg: {parlay_odds:.0f} < {MIN_COMBINED_ODDS_VAL} — too juicy, skip")
+                continue
+            if parlay_odds > MAX_COMBINED_ODDS_VAL:
+                dbg(f"  {book} {num_legs}-leg: {parlay_odds:.0f} > {MAX_COMBINED_ODDS_VAL} — too long, skip")
+                continue
+
+            total_leg_score = sum(e["leg_score"] for e in leg_entries)
+            if total_leg_score > best_score:
+                best_score = total_leg_score
+                best_result = (book, leg_entries, parlay_odds, num_legs)
+            break  # found valid leg count for this book
+
+    if not best_result:
+        dbg("No valid parlay found — all books either too juicy, no edge, or under 2 legs")
+        return None
+
+    best_book, best_entries, best_parlay_odds, num_legs = best_result
+
+    legs = []
+    for e in best_entries:
+        bought_pts = (e["line"] - e["std_spread"]) if e["std_spread"] is not None else 0.0
+        legs.append({
+            "team": e["team"],
+            "team_abbrev": get_team_abbrev(e["game"], ""),
+            "game": e["game"],
+            "margin": e["margin"],
+            "std_spread": e["std_spread"],
+            "alt_spread": e["line"],
+            "bought_pts": bought_pts,
+            "alt_cover_prob": e["cover_prob"],
+            "real_odds": e["odds"],
+            "real_book": display_book(best_book),
+            "book_key": best_book,
+            "sport": e["sport"],
+            "decimal_odds": american_to_decimal(e["odds"]),
+        })
 
     combined_prob = 1.0
-    for leg in best_legs:
+    for leg in legs:
         combined_prob *= leg["alt_cover_prob"]
 
     return {
-        "legs": best_legs,
+        "legs": legs,
         "num_legs": num_legs,
         "combined_prob": combined_prob,
         "parlay_odds": best_parlay_odds,
@@ -3065,7 +3128,7 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
                     writer.writerow(HEADER)
                 for p in new_picks:
                     if not p.get("player") or not p.get("stat"):
-                        print(f"  ⚠ Skipping incomplete pick (missing player/stat): {p}")
+                        logger.warning(f"Skipping incomplete pick (missing player/stat): {p}")
                         continue
                     slot_key = (
                         p.get("player", "").strip().lower(),
@@ -3127,7 +3190,7 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
         _write_schema_sidecar(log_path)
     except Exception as _sidecar_err:
         # Sidecar failure must never block pick logging — log and carry on.
-        print(f"  ⚠ M-13 sidecar write failed for {log_path}: {_sidecar_err}")
+        logger.warning(f"M-13 sidecar write failed for {log_path}: {_sidecar_err}")
 
 
 # ============================================================
@@ -3159,6 +3222,9 @@ try:
         load_guard as _shared_load_guard,
         save_guard as _shared_save_guard,
         prune_guard as _shared_prune_guard,
+        claim_post as _shared_claim_post,
+        release_post as _shared_release_post,
+        mark_posted as _shared_mark_posted,
     )
     _HAS_SHARED_GUARD = True
 except ImportError:
@@ -3221,15 +3287,64 @@ def _save_discord_guard(guard):
 
 
 def _discord_already_posted(key):
-    """Return True if this guard key has already been posted."""
+    """Return True if this guard key has already been posted (read-only check).
+    Use _discord_claim_post for the atomic test-and-set before posting.
+    """
     return bool(_load_discord_guard().get(key))
 
 
 def _discord_mark_posted(key):
-    """Record a successful Discord post in the guard registry."""
+    """Record a successful Discord post (legacy RMW wrapper).
+    Prefer _discord_claim_post for new call sites.
+    """
+    if _HAS_SHARED_GUARD:
+        _shared_mark_posted(key)
+        return
     g = _load_discord_guard()
     g[key] = True
     _save_discord_guard(g)
+
+
+def _discord_claim_post(key):
+    """Atomic test-and-set: claim a guard key before posting.
+    Returns True if THIS run just claimed key (caller should post).
+    Returns False if already claimed (caller should skip).
+    Fixes audit C3 (TOCTOU) + H3 (suppress_ping guard omission).
+    """
+    if _HAS_SHARED_GUARD:
+        return _shared_claim_post(key)
+    # Fallback: best-effort non-atomic claim (no discord_guard module)
+    if _load_discord_guard().get(key):
+        return False
+    _discord_mark_posted(key)
+    return True
+
+
+def _discord_release_post(key):
+    """Un-claim a guard key after a failed webhook post so the next run
+    can retry. No-op if the key is not set. Do NOT call after success.
+    """
+    if _HAS_SHARED_GUARD:
+        _shared_release_post(key)
+        return
+    g = _load_discord_guard()
+    if key in g:
+        del g[key]
+        _save_discord_guard(g)
+
+
+def _notify_post_failure(label, guard_key=None, err=None):
+    """Release the guard claim (if any) and fire the fallback webhook alert.
+    Swallows all errors — a broken notifier must never mask the real failure.
+    Fixes audit H5 / F6.4 / F6.7.
+    """
+    if guard_key:
+        _discord_release_post(guard_key)
+    try:
+        from webhook_fallback import notify_fallback
+        notify_fallback(label, err=err)
+    except Exception as _e:
+        logger.warning(f"[fallback-notifier] raised (suppressed): {_e}")
 
 
 def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
@@ -3388,26 +3503,58 @@ def post_to_discord(premium, mode, today, suppress_ping=False):
 
     # Premium card
     premium_key = f"premium_card:{today}"
-    if _discord_already_posted(premium_key):
+    if not _discord_claim_post(premium_key):
         print(f"  [Discord] ⏭️  Premium card already posted for {today} — skipping")
     else:
         payload = build_premium_embed(premium, mode, today, suppress_ping=suppress_ping)
         if _webhook_post(DISCORD_WEBHOOK_URL, payload, label="premium card"):
             print(f"  [Discord] ✅ Premium card posted ({len(premium[:5])} picks)")
-            if not suppress_ping:
-                _discord_mark_posted(premium_key)
+        else:
+            _notify_post_failure("premium_card", guard_key=premium_key)
 
     # POTD — separate embed, same channel, same webhook
     potd_key = f"potd:{today}"
-    if _discord_already_posted(potd_key):
+    if not _discord_claim_post(potd_key):
         print(f"  [Discord] ⏭️  POTD already posted for {today} — skipping")
     else:
         potd = premium[0]
         potd_payload = build_potd_embed(potd, today)
         if _webhook_post(DISCORD_WEBHOOK_URL, potd_payload, label=f"POTD: {potd['player']} {potd['stat']}"):
             print(f"  [Discord] ✅ POTD posted: {potd['player']} {potd['stat']}")
-            if not suppress_ping:
-                _discord_mark_posted(potd_key)
+        else:
+            _discord_release_post(potd_key)
+
+
+def size_daily_lay(combined_prob, parlay_odds_american):
+    """Kelly-derived sizing for the daily lay parlay.
+
+    Treats the parlay as a single bet and applies quarter Kelly, capped at
+    0.75u (max) and floored at 0.25u (min).
+
+    Formula: f* = (p*b - q) / b  where b = decimal_odds - 1
+    Quarter Kelly = f* * 0.25, converted to units (1u = 1% of bankroll).
+
+    A negative Kelly (zero or negative EV parlay that somehow cleared
+    MIN_DAILY_LAY_PROB) returns the 0.25u floor rather than refusing to
+    post — the upstream probability gate is responsible for blocking bad bets.
+    """
+    if combined_prob <= 0 or parlay_odds_american is None:
+        return 0.25
+    if parlay_odds_american > 0:
+        dec = 1.0 + parlay_odds_american / 100.0
+    else:
+        dec = 1.0 + 100.0 / abs(parlay_odds_american)
+    b = dec - 1.0
+    if b <= 0:
+        return 0.25
+    q = 1.0 - combined_prob
+    kelly_full = (combined_prob * b - q) / b
+    if kelly_full <= 0:
+        return 0.25
+    # Quarter Kelly, converted: fraction × 100 = units on 100u bankroll
+    raw_units = kelly_full * 0.25 * 100.0
+    final = round_units(raw_units)
+    return max(min(final, 0.75), 0.25)
 
 
 def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
@@ -3425,15 +3572,17 @@ def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
         return
 
     guard_key = f"daily_lay:{today}"
-    if _discord_already_posted(guard_key):
+    if not _discord_claim_post(guard_key):
         print(f"  [Discord] ⏭️  Daily Lay already posted for {today} — skipping")
         return
 
     now_et = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
     book = alt_spread_parlay.get("book", "N/A")
-    parlay_odds = fmt_odds(alt_spread_parlay.get("parlay_odds", 0))
+    parlay_odds_raw = alt_spread_parlay.get("parlay_odds", 0)
+    parlay_odds = fmt_odds(parlay_odds_raw)
     n_legs = len(legs)
-    DAILY_LAY_SIZE = 0.50  # Standard unit size for the daily lay parlay
+    DAILY_LAY_SIZE = size_daily_lay(combined_prob, parlay_odds_raw)
+    print(f"  [daily-lay-sizing] Kelly sizing: combined_prob={combined_prob:.3f} odds={parlay_odds} → {DAILY_LAY_SIZE:.2f}u")
 
     leg_lines = [f"{n_legs}-leg alt spread parlay @ {book}\n"]
     for i, leg in enumerate(legs, 1):
@@ -3461,9 +3610,33 @@ def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
     }
     if _webhook_post(DISCORD_ALT_PARLAY_WEBHOOK, payload, label=f"daily lay ({n_legs} legs @ {parlay_odds})"):
         print(f"  [Discord] ✅ Daily Lay posted to #daily-lay ({n_legs} legs @ {parlay_odds})")
-        if not suppress_ping:
-            _discord_mark_posted(guard_key)
         _log_daily_lay(alt_spread_parlay, today, save=save)
+    else:
+        _notify_post_failure("daily_lay", guard_key=guard_key)
+
+
+def _daily_lay_legs_json(legs):
+    """Serialise daily_lay legs to the canonical `legs` JSON column format.
+
+    Each entry: {team, spread, game, cover_prob, odds}
+    The grader reads team+spread from here instead of parsing the `game` field
+    as a string (audit H9 / F2.6 / F4.5).
+    Returns empty string on any failure.
+    """
+    import json as _json
+    try:
+        out = []
+        for leg in legs:
+            out.append({
+                "team":       str(leg.get("team", "")),
+                "spread":     float(leg.get("alt_spread", 0)),
+                "game":       str(leg.get("game", "")),
+                "cover_prob": float(leg.get("alt_cover_prob", leg.get("cover_prob", 0))),
+                "odds":       int(round(leg.get("real_odds", 0))),
+            })
+        return _json.dumps(out, separators=(",", ":"))
+    except Exception:
+        return ""
 
 
 def _log_daily_lay(alt_spread_parlay, today_str, save=True):
@@ -3507,7 +3680,12 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
         "pick_score": "",
         # M-10: canonical "0.50" not bare 0.50 — string sort / xlsx display
         # parity with other run_types.
-        "size": _normalize_size(0.50),
+        # Dynamic Kelly sizing — computed by size_daily_lay() in post_daily_lay().
+        # Re-derive here from the same inputs so _log_daily_lay stays self-contained.
+        "size": _normalize_size(size_daily_lay(
+            alt_spread_parlay.get("combined_prob", 0),
+            alt_spread_parlay.get("parlay_odds", 0),
+        )),
         "game": legs_desc,
         "mode": "",
         "result": "",
@@ -3518,6 +3696,7 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
         "context_verdict": "",
         "context_reason": "",
         "context_score": "",
+        "legs": _daily_lay_legs_json(legs),
     }]
 
     try:
@@ -3550,9 +3729,168 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
         try:
             _write_schema_sidecar(log_path)
         except Exception as _sidecar_err:
-            print(f"  ⚠ M-13 sidecar write failed for {log_path}: {_sidecar_err}")
+            logger.warning(f"M-13 sidecar write failed for {log_path}: {_sidecar_err}")
     except Exception as e:
-        print(f"  ⚠ Daily Lay log failed: {e}")
+        logger.error(f"Daily Lay log failed: {e}")
+
+
+def _legs_json(picks, sport_override=None):
+    """Serialise a list of pick dicts to the canonical `legs` JSON string.
+
+    Stores only the fields needed by the grader (player, direction, line,
+    stat, sport, game). Returns "" on failure so callers never crash.
+    """
+    import json as _json
+    try:
+        out = []
+        for p in picks:
+            sport = sport_override or p.get("sport", "NBA")
+            out.append({
+                "player":    str(p.get("player", "")),
+                "direction": str(p.get("direction", "")).lower(),
+                "line":      float(p.get("line", 0)),
+                "stat":      str(p.get("stat", "")),
+                "sport":     sport,
+                "game":      str(p.get("game", "")),
+                "win_prob":  float(p.get("win_prob", p.get("fair_prob", 0))),
+            })
+        return _json.dumps(out, separators=(",", ":"))
+    except Exception:
+        return ""
+
+
+def post_longshot(safest6_parlay, today, suppress_ping=False, save=True):
+    """Post the longshot 6-leg parlay to #longshot (or #bonus-drops fallback)."""
+    if not safest6_parlay:
+        print("  [Discord] No longshot parlay — skipping.")
+        return
+    legs = safest6_parlay.get("legs", [])
+    if len(legs) < 6:
+        return
+
+    webhook = DISCORD_LONGSHOT_WEBHOOK or DISCORD_BONUS_WEBHOOK
+    if not webhook:
+        print("  [Discord] DISCORD_LONGSHOT_WEBHOOK not configured — skipping longshot post.")
+        return
+
+    guard_key = f"longshot:{today}"
+    if not _discord_claim_post(guard_key):
+        print(f"  [Discord] ⏭️  Longshot already posted for {today} — skipping")
+        return
+
+    now_et = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
+    combined_prob = safest6_parlay.get("combined_prob", 0)
+    parlay_odds   = fmt_odds(safest6_parlay.get("parlay_odds", 0))
+
+    leg_lines = [f"6-leg longshot — safest model picks\n"]
+    for i, leg in enumerate(legs, 1):
+        dir_word  = "Over" if str(leg.get("direction", "")).lower() == "over" else "Under"
+        wp_pct    = f"{leg.get('win_prob', 0)*100:.0f}%"
+        leg_lines.append(
+            f"**Leg {i}** · {leg.get('player','')} {dir_word} {leg.get('line','')} "
+            f"{leg.get('stat','')} · {wp_pct} model"
+        )
+    leg_lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━")
+    leg_lines.append(f"**{parlay_odds}** combined · **{LONGSHOT_SIZE:.2f}u** · {combined_prob*100:.1f}% model prob")
+
+    payload = {
+        "username": "PicksByJonny",
+        "content": "" if suppress_ping else "@everyone",
+        "embeds": [{
+            "title": f"🎯 Longshot — {today}",
+            "description": "\n".join(leg_lines),
+            "color": 0xE74C3C,
+            "footer": {"text": f"{BRAND_TAGLINE} · {now_et}"}
+        }]
+    }
+    if _webhook_post(webhook, payload, label=f"longshot (6-leg @ {parlay_odds})"):
+        print(f"  [Discord] ✅ Longshot posted ({parlay_odds})")
+        if save:
+            _log_longshot(safest6_parlay, today)
+    else:
+        _discord_release_post(guard_key)
+
+
+def _log_longshot(safest6_parlay, today_str, save=True):
+    """Append the longshot parlay to pick_log.csv as run_type='longshot'."""
+    if not save:
+        return
+    log_path = Path(PICK_LOG_PATH)
+    if not log_path.exists():
+        return
+    legs = safest6_parlay.get("legs", [])
+    if not legs:
+        return
+
+    run_time    = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M")
+    parlay_odds = safest6_parlay.get("parlay_odds", 0)
+    legs_json   = _legs_json(legs)
+
+    # Human-readable game field: first sport/game for context
+    sports_seen = sorted({p.get("sport", "") for p in legs if p.get("sport", "")})
+    player_desc = " / ".join(
+        f"{p.get('player','').split()[-1]} "
+        f"{'O' if str(p.get('direction','')).lower()=='over' else 'U'}"
+        f"{p.get('line','')} {p.get('stat','')}"
+        for p in legs
+    )
+
+    row = {
+        "date":            today_str,
+        "run_time":        run_time,
+        "run_type":        "longshot",
+        "sport":           ",".join(sports_seen),
+        "player":          f"Longshot {len(legs)}-leg",
+        "team":            "",
+        "stat":            "PARLAY",
+        "line":            "",
+        "direction":       "",
+        "proj":            "",
+        "win_prob":        f"{safest6_parlay.get('combined_prob', 0):.4f}",
+        "edge":            "",
+        "odds":            _normalize_odds(int(round(parlay_odds))) if parlay_odds else "",
+        "book":            "",
+        "tier":            "LONGSHOT",
+        "pick_score":      "",
+        "size":            _normalize_size(LONGSHOT_SIZE),
+        "game":            player_desc,
+        "mode":            "",
+        "result":          "",
+        "closing_odds":    "",
+        "clv":             "",
+        "card_slot":       "",
+        "is_home":         "",
+        "context_verdict": "",
+        "context_reason":  "",
+        "context_score":   "",
+        "legs":            legs_json,
+    }
+
+    try:
+        with _pick_log_lock(log_path):
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                header = reader.fieldnames or list(HEADER)
+                rows = list(reader)
+            already = any(
+                r.get("date") == today_str and r.get("run_type") == "longshot"
+                for r in rows
+            )
+            if already:
+                print("  [pick_log] Longshot already logged today — skipping.")
+                return
+            with open(log_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
+                writer.writerow(row)
+                f.flush()
+                os.fsync(f.fileno())
+        print(f"  📝 Longshot logged ({len(legs)} legs)")
+        try:
+            _write_schema_sidecar(log_path)
+        except Exception as _se:
+            logger.warning(f"M-13 sidecar write failed: {_se}")
+    except Exception as e:
+        logger.error(f"Longshot log failed: {e}")
 
 
 def post_card_announcement(premium, mode, today, suppress_ping=False):
@@ -3560,7 +3898,7 @@ def post_card_announcement(premium, mode, today, suppress_ping=False):
     if not DISCORD_ANNOUNCE_WEBHOOK or not premium:
         return
     guard_key = f"card_announcement:{today}"
-    if _discord_already_posted(guard_key):
+    if not _discord_claim_post(guard_key):
         print(f"  [Discord] ⏭️  Card announcement already posted for {today} — skipping")
         return
     potd = premium[0]
@@ -3595,8 +3933,8 @@ def post_card_announcement(premium, mode, today, suppress_ping=False):
     }
     if _webhook_post(DISCORD_ANNOUNCE_WEBHOOK, payload, label="card announcement"):
         print(f"  [Discord] ✅ Announcement posted to #announcements")
-        if not suppress_ping:
-            _discord_mark_posted(guard_key)
+    else:
+        _discord_release_post(guard_key)
 
 
 def _card_already_posted_today(today_str):
@@ -3745,8 +4083,8 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
         try:
             _log_bonus_pick(best, run_id, today_str, save=save)
         except Exception as _log_err:
-            print(f"  [pick_log] ⚠ Bonus drop posted but logging failed: {_log_err}")
-            print(f"  [pick_log] ⚠ Backfill manually: {best['player']} {best['stat']} {best['direction']} {best['line']} @ {best['odds']} ({best['book']})")
+            logger.error(f"Bonus drop posted but logging failed: {_log_err}")
+            logger.warning(f"Backfill manually: {best['player']} {best['stat']} {best['direction']} {best['line']} @ {best['odds']} ({best['book']})")
 
 
 def _log_bonus_pick(pick, run_id, today_str, save=True):
@@ -3807,7 +4145,7 @@ def _log_bonus_pick(pick, run_id, today_str, save=True):
     try:
         _write_schema_sidecar(log_path)
     except Exception as _sidecar_err:
-        print(f"  ⚠ M-13 sidecar write failed for {log_path}: {_sidecar_err}")
+        logger.warning(f"M-13 sidecar write failed for {log_path}: {_sidecar_err}")
 
 
 # ============================================================
@@ -3880,8 +4218,15 @@ def _killshots_this_week(today_str):
             if r.get("tier") == "KILLSHOT"
             and cutoff <= r.get("date", "") <= today_str
         )
-    except Exception:
-        return 0
+    except Exception as e:
+        # Fail SAFE: on any read/parse error, assume the cap is full.
+        # Returning 0 here would allow the engine to post the full weekly
+        # KILLSHOT cap on top of already-posted shots (audit H4 / F2.7).
+        logger.error(
+            f"[KILLSHOT] _killshots_this_week failed — assuming cap full to "
+            f"prevent over-posting: {type(e).__name__}: {e}"
+        )
+        return KILLSHOT_WEEKLY_CAP
 
 
 def select_killshots(qualified, today_str, manual_players=None):
@@ -3993,15 +4338,17 @@ def post_killshots_to_discord(killshots, today, today_str, suppress_ping=False):
         return
     for pick in killshots:
         ks_key = f"killshot:{today_str}:{pick.get('player','').strip().lower()}:{pick.get('stat','')}:{pick.get('direction','')}:{pick.get('line','')}"
-        if _discord_already_posted(ks_key):
+        if not _discord_claim_post(ks_key):
             print(f"  [Discord] ⏭️  KILLSHOT already posted: {pick['player']} {pick['stat']} — skipping")
             continue
         payload = build_killshot_embed(pick, today, suppress_ping=suppress_ping)
         if _webhook_post(DISCORD_KILLSHOT_WEBHOOK, payload, label=f"KILLSHOT: {pick['player']} {pick['stat']}"):
             print(f"  [Discord] 🎯 KILLSHOT posted: {pick['player']} {pick['stat']} ({pick.get('size', 0):.2f}u · Score {pick.get('pick_score', 0):.1f})")
-            if not suppress_ping:
-                _discord_mark_posted(ks_key)
         else:
+            _notify_post_failure(
+                f"killshot:{pick.get('player','')}:{pick.get('stat','')}",
+                guard_key=ks_key,
+            )
             print(f"  [Discord] ⚠ KILLSHOT post failed: {pick['player']} {pick['stat']}")
 
 
@@ -4249,7 +4596,7 @@ def apply_context_sanity(qualified, today_str, skip=False, mode="Default"):
 
     print(f"\n  [Context] Running sanity layer on {len(qualified)} qualifying picks...")
     if not _ANTHROPIC_AVAILABLE:
-        print("  [Context] ⚠️  anthropic package not found — skipping (pip install anthropic)")
+        logger.warning("Context: anthropic package not found — skipping (pip install anthropic)")
         for p in qualified:
             p["context_verdict"] = "skipped"
             p["context_reason"]  = "anthropic not installed"
@@ -4470,9 +4817,12 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         out.append("  Not enough qualifying picks for 6-leg parlay.")
     out.append("")
 
-    # === ALT 3-LEG SPREAD PARLAY ===
+    # === ALT SPREAD PARLAY ===
+    _dlay_n = alt_spread_parlay.get("num_legs", "?") if alt_spread_parlay else "?"
+    _dlay_bk = alt_spread_parlay.get("book", "") if alt_spread_parlay else ""
+    _dlay_hdr = f"ALT SPREAD PARLAY — {_dlay_n}-Leg ({_dlay_bk})" if _dlay_bk else f"ALT SPREAD PARLAY — {_dlay_n}-Leg"
     out.append(f"{'='*50}")
-    out.append("ALT SPREAD PARLAY — 3 Legs @ ~-500 Each")
+    out.append(_dlay_hdr)
     out.append(f"{'='*50}")
     if alt_spread_parlay and alt_spread_parlay["legs"]:
         out.append(f"  Book: {alt_spread_parlay.get('book', 'N/A')}")
@@ -4617,9 +4967,14 @@ def main():
     parser.add_argument("--context", action="store_true", help="Enable context sanity layer (Claude API calls for injury/news check)")
     parser.add_argument("--killshot", default="", help="Manually promote picks to KILLSHOT tier (comma-separated player last names, e.g. 'Pastrnak,McDavid')")
     parser.add_argument("--log-manual", action="store_true", help="Log a manually posted pick to pick_log.csv (interactive prompt)")
+    parser.add_argument("--debug-daily-lay", action="store_true", help="Verbose debug output for alt spread parlay builder")
+    parser.add_argument("--repost-daily-lay", action="store_true", help="Force-post the daily lay even if card was already posted today")
     parser.add_argument("--confirm",    action="store_true", help="Prompt y/n before every Discord post")
     parser.add_argument("--max-per-game", type=int, default=2,
                         help="R7 override: max picks per game (default 2). Use on thin-slate nights e.g. --max-per-game 5")
+    parser.add_argument("--no-sgp", action="store_true", help="Skip SGP builder (same-game parlay suggestions)")
+    parser.add_argument("--sgp-only", action="store_true", help="Run SGP builder only — skip everything else (premium card, bonus, daily lay, longshot, killshots)")
+    parser.add_argument("--bonus-only", action="store_true", help="Run bonus drop + SGP only; skip premium card, daily lay, longshot, killshots, preview")
 
     args = parser.parse_args()
 
@@ -4826,7 +5181,7 @@ def main():
         sport_sigmas = {}
         for sport in all_players:
             sport_sigmas[sport] = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])
-        alt_spread_parlay = build_alt_spread_parlay(all_game_lines, all_team_proj, sport_sigmas, all_alt_spreads)
+        alt_spread_parlay = build_alt_spread_parlay(all_game_lines, all_team_proj, sport_sigmas, all_alt_spreads, debug=getattr(args, "debug_daily_lay", False))
 
         # ET-aware date header (audit H-1).
         today = datetime.now(ZoneInfo("America/New_York")).strftime("%B %d, %Y")
@@ -4966,7 +5321,7 @@ def main():
     sport_sigmas = {}
     for sport in all_players:
         sport_sigmas[sport] = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])
-    alt_spread_parlay = build_alt_spread_parlay(all_game_lines, all_team_proj, sport_sigmas, all_alt_spreads)
+    alt_spread_parlay = build_alt_spread_parlay(all_game_lines, all_team_proj, sport_sigmas, all_alt_spreads, debug=getattr(args, "debug_daily_lay", False))
 
     # ET-aware date header (audit H-1).
     today = datetime.now(ZoneInfo("America/New_York")).strftime("%B %d, %Y")
@@ -4995,8 +5350,11 @@ def main():
         pout.append("")
 
         # Alt Spread Parlay
+        _dlay_n2 = alt_spread_parlay.get("num_legs", "?") if alt_spread_parlay else "?"
+        _dlay_bk2 = alt_spread_parlay.get("book", "") if alt_spread_parlay else ""
+        _dlay_hdr2 = f"ALT SPREAD PARLAY — {_dlay_n2}-Leg ({_dlay_bk2})" if _dlay_bk2 else f"ALT SPREAD PARLAY — {_dlay_n2}-Leg"
         pout.append(f"{'='*50}")
-        pout.append("ALT SPREAD PARLAY — 3 Legs @ ~-500 Each")
+        pout.append(_dlay_hdr2)
         pout.append(f"{'='*50}")
         if alt_spread_parlay and alt_spread_parlay["legs"]:
             pout.append(f"  Book: {alt_spread_parlay.get('book', 'N/A')}")
@@ -5069,6 +5427,11 @@ def main():
                 print(f"    ❌ '{size_raw}' is not a valid number. Try again.")
         game     = input("  Game (e.g. 'Boston Celtics @ Miami Heat'): ").strip()
         tier     = input("  Tier (T1/T1B/T2/T3/KILLSHOT or leave blank): ").strip().upper() or "MANUAL"
+        # Classify run_type: gameline for spreads/MLs/totals, manual for props.
+        _gameline_stats = {"SPREAD", "ML_FAV", "ML_DOG", "TOTAL", "TEAM_TOTAL",
+                           "F5_SPREAD", "F5_ML", "F5_TOTAL", "NRFI", "YRFI", "GOLF_WIN"}
+        manual_run_type = "gameline" if stat in _gameline_stats else "manual"
+
         # is_home prompt — required for SPREAD/ML/F5/TEAM_TOTAL so grade_picks resolves the right side.
         _home_stats = {"SPREAD", "ML_FAV", "ML_DOG", "TEAM_TOTAL",
                        "F5_SPREAD", "F5_ML", "F5_TOTAL", "NRFI", "YRFI"}
@@ -5117,7 +5480,7 @@ def main():
                 if write_header:
                     writer.writerow(CANONICAL_HEADER)
                 writer.writerow([
-                    today_manual, run_time_manual, "manual", sport, player, team, stat, line,
+                    today_manual, run_time_manual, manual_run_type, sport, player, team, stat, line,
                     direction, "", "", "", odds_norm, book,
                     # M-10: canonical 2-decimal size for manual rows too.
                     # M-3: canonical is_home (handles "1"/"true"/etc).
@@ -5133,7 +5496,7 @@ def main():
         try:
             _write_schema_sidecar(log_path)
         except Exception as _sidecar_err:
-            print(f"  ⚠ M-13 sidecar write failed for {log_path}: {_sidecar_err}")
+            logger.warning(f"M-13 sidecar write failed for {log_path}: {_sidecar_err}")
         print(f"\n  ✅ Logged: {player} {direction.upper()} {line} {stat} ({sport}) to pick_log_manual.csv")
         print("\n  Done. Let's eat.\n")
         return
@@ -5170,7 +5533,7 @@ def main():
                         "context_score":   int(float(r.get("context_score", 0) or 0)),
                     })
                 if repost_picks:
-                    print(f"\n  [Discord] --repost: re-firing premium card + POTD for {today_str}…")
+                    print(f"\n  [Discord] --repost: re-firing premium card + POTD for {today_str}\u2026")
                     post_to_discord(repost_picks, args.mode, today_str, suppress_ping=suppress_ping)
                 else:
                     print(f"\n  [Discord] --repost: no primary picks found for {today_str}")
@@ -5182,34 +5545,59 @@ def main():
         return
 
     if args.no_discord:
-        print("\n  [Discord] --no-discord flag set — skipping all Discord posts.")
+        print("\n  [Discord] --no-discord flag set -- skipping all Discord posts.")
     else:
         card_already_up = _card_was_already_up
+        _bonus_only = getattr(args, "bonus_only", False)
+        _sgp_only   = getattr(args, "sgp_only", False)
 
         _save = not args.no_save
-        if card_already_up:
-            print("\n  [Discord] Card already posted today — skipping premium card, POTD, daily lay.")
+        _repost_daily_lay = getattr(args, "repost_daily_lay", False)
+        if _sgp_only:
+            print("\n  [Discord] --sgp-only: skipping all posts -- SGP builder will run below.")
+        elif card_already_up or _bonus_only:
+            if _bonus_only:
+                print("\n  [Discord] --bonus-only: skipping premium card, daily lay, longshot, killshots, preview.")
+            else:
+                print("\n  [Discord] Card already posted today -- skipping premium card, POTD, daily lay.")
             print("  [Discord] Running bonus drop check only...")
             post_extras_to_discord(qualified, save=_save)
+            if _repost_daily_lay:
+                print("  [Discord] --repost-daily-lay: force-posting daily lay...")
+                post_daily_lay(alt_spread_parlay, today_str, suppress_ping=True, save=_save)
         else:
             post_to_discord(premium, args.mode, today_str, suppress_ping=suppress_ping)
-            post_card_announcement(premium, args.mode, today_str, suppress_ping=suppress_ping)
             post_extras_to_discord(qualified, save=_save)
-            post_daily_lay(alt_spread_parlay, today_str, suppress_ping=suppress_ping, save=_save)
 
-            # ── KILLSHOT posts → #killshot ────────────────────────
+            # Daily lay and longshot post silently -- no @everyone ping
+            post_daily_lay(alt_spread_parlay, today_str, suppress_ping=True, save=_save)
+            post_longshot(safest6_parlay, today_str, suppress_ping=True, save=_save)
+
+            # -- KILLSHOT posts -> #killshot
             post_killshots_to_discord(killshots, today, today_str, suppress_ping=suppress_ping)
 
-            # ── Morning preview → #announcements ─────────────────
-            try:
-                from morning_preview import post_morning_preview, get_today_picks, load_pick_log
-                _mp_rows = load_pick_log()
-                _mp_picks = get_today_picks(_mp_rows, today_str)
-                post_morning_preview(today_str, _mp_picks, suppress_ping=suppress_ping)
-            except ImportError:
-                pass   # morning_preview.py not present — non-fatal
-            except Exception as _mp_err:
-                print(f"  ⚠ Morning preview failed: {_mp_err}")
+    # -- SGP builder (runs regardless of --no-discord) ----------------
+    # NBA only, playoff fun bet. Prints to console always; posts to
+    # Discord only when --no-discord and --dry-run are both off.
+    # Not tracked in pick_log.
+    if not getattr(args, 'no_sgp', False):
+        try:
+            from sgp_builder import run_sgp_builder
+            _sgp_csv_strs = [str(p) for p in csv_paths]
+            # --sgp-only forces a live post even if --no-discord was set
+            _sgp_only = getattr(args, 'sgp_only', False)
+            _sgp_dry  = (args.dry_run or args.no_discord) and not _sgp_only
+            _sgp_save = not args.no_save
+            print("\n  [SGP] Running SGP builder...")
+            run_sgp_builder(
+                _sgp_csv_strs,
+                dry_run=_sgp_dry,
+                confirm=_CONFIRM_MODE,
+                test=getattr(args, 'test', False),
+                save=_sgp_save,
+            )
+        except ImportError:
+            print('  [SGP] sgp_builder.py not found -- skipping.')
 
     print("\n  Done. Let's eat.\n")
 

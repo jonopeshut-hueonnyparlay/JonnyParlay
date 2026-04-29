@@ -679,6 +679,134 @@ Every `re.compile` / `re.match` / `re.search` / `re.sub`:
 
 ---
 
+## NEW SECTIONS — added Apr 24 2026 (post-session additions)
+
+The following features were added or heavily modified in the session that preceded this audit. These must be audited with extra scrutiny.
+
+### 61. New pick types — SGP, Longshot, Gameline
+
+Three new `run_type` values are now supported:
+- `sgp` — Same-Game Parlay (built by `engine/sgp_builder.py`)
+- `longshot` — Longshot parlay (multi-leg, high payout, low stake)
+- `gameline` — Game line manual picks (SPREAD, ML, TOTAL etc. logged via `--log-manual`)
+
+**Verify everywhere `run_type` is consumed:**
+- `grade_picks.py` — `COUNTED_RUN_TYPES`, `MODEL_RUN_TYPES`, grading dispatch (`grade_parlay_legs()` for sgp/longshot)
+- `capture_clv.py` — does it skip sgp/longshot rows correctly? (They have no individual closing line to capture.)
+- `analyze_picks.py` — includes sgp/longshot in P&L? Filters work?
+- `weekly_recap.py` — P&L correct across all run_types?
+- `clv_report.py` — sgp/longshot excluded from CLV metrics (no individual closing line)?
+- `discord_posted.json` guard — sgp/longshot have their own guard keys?
+- Any `run_type == "primary"` or `in ("primary", "bonus", "daily_lay")` hardcoded check — is it missing the new types?
+
+### 62. pick_log.csv schema v3 — `legs` column (28 fields)
+
+Schema bumped from v2 (27 cols) to v3 (28 cols). New column: `legs` — JSON array of parlay leg detail for sgp/longshot rows.
+
+**Verify:**
+- `engine/pick_log_schema.py` — `SCHEMA_VERSION = 3`, `CANONICAL_HEADER` has exactly 28 fields, `_V3_COLUMNS = frozenset(["legs"])`, assertions for both v2 and v3 columns present.
+- Every writer that appends to `pick_log.csv` (run_picks.py, sgp_builder.py, grade_picks.py) writes all 28 fields.
+- Non-parlay rows (primary, bonus, daily_lay, gameline, manual) write `legs = ""` (blank), not missing.
+- `grade_picks.py` — `grade_parlay_legs()` correctly parses `legs` JSON and dispatches per-leg grading.
+- Schema field-count check: run `awk -F',' 'NR>1 && NF!=28 { print NR": "NF" fields | "$0 }' data/pick_log.csv` — any output = bug.
+- Header must now be exactly: `date,run_time,run_type,sport,player,team,stat,line,direction,proj,win_prob,edge,odds,book,tier,pick_score,size,game,mode,result,closing_odds,clv,card_slot,is_home,context_verdict,context_reason,context_score,legs`
+- Migration: both `pick_log.csv` and `pick_log_manual.csv` were migrated from v2→v3. Verify no rows lost, no field shifted.
+- Root-level `pick_log_schema.py` is synced with `engine/pick_log_schema.py`.
+
+### 63. SGP builder — `engine/sgp_builder.py`
+
+New file (~769 lines). Standalone module, also callable from `run_picks.py` via `run_sgp_builder()`.
+
+**Audit checklist:**
+- `run_sgp_builder(csv_paths, dry_run, confirm, test, cached_odds, save)` — all six params present in signature? (`save=True` was a late fix — verify it didn't get dropped.)
+- `post_sgp(legs, parlay_odds, game, suppress_ping, today_str, save)` — `save` param used correctly to gate `_log_sgp()`?
+- `_log_sgp(legs, parlay_odds, game, today_str, book)` — writes exactly 28 fields, book field populated, legs JSON valid.
+- `build_sgp_embed()` — shows `📍 Bet on: **{book}**` line, shows per-leg odds, correct formatting.
+- `_sgp_book(legs)` — modal book logic, prefers DK/FanDuel on ties.
+- Constants: `MIN_LEGS=6`, `MAX_LEGS=6`, `MIN_PARLAY_ODDS=400`, `MAX_PARLAY_ODDS=700`, `MAX_LEG_ODDS=-150`, sweet spot +500 in `_score_sgp`.
+- `build_candidate_legs()` — `if odds > MAX_LEG_ODDS: continue` filter present? `if odds < -300: continue` still there?
+- `_generate_thesis()` — direction-aware (overs vs unders)? No "stat-stuffing" on under-heavy stacks?
+- `_is_negatively_correlated()` — all 4 rules (R0–R3) correct?
+- Correlation tags — `team_off_`, `team_reb_`, `team_def_vs_` scoped to team correctly?
+- `_parlay_american()` — decimal conversion correct for both positive and negative leg odds?
+- `today_str` passed to both `post_sgp()` call sites in `run_sgp_builder()`?
+- Root `sgp_builder.py` synced with `engine/sgp_builder.py`?
+- CLi `__main__` block — correct argparse, no `save` param in CLI (save=True by default from CLI)?
+
+### 64. `run_picks.py` — SGP/Longshot/Gameline integration
+
+**Verify these specific new integration points in `run_picks.py`:**
+- `run_sgp_builder()` call passes `save=_sgp_save` (not hardcoded True/False).
+- `_sgp_dry` computed as `args.dry_run or args.no_discord` — correct gate?
+- `_sgp_save` computed as `not args.no_save` — correct gate?
+- `post_longshot()` called with `save=_save` — consistent with other save gates?
+- `--log-manual` gameline classification: stat in `_gameline_stats` → `run_type="gameline"`, else `"manual"`.
+- `_gameline_stats` set covers: `{"SPREAD", "ML_FAV", "ML_DOG", "TOTAL", "TEAM_TOTAL", "F5_SPREAD", "F5_ML", "F5_TOTAL", "NRFI", "YRFI", "GOLF_WIN"}` (verify exact set).
+- New tiers `SGP` and `LONGSHOT` — do any tier-gated checks (`if tier == "T1"` etc.) accidentally block them?
+- `COUNTED_RUN_TYPES` in run_picks.py (if it exists there) — includes all 7 types?
+
+### 65. `grade_picks.py` — new grading paths
+
+**Verify:**
+- `grade_parlay_legs(row, all_player_stats, all_scores)` — added after `grade_daily_lay()`, dispatched before daily_lay check in the grading loop.
+- `sgp` and `longshot` rows → `grade_parlay_legs()`.
+- `grade_parlay_legs()` logic: `"L" in results → "L"`, `"P" in results → "P"`, else `"W"` — correct parlay grading (one loss = loss, no graded leg = None/skip).
+- NBA data fetched for `daily_lay`, `longshot`, `sgp` sport lookups.
+- `COUNTED_RUN_TYPES = {"primary","bonus","manual","daily_lay","longshot","sgp","gameline","",None}` — all present?
+- `MODEL_RUN_TYPES = {"primary","bonus","daily_lay","longshot","sgp"}` — gameline/manual correctly excluded?
+- `build_recap_embed()` — has separate sections/headers for longshot and SGP picks?
+- Does the grader skip `legs=""` rows for non-parlay picks without erroring?
+- Monthly summary — includes sgp/longshot in P&L totals?
+
+### 66. `secrets_config.py` — new webhook vars
+
+Two new webhook env vars added:
+- `DISCORD_LONGSHOT_WEBHOOK`
+- `DISCORD_SGP_WEBHOOK`
+
+**Verify:**
+- Both exported from `engine/secrets_config.py`.
+- Root `secrets_config.py` synced (this caused an ImportError on first real run after adding — verify fix is in place).
+- `.env.example` has both documented with placeholder values.
+- Both used with `or DISCORD_BONUS_WEBHOOK` fallback in their respective post functions.
+- Neither leaked to logs or Discord embeds.
+
+### 67. KILLSHOT v2 rule changes (Apr 21 2026)
+
+KILLSHOT gate was updated. Verify code matches exactly:
+- `tier == "T1"` strict (not T1B, T2, etc.)
+- `pick_score >= 90`
+- `win_prob >= 0.65`
+- `odds in [-200, +110]` (inclusive)
+- `stat in {"PTS", "REB", "AST", "SOG", "3PM"}`
+- Sizing: 3u default, 4u iff `win_prob >= 0.70 AND edge >= 0.06` (no 5u — v1 allowed 5u, v2 removed it)
+- Weekly cap: **2** (was 3 in v1 — verify cap in code matches 2)
+- Manual override `--killshot NAME` bypasses gate, requires `score >= 75`, still counts toward cap
+- Posts to `#killshot` channel with `@everyone`
+
+### 68. File sync audit — engine/ vs root
+
+The following files must be identical between `engine/` and root:
+- `run_picks.py` ↔ `engine/run_picks.py`
+- `grade_picks.py` ↔ `engine/grade_picks.py`
+- `sgp_builder.py` ↔ `engine/sgp_builder.py`
+- `pick_log_schema.py` ↔ `engine/pick_log_schema.py`
+- `secrets_config.py` ↔ `engine/secrets_config.py`
+- `results_graphic.py` ↔ `engine/results_graphic.py`
+
+Run `diff engine/X.py X.py` for each — any diff = bug (the session had multiple instances of root not being synced after edits).
+
+### 69. pick_log data integrity — v3 post-migration
+
+The logs were migrated from v2 (27 cols) to v3 (28 cols) mid-session. Verify:
+- All rows in `pick_log.csv` have exactly 28 fields.
+- All rows in `pick_log_manual.csv` have exactly 28 fields.
+- Migrated rows have `legs=""` (blank, not "legs", not missing).
+- No row has `legs` containing malformed JSON (for sgp/longshot rows added after migration).
+- Sidecar files (`pick_log.csv.schema`, `pick_log_manual.csv.schema`) reflect `SCHEMA_VERSION=3`.
+
+---
+
 ## Final instruction: leave no stone unturned
 
 If you find yourself skipping a file, function, or branch because it "looks fine" — read it character-by-character instead. This is a line-by-line audit, not a spot-check.
@@ -698,8 +826,13 @@ If you're unsure whether something is a bug or intended behavior, **flag it as a
 3. Start with `run_picks.py` since it's the largest and highest-blast-radius.
 4. Then `grade_picks.py`.
 5. Then `capture_clv.py`.
-6. Then the support scripts.
-7. Finish with a top-level "cross-file issues" section.
+6. Then `engine/sgp_builder.py` (new this session — high priority).
+7. Then `engine/pick_log_schema.py`.
+8. Then `engine/secrets_config.py`.
+9. Then the support scripts.
+10. Run all file-sync diffs (section 68).
+11. Run all pick_log integrity checks (sections 5, 62, 69).
+12. Finish with a top-level "cross-file issues" section.
 
 Use parallel subagents where it helps — Explore / general-purpose agents can each take one file and report back. But YOU should synthesize the final report.
 
@@ -707,4 +840,4 @@ Ship the audit report as a markdown file at `/sessions/<session>/mnt/JonnyParlay
 
 ---
 
-*Created by a previous Claude session after a series of bug fixes (CLV matcher, bonus sizing, name matching, race conditions). The codebase is in better shape than it's been — this audit is to confirm that and catch anything we missed.*
+*Updated Apr 24 2026 — added sections 61–69 covering SGP builder, longshot parlay, gameline run_type, pick_log v3 schema migration, KILLSHOT v2 rules, new webhook secrets, and file sync audit. Original audit closed Apr 21 2026 with 78/78 items resolved.*
