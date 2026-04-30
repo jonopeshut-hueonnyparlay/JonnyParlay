@@ -142,9 +142,10 @@ SKIP_STATS = {"NRFI", "YRFI", "TEAM_TOTAL", "GOLF_WIN", "PARLAY"}
 # as the API reconciles scheduled vs actual start. Widening the pre-tip window
 # to -30 gives the daemon multiple capture attempts before the shift lands us
 # in a post-tip window where prop markets are already gone.
-CAPTURE_BEFORE_SECS = 30 * 60
-CAPTURE_AFTER_SECS  = 3 * 60
-POLL_INTERVAL_SECS  = 120  # 2 minutes
+CAPTURE_BEFORE_SECS    = 30 * 60
+CAPTURE_AFTER_SECS     = 3 * 60
+POLL_INTERVAL_SECS     = 120       # 2 min — used when a game is in/near its window
+POLL_INTERVAL_LONG_SECS = 30 * 60  # 30 min cap — sleep until just before first window
 
 # If the daemon is restarted after a crash, allow retry attempts until this many
 # seconds past game start (was 600 = 10 min; extended to 30 min so a restart
@@ -892,11 +893,11 @@ def run(run_date: str):
     # runs at normal process exit to release the daemon lock.
     _install_signal_handlers()
 
-    print(f"\n{'─'*60}")
-    print(f"  CLV Daemon — {run_date}")
+    print(f"\n{'-'*60}")
+    print(f"  CLV Daemon -- {run_date}")
     print(f"  Capturing T-{CAPTURE_BEFORE_SECS//60}min before each game")
     print(f"  Polling every {POLL_INTERVAL_SECS//60} min")
-    print(f"{'─'*60}\n")
+    print(f"{'-'*60}\n")
 
     # Track which games we've already captured to avoid double-writes.
     # Hydrate from checkpoint so a restart doesn't re-fetch already-done games.
@@ -1010,6 +1011,10 @@ def run(run_date: str):
             sport = p.get("sport", "")
             picks_by_sport.setdefault(sport, []).append((log_path, p))
 
+        # Track secs until the earliest uncaptured game enters its capture window.
+        # Used at the bottom of the loop to skip polling until we're actually needed.
+        secs_to_next_window: float = float("inf")
+
         # For each sport, fetch events and check capture window
         for sport, sport_picks in picks_by_sport.items():
             sport_key = SPORT_KEYS.get(sport)
@@ -1047,6 +1052,10 @@ def run(run_date: str):
                 if not (-CAPTURE_AFTER_SECS <= secs_to_start <= CAPTURE_BEFORE_SECS):
                     mins = int(secs_to_start / 60)
                     if mins > 0:
+                        # secs until this game's window opens (positive = future)
+                        secs_until_window = secs_to_start - CAPTURE_BEFORE_SECS
+                        if secs_until_window > 0:
+                            secs_to_next_window = min(secs_to_next_window, secs_until_window)
                         print(f"  [{now.strftime('%H:%M')}] {game_str[:45]}: T-{mins}min — waiting")
                     continue
 
@@ -1151,9 +1160,20 @@ def run(run_date: str):
             print(f"\n  ✅ All picks captured for {run_date}. Daemon exiting.")
             break
 
-        print(f"\n  [{now.strftime('%H:%M')} UTC] {remaining} pick(s) pending capture. "
-              f"Next check in {POLL_INTERVAL_SECS//60}min...\n")
-        _interruptible_sleep(POLL_INTERVAL_SECS)
+        # Sleep until just before the earliest game window opens, capped at 30 min.
+        # If a game is already in/near its window, fall back to the 2-min poll.
+        if secs_to_next_window > POLL_INTERVAL_SECS:
+            # Arrive ~1 poll interval early so we don't miss the window edge
+            sleep_secs = int(min(secs_to_next_window - POLL_INTERVAL_SECS, POLL_INTERVAL_LONG_SECS))
+            sleep_secs = max(sleep_secs, POLL_INTERVAL_SECS)
+            mins_away = int(secs_to_next_window / 60)
+            print(f"\n  [{now.strftime('%H:%M')} UTC] {remaining} pick(s) pending. "
+                  f"First window in ~{mins_away}min — sleeping {sleep_secs//60}min...\n")
+        else:
+            sleep_secs = POLL_INTERVAL_SECS
+            print(f"\n  [{now.strftime('%H:%M')} UTC] {remaining} pick(s) pending. "
+                  f"Next check in {sleep_secs//60}min...\n")
+        _interruptible_sleep(sleep_secs)
 
 
 def main():
