@@ -37,9 +37,15 @@ except ImportError:
     print("pip install requests --break-system-packages")
     sys.exit(1)
 
+# M9: resolved via paths.py — honours $JONNYPARLAY_ROOT
+from paths import (  # noqa: E402
+    PICK_LOG_PATH as _PICK_LOG_PATH_P,
+    DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
+)
+
 # ── Config ────────────────────────────────────────────────────────────────────
-PICK_LOG_PATH            = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log.csv")
-DISCORD_GUARD_FILE       = os.path.expanduser("~/Documents/JonnyParlay/data/discord_posted.json")
+PICK_LOG_PATH            = str(_PICK_LOG_PATH_P)
+DISCORD_GUARD_FILE       = str(_DISCORD_GUARD_FILE_P)
 
 # Announce webhook loaded from env/.env — see secrets_config.py (audit C-6).
 from secrets_config import DISCORD_ANNOUNCE_WEBHOOK

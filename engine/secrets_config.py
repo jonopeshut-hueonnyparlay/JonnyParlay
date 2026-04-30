@@ -101,6 +101,8 @@ DISCORD_ANNOUNCE_WEBHOOK:   str = os.getenv("DISCORD_ANNOUNCE_WEBHOOK",   "")  #
 # finds out within seconds instead of the next day. Blank = feature disabled.
 # Point at a personal DM webhook or a low-traffic mod-alerts channel.
 DISCORD_FALLBACK_WEBHOOK:   str = os.getenv("DISCORD_FALLBACK_WEBHOOK",   "")  # optional alert channel
+DISCORD_LONGSHOT_WEBHOOK:   str = os.getenv("DISCORD_LONGSHOT_WEBHOOK",   "")  # #longshot (falls back to #bonus-drops)
+DISCORD_SGP_WEBHOOK:        str = os.getenv("DISCORD_SGP_WEBHOOK",        "")  # #sgp (falls back to #bonus-drops)
 
 
 # ── Helpers (fail-fast when a value is required at use-time) ────────────────

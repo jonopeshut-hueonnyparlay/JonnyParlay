@@ -5,16 +5,13 @@ grade_picks, run_picks) reads and writes the same guard file:
 
     ~/Documents/JonnyParlay/data/discord_posted.json
 
-Previously each file had its own _load_guard / _save_guard, each with its
-own tmp+replace logic and no cross-process coordination. Two writers firing
-at the same second could clobber each other and re-post a @everyone ping.
-
 This module is the single source of truth:
 
 - FileLock at discord_posted.json.lock serializes every reader and writer
-- Atomic write: tmp file → flush → fsync → os.replace
+- Atomic write: tmp file -> flush -> fsync -> os.replace
 - 90-day TTL prune on every save
-- If filelock is missing, falls back to best-effort direct write + warning
+- On JSONDecodeError: regex-rebuild from raw bytes recovers guard keys
+  instead of returning {} and re-posting the full card with @everyone.
 
 Public API:
     load_guard()         -> dict
@@ -22,20 +19,20 @@ Public API:
     prune_guard(guard)   -> dict
     is_posted(key)       -> bool
     mark_posted(key)     -> None     # atomic read-modify-write
+    claim_post(key)      -> bool     # atomic test-and-set (preferred)
+    release_post(key)    -> None     # un-claim on webhook failure
 """
 
 from __future__ import annotations
 
-import json  # noqa: F401 — retained for load path (reader still parses JSON)
+import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# Ensure sibling-module imports (io_utils) resolve whether this file is
-# imported as engine.discord_guard or via a `sys.path.insert(0, "engine")`
-# shim from the top-level launchers.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -44,7 +41,7 @@ from io_utils import atomic_write_json  # noqa: E402
 
 try:
     from filelock import FileLock, Timeout as _FileLockTimeout
-except ImportError as e:  # pragma: no cover — enforced as a hard dependency
+except ImportError as e:  # pragma: no cover
     raise ImportError(
         "filelock is required for cross-process safe Discord guard I/O. "
         "Install it: pip install filelock --break-system-packages"
@@ -65,16 +62,23 @@ GUARD_TTL_DAYS: int = 90
 LOCK_TIMEOUT_S: int = 30
 
 # ---------------------------------------------------------------------------
+# Regex for corruption recovery (C2 / audit F3.2)
+# ---------------------------------------------------------------------------
+
+# Matches: "some:guard:key": true   (case-insensitive for true/True)
+# Broad char class -- keys contain colons, spaces, dots, slashes.
+_GUARD_KEY_RE = re.compile(
+    rb'"((?:[^"\\]|\\.)+?)"\s*:\s*true',
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
 
-def prune_guard(guard: dict) -> dict:
-    """Drop guard keys whose embedded YYYY-MM-DD date exceeds the TTL.
 
-    Keys look like 'recap:2026-04-14', 'killshot:2026-04-15:player', etc.
-    The first date token (10 chars, positions 4 and 7 = '-') is authoritative.
-    Keys without a parseable date are preserved.
-    """
+def prune_guard(guard: dict) -> dict:
+    """Drop guard keys whose embedded YYYY-MM-DD date exceeds the TTL."""
     cutoff = (
         datetime.now(ZoneInfo("America/New_York")).replace(tzinfo=None)
         - timedelta(days=GUARD_TTL_DAYS)
@@ -88,7 +92,7 @@ def prune_guard(guard: dict) -> dict:
                     dt = datetime.strptime(p, "%Y-%m-%d")
                     if dt < cutoff:
                         keep = False
-                    break  # first date token is authoritative
+                    break
                 except ValueError:
                     continue
         if keep:
@@ -96,17 +100,72 @@ def prune_guard(guard: dict) -> dict:
     return pruned
 
 
+def _rebuild_from_raw_bytes(raw: bytes) -> dict:
+    """Emergency key-recovery from a corrupted guard file.
+
+    Scans raw bytes for the pattern '"key": true' and rebuilds the guard dict
+    without requiring valid JSON structure.  Only recovers keys mapped to true
+    (the only value this module writes) so there is no risk of importing stale
+    false entries.  An over-empty result is safer than over-full -- the worst
+    case of missing a key is a single re-post, not a spam barrage with @everyone.
+
+    Key format examples (F3.15):
+        recap:2026-04-14
+        premium_card:2026-04-14
+        killshot:2026-04-15:Anthony Edwards:PTS:OVER:27.5
+        sgp:2026-04-15:MIN vs DEN
+        daily_lay:2026-04-28
+    """
+    recovered: dict = {}
+    for m in _GUARD_KEY_RE.finditer(raw):
+        try:
+            key = m.group(1).decode("utf-8", errors="replace")
+            recovered[key] = True
+        except Exception:
+            continue
+    return recovered
+
+
 def _load_unlocked() -> dict:
+    """Load the guard file, with corruption-recovery fallback.
+
+    Clean read      -> returns parsed JSON dict.
+    FileNotFoundError -> returns {} (first run or guard intentionally deleted).
+    JSONDecodeError -> attempts to recover existing keys from raw bytes via
+      regex scan, logs a warning, and returns whatever was recovered.
+      Returning {} on corruption would reset every guard key and cause
+      run_picks to repost the full daily card with @everyone (audit C2).
+    """
     try:
         with open(GUARD_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         return {}
+    except json.JSONDecodeError:
+        # File exists but is corrupted -- attempt raw-byte recovery.
+        try:
+            raw = GUARD_FILE.read_bytes()
+        except OSError:
+            print(
+                "  [discord_guard] CORRUPT guard file AND failed to read "
+                "raw bytes -- returning {} (re-post risk). Restore from backup.",
+                file=sys.stderr,
+            )
+            return {}
+        recovered = _rebuild_from_raw_bytes(raw)
+        preview = list(recovered)[:10]
+        ellipsis = "..." if len(recovered) > 10 else ""
+        print(
+            f"  [discord_guard] guard file is corrupt (JSONDecodeError). "
+            f"Recovered {len(recovered)} key(s) from raw bytes via regex scan. "
+            f"Keys: {preview}{ellipsis}. "
+            "Backup the file and investigate.",
+            file=sys.stderr,
+        )
+        return recovered
 
 
 def _save_unlocked(guard: dict) -> None:
-    # Delegated to the shared io_utils.atomic_write_json helper — one
-    # fsync policy, one tmp-cleanup branch, across every guard writer.
     atomic_write_json(GUARD_FILE, prune_guard(guard))
 
 
@@ -122,8 +181,8 @@ def load_guard() -> dict:
             return _load_unlocked()
     except _FileLockTimeout:
         print(
-            f"  ⚠ [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on load "
-            "— reading without lock (stale-read risk)"
+            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on load "
+            "-- reading without lock (stale-read risk)"
         )
         return _load_unlocked()
 
@@ -135,8 +194,8 @@ def save_guard(guard: dict) -> None:
             _save_unlocked(guard)
     except _FileLockTimeout:
         print(
-            f"  ⚠ [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on save "
-            "— writing without lock (clobber risk)"
+            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on save "
+            "-- writing without lock (clobber risk)"
         )
         _save_unlocked(guard)
 
@@ -147,12 +206,7 @@ def is_posted(key: str) -> bool:
 
 
 def mark_posted(key: str) -> None:
-    """Atomic read-modify-write: set guard[key] = True under one lock.
-
-    Use this instead of a load() / mutate / save() pattern when multiple
-    writers might race — this keeps the RMW inside one lock acquisition
-    so neither writer clobbers the other's key.
-    """
+    """Atomic read-modify-write: set guard[key] = True under one lock."""
     try:
         with FileLock(LOCK_FILE, timeout=LOCK_TIMEOUT_S):
             g = _load_unlocked()
@@ -160,8 +214,8 @@ def mark_posted(key: str) -> None:
             _save_unlocked(g)
     except _FileLockTimeout:
         print(
-            f"  ⚠ [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
-            f"mark_posted({key!r}) — writing without lock (clobber risk)"
+            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
+            f"mark_posted({key!r}) -- writing without lock (clobber risk)"
         )
         g = _load_unlocked()
         g[key] = True
@@ -172,15 +226,10 @@ def claim_post(key: str) -> bool:
     """Atomic test-and-set. Returns True if THIS process just claimed `key`,
     False if another process already claimed it.
 
-    This is the correct primitive to stop duplicate Discord posts when two
-    processes race (Task Scheduler retry + a manual run, two manual runs,
-    etc.). Call this BEFORE the webhook POST. If it returns False, bail.
-    If it returns True and the webhook then fails, call release_post(key)
-    so a subsequent retry can re-claim.
-
-    Preserves the 'check' and 'set' inside one FileLock acquisition —
-    the mark_posted / is_posted pair does NOT (load / mutate / save has
-    a TOCTOU window).
+    Call this BEFORE the webhook POST. If False, bail. If True and the webhook
+    fails, call release_post(key) so a subsequent retry can re-claim.
+    Performs check+set inside one FileLock -- mark_posted/is_posted do NOT
+    (that pair has a TOCTOU window).
     """
     try:
         with FileLock(LOCK_FILE, timeout=LOCK_TIMEOUT_S):
@@ -191,11 +240,9 @@ def claim_post(key: str) -> bool:
             _save_unlocked(g)
             return True
     except _FileLockTimeout:
-        # Fall back: best-effort test-and-set without a lock. Risk is a
-        # duplicate post, but that's strictly better than blocking forever.
         print(
-            f"  ⚠ [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
-            f"claim_post({key!r}) — falling back to unlocked claim (duplicate-post risk)"
+            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
+            f"claim_post({key!r}) -- falling back to unlocked claim (duplicate-post risk)"
         )
         g = _load_unlocked()
         if g.get(key):
@@ -206,11 +253,8 @@ def claim_post(key: str) -> bool:
 
 
 def release_post(key: str) -> None:
-    """Un-claim a key. Use after a FAILED webhook post so the next run can
-    re-claim and retry. No-op if the key isn't set.
-
-    DO NOT call this after a successful post — the whole point of the claim
-    is that it survives across runs so no one re-posts.
+    """Un-claim a key after a FAILED webhook post so the next run can retry.
+    No-op if the key is not set. Do NOT call after a successful post.
     """
     try:
         with FileLock(LOCK_FILE, timeout=LOCK_TIMEOUT_S):
@@ -220,8 +264,8 @@ def release_post(key: str) -> None:
                 _save_unlocked(g)
     except _FileLockTimeout:
         print(
-            f"  ⚠ [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
-            f"release_post({key!r}) — releasing without lock (clobber risk)"
+            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
+            f"release_post({key!r}) -- releasing without lock (clobber risk)"
         )
         g = _load_unlocked()
         if key in g:

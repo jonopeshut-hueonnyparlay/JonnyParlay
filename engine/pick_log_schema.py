@@ -8,7 +8,7 @@ both definitions had to be updated in lockstep, and reader modules
 know whether an on-disk row was from an older schema version.
 
 This module:
-  1. Exports `CANONICAL_HEADER` — the 27-column schema as of SCHEMA_VERSION.
+  1. Exports `CANONICAL_HEADER` — the 28-column schema as of SCHEMA_VERSION.
   2. Defines migration rules so old-schema rows (e.g. pre-CLV, pre-context)
      can be read alongside current-schema rows without silent data loss.
   3. Gives every reader one helper — `migrate_row()` — to get a canonical
@@ -17,8 +17,9 @@ This module:
 SCHEMA HISTORY
   v1 (deprecated)  : original 20-col schema, pre-CLV, pre-context
                      date..result
-  v2 (current)     : adds closing_odds, clv, card_slot, is_home,
+  v2 (deprecated)  : adds closing_odds, clv, card_slot, is_home,
                      context_verdict, context_reason, context_score (27 cols)
+  v3 (current)     : adds legs — JSON parlay leg detail (28 cols)
 
 Bumping the schema:
   - Add new columns to the end of CANONICAL_HEADER (append-only keeps
@@ -33,10 +34,10 @@ from __future__ import annotations
 from typing import Iterable, Mapping
 
 # ─────────────────────────────────────────────────────────────────
-# Canonical schema (v2)
+# Canonical schema (v3)
 # ─────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CANONICAL_HEADER: list[str] = [
     "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
@@ -54,19 +55,30 @@ CANONICAL_HEADER: list[str] = [
     "context_verdict",   # v2: supports | neutral | conflicts | skipped | disabled (H-11)
     "context_reason",    # v2: ≤12-word reason string
     "context_score",     # v2: 0-3 confluence count
+    # v3: parlay leg detail — JSON array for longshot/sgp/daily_lay rows.
+    # Each element: {"player","direction","line","stat","sport","game"}.
+    # Blank for single-leg picks (primary, bonus, manual, gameline).
+    "legs",
 ]
 
 # Fast membership checks.
 KNOWN_COLUMNS: frozenset[str] = frozenset(CANONICAL_HEADER)
 
 # Columns that existed in SCHEMA v1 (pre-CLV / pre-context).
-# Used to detect that an on-disk header is a legacy v1 file rather than a
-# v2 file that happens to be missing columns due to corruption.
 _V1_COLUMNS: frozenset[str] = frozenset([
     "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
     "direction", "proj", "win_prob", "edge", "odds", "book",
     "tier", "pick_score", "size", "game", "mode", "result",
 ])
+
+# Columns added in v2 (CLV + context columns).
+_V2_COLUMNS: frozenset[str] = frozenset([
+    "closing_odds", "clv", "card_slot", "is_home",
+    "context_verdict", "context_reason", "context_score",
+])
+
+# Columns added in v3 (parlay leg detail).
+_V3_COLUMNS: frozenset[str] = frozenset(["legs"])
 
 # Default value for any canonical column that's missing from an input row.
 # Empty string is what writers emit for "not applicable" / "not yet filled",
@@ -82,15 +94,17 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     """Infer which schema version an on-disk pick_log was written under.
 
     Returns:
-      2 — header includes any v2-only column (current)
+      3 — header includes any v3-only column (legs)
+      2 — header includes any v2-only column (CLV/context)
       1 — header is a subset of _V1_COLUMNS (legacy)
       0 — header is empty / None / indecipherable
     """
     if not on_disk_header:
         return 0
     cols = set(on_disk_header)
-    v2_only = KNOWN_COLUMNS - _V1_COLUMNS
-    if cols & v2_only:
+    if cols & _V3_COLUMNS:
+        return 3
+    if cols & _V2_COLUMNS:
         return 2
     if cols and cols.issubset(_V1_COLUMNS):
         return 1
@@ -465,6 +479,12 @@ assert len(CANONICAL_HEADER) == len(set(CANONICAL_HEADER)), (
 )
 assert _V1_COLUMNS.issubset(KNOWN_COLUMNS), (
     "Legacy v1 columns must all be part of the canonical schema"
+)
+assert _V2_COLUMNS.issubset(KNOWN_COLUMNS), (
+    "v2 columns must all be part of the canonical schema"
+)
+assert _V3_COLUMNS.issubset(KNOWN_COLUMNS), (
+    "v3 columns must all be part of the canonical schema"
 )
 
 

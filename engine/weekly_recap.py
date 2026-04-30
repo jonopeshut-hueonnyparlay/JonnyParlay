@@ -38,10 +38,17 @@ try:
 except ImportError:
     _HAS_OPENPYXL = False
 
+# M9: resolved via paths.py — honours $JONNYPARLAY_ROOT
+from paths import (  # noqa: E402
+    PICK_LOG_PATH as _PICK_LOG_PATH_P,
+    PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
+    DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
+)
+
 # ── Config ────────────────────────────────────────────────────────────────────
-PICK_LOG_PATH            = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log.csv")
-PICK_LOG_MANUAL_PATH     = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log_manual.csv")
-DISCORD_GUARD_FILE       = os.path.expanduser("~/Documents/JonnyParlay/data/discord_posted.json")
+PICK_LOG_PATH            = str(_PICK_LOG_PATH_P)
+PICK_LOG_MANUAL_PATH     = str(_PICK_LOG_MANUAL_PATH_P)
+DISCORD_GUARD_FILE       = str(_DISCORD_GUARD_FILE_P)
 
 # Announce webhook loaded from env/.env — see secrets_config.py (audit C-6).
 from secrets_config import DISCORD_ANNOUNCE_WEBHOOK
@@ -528,6 +535,8 @@ try:
     from discord_guard import (
         load_guard as _shared_load_guard,
         save_guard as _shared_save_guard,
+        claim_post as _shared_claim_post,
+        release_post as _shared_release_post,
         prune_guard as _shared_prune_guard,
     )
     _HAS_SHARED_GUARD = True
@@ -627,12 +636,23 @@ def post_weekly_recap(week_picks, mon_str, sun_str, all_rows, suppress_ping=Fals
         print(f"  No graded picks for week {mon_str} – {sun_str}")
         return False
 
-    guard     = _load_guard()
     guard_key = f"weekly:{mon_str}"
 
-    if not force and guard.get(guard_key):
-        print(f"  [Discord] ⏭️  Weekly recap already posted for {mon_str} — use --repost to override")
-        return False
+    if not force:
+        if _HAS_SHARED_GUARD:
+            if not _shared_claim_post(guard_key):
+                print(f"  [Discord] ⏭️  Weekly recap already posted for {mon_str} — use --repost to override")
+                return False
+        else:
+            guard = _load_guard()
+            if guard.get(guard_key):
+                print(f"  [Discord] ⏭️  Weekly recap already posted for {mon_str} — use --repost to override")
+                return False
+            guard[guard_key] = True  # pre-claim in fallback path
+    else:
+        # force=True (--repost): mark claimed so we can release on failure
+        if _HAS_SHARED_GUARD:
+            _shared_claim_post(guard_key)  # may already be claimed; that's OK
 
     payload   = build_weekly_embed(mon_str, sun_str, week_picks, all_rows, suppress_ping=suppress_ping)
     xlsx_buf  = build_weekly_xlsx(week_picks, mon_str, sun_str)
@@ -645,11 +665,13 @@ def post_weekly_recap(week_picks, mon_str, sun_str, all_rows, suppress_ping=Fals
         w, l, _, pl, roi = daily_stats(week_picks)
         pl_str = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
         print(f"  [Discord] ✅ Weekly recap posted — {w}W-{l}L · {pl_str} · week of {_fmt_week_label(mon_str, sun_str)}")
-        if not suppress_ping:
-            guard[guard_key] = True
-            _save_guard(guard)
+        if not _HAS_SHARED_GUARD:
+            _save_guard(guard)  # fallback: persist the pre-claimed guard
         return True
 
+    # Webhook failed — release the claim so a retry can re-post
+    if _HAS_SHARED_GUARD:
+        _shared_release_post(guard_key)
     print("  [Discord] ❌ Weekly recap post failed")
     return False
 

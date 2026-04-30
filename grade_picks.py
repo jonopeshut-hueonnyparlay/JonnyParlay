@@ -200,15 +200,31 @@ def fetch_scores(sport, date_str):
     sk = SPORT_KEYS.get(sport)
     if not sk:
         return []
-    # The scores endpoint returns completed games
+    # The scores endpoint returns completed games.
+    # daysFrom must cover the target date — compute dynamically so historical
+    # grading runs (e.g. --date 2026-04-19 run a week later) actually find data.
+    # API max is 40 on paid plans; cap there. Minimum 3 so same-day runs still work.
+    try:
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        delta = (datetime.utcnow().date() - target_date).days + 1
+        days_from = max(3, min(delta, 40))
+    except Exception:
+        days_from = 3
     params = {
         "apiKey": ODDS_API_KEY,
-        "daysFrom": 3,  # look back 3 days
+        "daysFrom": days_from,
     }
     try:
         # Audit M-16: canonical UA on every outbound API call.
         r = requests.get(f"{ODDS_BASE}/sports/{sk}/scores", params=params,
                          headers=default_headers(), timeout=15)
+        if r.status_code == 422:
+            # Plan limit exceeded — daysFrom too large for this subscription.
+            # Return None (not []) so callers can skip the game-complete gate
+            # and grade purely from player-stat APIs (ESPN/NHL) which have no
+            # recency cap. Returning [] would block all prop grading.
+            print(f"  ℹ Scores API unavailable for {date_str} (plan limit) — grading from stat APIs only")
+            return None
         r.raise_for_status()
         scores = r.json()
         # Filter to completed games on the target date
@@ -285,6 +301,57 @@ def fetch_nba_boxscore(date_str):
     except Exception as e:
         print(f"  ⚠ NBA (ESPN) stats fetch failed: {e}")
         return {}
+
+
+def fetch_espn_game_scores(date_str):
+    """Fetch NBA final game scores from ESPN — no recency limit.
+
+    Returns a dict matching the Odds API scores_map format:
+        {"Away Team @ Home Team": {home_team, away_team, scores: [{name, score}]}}
+
+    Used as fallback when The Odds API /scores returns 422 (plan limit exceeded
+    for daysFrom), so daily lay and game-line grading still works on historical dates.
+    """
+    espn_date = date_str.replace("-", "")
+    try:
+        r = requests.get(f"{ESPN_NBA_BASE}/scoreboard",
+                         params={"dates": espn_date},
+                         headers=default_headers(), timeout=15)
+        r.raise_for_status()
+        events = r.json().get("events", [])
+        scores_map = {}
+        for event in events:
+            for comp in event.get("competitions", []):
+                # Only include completed games
+                status = comp.get("status", {})
+                if not status.get("type", {}).get("completed", False):
+                    continue
+                competitors = comp.get("competitors", [])
+                home = next((c for c in competitors if c.get("homeAway") == "home"), None)
+                away = next((c for c in competitors if c.get("homeAway") == "away"), None)
+                if not home or not away:
+                    continue
+                home_name = home.get("team", {}).get("displayName", "")
+                away_name = away.get("team", {}).get("displayName", "")
+                home_score = home.get("score", "0")
+                away_score = away.get("score", "0")
+                if not home_name or not away_name:
+                    continue
+                game_key = f"{away_name} @ {home_name}"
+                scores_map[game_key] = {
+                    "home_team": home_name,
+                    "away_team": away_name,
+                    "scores": [
+                        {"name": away_name, "score": away_score},
+                        {"name": home_name, "score": home_score},
+                    ],
+                    "completed": True,
+                }
+        return scores_map
+    except Exception as e:
+        print(f"  ⚠ ESPN game scores fetch failed: {e}")
+        return {}
+
 
 
 def fetch_nhl_boxscores(date_str):
@@ -536,39 +603,63 @@ def grade_daily_lay(row, all_scores):
         * "return 'P'" fall-through is only reachable when every leg pushed.
         * Unparseable/unmatched leg → return None (pick stays ungraded).
     """
+    import json as _json_dl
     game_desc = row.get("game", "")
     date_str  = row.get("date", "")
     nba_scores = all_scores.get((date_str, "NBA"), {})
     if not nba_scores:
         return None
 
-    legs_raw = [l.strip() for l in game_desc.split("/") if l.strip()]
-    if not legs_raw:
+    # H9: try legs JSON first (populated by _log_daily_lay since Apr 29 2026);
+    # fall back to game-string parsing for the 9 legacy rows that pre-date this fix.
+    parsed_legs = []   # list of (team_str, spread_float)
+    _legs_json = row.get("legs", "")
+    _used_json = False
+    if _legs_json and isinstance(_legs_json, str):
+        try:
+            _jlegs = _json_dl.loads(_legs_json)
+            if isinstance(_jlegs, list) and _jlegs:
+                for _jl in _jlegs:
+                    _t = str(_jl.get("team", "")).strip()
+                    _s = float(_jl.get("spread", 0))
+                    if not _t:
+                        raise ValueError("empty team")
+                    parsed_legs.append((_t, _s))
+                _used_json = True
+        except Exception:
+            parsed_legs = []
+
+    if not _used_json:
+        # Legacy: parse "TEAM +spread / TEAM +spread" from the game field
+        legs_raw = [l.strip() for l in game_desc.split("/") if l.strip()]
+        if not legs_raw:
+            return None
+        for leg in legs_raw:
+            parts = leg.strip().split()
+            if len(parts) < 2:
+                return None
+            spread = None
+            team_tokens = []
+            for tok in parts:
+                try:
+                    f = float(tok.lstrip("+"))
+                    spread = f
+                    if tok.startswith("-"):
+                        spread = -abs(spread)
+                except ValueError:
+                    team_tokens.append(tok)
+            if spread is None or not team_tokens:
+                return None
+            parsed_legs.append((" ".join(team_tokens).strip(), spread))
+
+    if not parsed_legs:
         return None
 
     pushed = 0
     won    = 0
-    for leg in legs_raw:
-        parts = leg.strip().split()
-        if len(parts) < 2:
-            return None
-        # Spread is the LAST signed-number token (handles multi-word team names)
-        spread = None
-        team_tokens = []
-        for tok in parts:
-            try:
-                # Accept "+4.5", "-6.5", "4.5"
-                f = float(tok.lstrip("+"))
-                spread = f
-                if tok.startswith("-"):
-                    spread = -abs(spread)
-            except ValueError:
-                team_tokens.append(tok)
-        if spread is None or not team_tokens:
-            return None
-
-        team_str = " ".join(team_tokens).strip()
+    for team_str, spread in parsed_legs:
         team_upper = team_str.upper()
+        team_tokens = team_str.split()  # derived for meaningful-token matching below
 
         # H-4: refuse to best-guess ambiguous 2-letter codes ("LA", "NY").
         # Substring-matching "LA" against "Los Angeles Lakers @ Los Angeles
@@ -578,7 +669,7 @@ def grade_daily_lay(row, all_scores):
         if is_ambiguous_team_code(team_upper):
             logger.warning(
                 f"[grade_daily_lay] {describe_team_ambiguity(team_upper)} "
-                f"(leg={leg!r}, game={game_desc!r}) — parlay stays ungraded."
+                f"(leg={team_str!r}, game={game_desc!r}) — parlay stays ungraded."
             )
             return None
 
@@ -617,9 +708,71 @@ def grade_daily_lay(row, all_scores):
             continue
         won += 1                  # leg covered
 
-    if won == 0 and pushed == len(legs_raw):
+    if won == 0 and pushed == len(parsed_legs):
         return "P"               # every leg pushed
     return "W"                    # remaining legs all covered
+
+
+def grade_parlay_legs(row, all_player_stats, all_scores):
+    """Grade a longshot or SGP row by grading each prop leg independently.
+
+    Parlay outcome:
+      W = every leg wins
+      L = any leg loses
+      P = no losses, at least one push (push leg drops; remainder settles)
+      None = any leg is ungradeable (pick stays ungraded, retry next run)
+
+    Legs are stored as JSON in the ``legs`` column, written by _legs_json()
+    or _log_sgp(). Each leg dict must have:
+        player, direction, line, stat, sport, game
+    """
+    import json as _json
+    legs_raw = row.get("legs", "")
+    if not legs_raw:
+        return None
+    try:
+        legs = _json.loads(legs_raw)
+    except (_json.JSONDecodeError, TypeError):
+        logger.warning(
+            f"[grade_parlay_legs] Bad legs JSON for row "
+            f"player={row.get('player','?')!r} date={row.get('date','?')!r}"
+        )
+        return None
+    if not legs:
+        return None
+
+    date_str = row.get("date", "")
+    results = []
+    for leg in legs:
+        sport = leg.get("sport", row.get("sport", "NBA"))
+        fake_pick = {
+            "player":    leg.get("player", ""),
+            "direction": leg.get("direction", ""),
+            "line":      leg.get("line", ""),
+            "stat":      leg.get("stat", ""),
+            "game":      leg.get("game", row.get("game", "")),
+            "team":      leg.get("team", ""),
+            "date":      date_str,
+            "sport":     sport,
+        }
+        pstats = all_player_stats.get((date_str, sport), {})
+        scores = all_scores.get((date_str, sport), {})
+        leg_result = grade_prop(fake_pick, pstats, scores_by_game=scores)
+        if leg_result is None:
+            return None   # leg not yet gradeable — wait for next run
+        results.append(leg_result)
+
+    if "L" in results:
+        return "L"
+    # M5: push legs drop from parlay; re-evaluate remaining legs
+    # e.g. 3-leg parlay [W, P, W] → 2-leg effective parlay → W
+    #      3-leg parlay [P, P, P] → all dropped → P (stake returned)
+    remaining = [r for r in results if r != "P"]
+    if not remaining:
+        return "P"   # every leg pushed — full push, stake back
+    if "L" in remaining:
+        return "L"   # shouldn't be reachable but defensive
+    return "W"       # all non-pushed legs won
 
 
 def _find_linescore_innings(game_str, linescores):
@@ -1067,12 +1220,15 @@ def daily_stats(picks):
     l  = sum(1 for p in picks if p.get("result") == "L")
     pu = sum(1 for p in picks if p.get("result") == "P")
     pl = sum(compute_pl(p.get("size", 0), p.get("odds", "-110"), p.get("result", "")) for p in picks)
-    risked = sum(_safe_float(p.get("size")) for p in picks if p.get("result") != "P")
+    risked = sum(_safe_float(p.get("size")) for p in picks if p.get("result") not in ("P", "VOID"))
     roi = (pl / risked * 100) if risked > 0 else 0.0
     return w, l, pu, round(pl, 2), round(roi, 1)
 
 
-COUNTED_RUN_TYPES = {"primary", "bonus", "manual", "daily_lay", "", None}
+# F4.13: removed "" and None — blank/null run_type should never count toward W-L
+COUNTED_RUN_TYPES = {"primary", "bonus", "manual", "daily_lay", "longshot", "sgp", "gameline"}
+PROP_RUN_TYPES    = {"primary", "bonus"}          # model props — used for W-L record / week / month
+PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # parlays — shown separately in recap
 
 def get_graded_primary(all_rows):
     """Return graded picks (primary + bonus + manual) grouped by date."""
@@ -1108,7 +1264,7 @@ def compute_pick_streak(all_rows):
     Sorted by date then run_time so intra-day ordering is preserved.
     Returns (0, '') if no graded picks exist.
     """
-    MODEL_RUN_TYPES = {"primary", "bonus", "daily_lay"}
+    MODEL_RUN_TYPES = {"primary", "bonus", "daily_lay", "longshot", "sgp"}
     picks = [
         r for r in all_rows
         if r.get("result") in ("W", "L")
@@ -1129,25 +1285,25 @@ def compute_pick_streak(all_rows):
 
 
 def get_week_picks(all_rows, ref_date_str):
-    """Return all graded picks in the calendar week (Mon–Sun) of ref_date, up to ref_date.
-    Shadow sports (e.g. MLB) are excluded so week/month totals match the recap."""
+    """Return graded model prop picks (primary + bonus) in the calendar week (Mon–Sun) of
+    ref_date, up to ref_date.  Parlays and shadow sports excluded so W-L record is props only."""
     ref = datetime.strptime(ref_date_str, "%Y-%m-%d")
     monday = ref - timedelta(days=ref.weekday())
     mon_str = monday.strftime("%Y-%m-%d")
     return [r for r in all_rows
             if r.get("result") in ("W", "L", "P")
-            and r.get("run_type", "primary") in COUNTED_RUN_TYPES
+            and r.get("run_type", "primary") in PROP_RUN_TYPES
             and r.get("sport", "") not in SHADOW_SPORTS
             and mon_str <= r["date"] <= ref_date_str]
 
 
 def get_month_picks(all_rows, year, month, up_to_date=None):
-    """Return all graded picks in the given year/month, optionally capped at up_to_date.
-    Shadow sports (e.g. MLB) are excluded so week/month totals match the recap."""
+    """Return graded model prop picks (primary + bonus) in the given year/month, optionally
+    capped at up_to_date.  Parlays and shadow sports excluded so W-L record is props only."""
     prefix = f"{year}-{month:02d}-"
     return [r for r in all_rows
             if r.get("result") in ("W", "L", "P")
-            and r.get("run_type", "primary") in COUNTED_RUN_TYPES
+            and r.get("run_type", "primary") in PROP_RUN_TYPES
             and r.get("sport", "") not in SHADOW_SPORTS
             and r["date"].startswith(prefix)
             and (up_to_date is None or r["date"] <= up_to_date)]
@@ -1208,21 +1364,51 @@ def _recap_pick_line(p) -> str:
 
 
 def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
-    """Build the daily recap Discord embed."""
+    """Build the daily recap Discord embed.
+
+    Three fully-separate records shown in header and footer:
+      • Props    — primary + bonus, tier != KILLSHOT
+      • KILLSHOT — primary/bonus with tier == KILLSHOT (only when present)
+      • Parlays  — daily_lay + sgp + longshot (only when present)
+    Week / month footer breaks down all three categories.
+    """
     now_str = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
 
-    # Day stats
-    w, l, pu, pl, roi = daily_stats(day_picks)
+    _rt   = lambda p: p.get("run_type", "primary")
+    _tier = lambda p: p.get("tier", "")
+
+    # ── Day splits ────────────────────────────────────────────────────────────
+    reg_props    = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
+    ks_picks     = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
+    parlay_picks = [p for p in day_picks if _rt(p) in PARLAY_RUN_TYPES]
+
+    # Props record (non-KILLSHOT primary/bonus)
+    w, l, pu, pl, roi = daily_stats(reg_props)
     pl_str  = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
     roi_str = f"+{roi:.1f}%" if roi >= 0 else f"{roi:.1f}%"
-    record  = f"**{w}-{l}{'-%dP' % pu if pu else ''} · {pl_str} · ROI {roi_str}**"
+    record  = f"**Props: {w}-{l}{'-%dP' % pu if pu else ''} · {pl_str} · ROI {roi_str}**"
 
-    # Profitable-day streak
+    # KILLSHOT record (if any today)
+    if ks_picks:
+        ks_w, ks_l, ks_pu, ks_pl, _ = daily_stats(ks_picks)
+        ks_pl_str = f"+{ks_pl:.2f}u" if ks_pl >= 0 else f"{ks_pl:.2f}u"
+        ks_record_line = f"\n**⚡ KILLSHOT: {ks_w}-{ks_l} · {ks_pl_str}**"
+    else:
+        ks_record_line = ""
+
+    # Parlay record (if any today)
+    if parlay_picks:
+        p_w, p_l, p_pu, p_pl, _ = daily_stats(parlay_picks)
+        p_pl_str = f"+{p_pl:.2f}u" if p_pl >= 0 else f"{p_pl:.2f}u"
+        parlay_record_line = f"\n**Parlays: {p_w}-{p_l} · {p_pl_str}**"
+    else:
+        parlay_record_line = ""
+
+    # ── Streaks ───────────────────────────────────────────────────────────────
     grouped = get_graded_primary(all_rows)
     streak, _, _, _ = compute_streak(grouped)
     streak_line = f"\n🔥 **{streak} profitable days running**" if streak >= 2 else ""
 
-    # Current pick-level W/L streak (model picks only, shown when >= 3)
     pick_streak_n, pick_streak_dir = compute_pick_streak(all_rows)
     if pick_streak_dir == "W" and pick_streak_n >= 3:
         pick_streak_line = f"\n📈 **{pick_streak_n} pick W streak**"
@@ -1231,32 +1417,92 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     else:
         pick_streak_line = ""
 
-    # Pick lines
-    pick_lines = [_recap_pick_line(p) for p in day_picks]
+    # ── Pick list ─────────────────────────────────────────────────────────────
+    pick_lines = [_recap_pick_line(p) for p in reg_props]
 
-    # Week stats
-    week_picks = get_week_picks(all_rows, date_str)
-    ww, wl, wp, wpl, _ = daily_stats(week_picks)
+    if ks_picks:
+        pick_lines.append("\n**⚡ KILLSHOT**")
+        for p in ks_picks:
+            pick_lines.append(_recap_pick_line(p))
+
+    daily_lays = [p for p in parlay_picks if _rt(p) == "daily_lay"]
+    if daily_lays:
+        pick_lines.append("\n**📋 Daily Lay**")
+        for p in daily_lays:
+            pick_lines.append(_recap_pick_line(p))
+
+    longshot_picks = [p for p in parlay_picks if _rt(p) == "longshot"]
+    if longshot_picks:
+        pick_lines.append("\n**🎯 Longshot**")
+        for p in longshot_picks:
+            pick_lines.append(_recap_pick_line(p))
+
+    sgp_picks = [p for p in parlay_picks if _rt(p) == "sgp"]
+    if sgp_picks:
+        pick_lines.append("\n**🎲 Same-Game Parlay**")
+        for p in sgp_picks:
+            pick_lines.append(_recap_pick_line(p))
+
+    # ── Week breakdown (props / KILLSHOT / parlays separately) ───────────────
+    ref = datetime.strptime(date_str, "%Y-%m-%d")
+    mon_str = (ref - timedelta(days=ref.weekday())).strftime("%Y-%m-%d")
+
+    all_week = [r for r in all_rows
+                if r.get("result") in ("W", "L", "P")
+                and r.get("sport", "") not in SHADOW_SPORTS
+                and r.get("run_type", "primary") in COUNTED_RUN_TYPES
+                and mon_str <= r["date"] <= date_str]
+
+    wk_reg = [p for p in all_week if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
+    wk_ks  = [p for p in all_week if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
+    wk_par = [p for p in all_week if _rt(p) in PARLAY_RUN_TYPES]
+
+    ww, wl, _, wpl, _ = daily_stats(wk_reg)
     wpl_str = f"+{wpl:.1f}u" if wpl >= 0 else f"{wpl:.1f}u"
+    week_str = f"Props {ww}-{wl} · {wpl_str}"
+    if wk_ks:
+        ks_ww, ks_wl, _, ks_wpl, _ = daily_stats(wk_ks)
+        week_str += f" · ⚡ {ks_ww}-{ks_wl} · {('+' if ks_wpl >= 0 else '')}{ks_wpl:.1f}u"
+    if wk_par:
+        pw, p_l_, _, ppl, _ = daily_stats(wk_par)
+        week_str += f" · Parlays {pw}-{p_l_} · {('+' if ppl >= 0 else '')}{ppl:.1f}u"
 
-    # Month stats (only show when 5+ graded picks in the month, capped at recap date)
+    # ── Month breakdown ───────────────────────────────────────────────────────
     dt = datetime.strptime(date_str, "%Y-%m-%d")
-    month_picks = get_month_picks(all_rows, dt.year, dt.month, up_to_date=date_str)
-    mw, ml, mp, mpl, _ = daily_stats(month_picks)
-    mpl_str = f"+{mpl:.1f}u" if mpl >= 0 else f"{mpl:.1f}u"
-    month_line = f"**{dt.strftime('%B')}:** {mw}-{ml} · {mpl_str}\n" if len(month_picks) >= 5 else ""
+    all_month = [r for r in all_rows
+                 if r.get("result") in ("W", "L", "P")
+                 and r.get("sport", "") not in SHADOW_SPORTS
+                 and r.get("run_type", "primary") in COUNTED_RUN_TYPES
+                 and r["date"].startswith(f"{dt.year}-{dt.month:02d}-")
+                 and r["date"] <= date_str]
+
+    month_line = ""
+    if len(all_month) >= 5:
+        mo_reg = [p for p in all_month if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
+        mo_ks  = [p for p in all_month if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
+        mo_par = [p for p in all_month if _rt(p) in PARLAY_RUN_TYPES]
+
+        mw, ml, _, mpl, _ = daily_stats(mo_reg)
+        mo_str = f"Props {mw}-{ml} · {('+' if mpl >= 0 else '')}{mpl:.1f}u"
+        if mo_ks:
+            ks_mw, ks_ml, _, ks_mpl, _ = daily_stats(mo_ks)
+            mo_str += f" · ⚡ {ks_mw}-{ks_ml} · {('+' if ks_mpl >= 0 else '')}{ks_mpl:.1f}u"
+        if mo_par:
+            pmw, pml, _, pmpl, _ = daily_stats(mo_par)
+            mo_str += f" · Parlays {pmw}-{pml} · {('+' if pmpl >= 0 else '')}{pmpl:.1f}u"
+        month_line = f"**{dt.strftime('%B')}:** {mo_str}\n"
 
     color = 0x2ECC71 if pl >= 0 else 0xFF4444
 
     desc = (
-        f"{record}{streak_line}{pick_streak_line}\n\n"
+        f"{record}{ks_record_line}{parlay_record_line}{streak_line}{pick_streak_line}\n\n"
         + "\n".join(pick_lines)
         + f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + f"**This week:** {ww}-{wl} · {wpl_str}\n"
+        + f"**This week:** {week_str}\n"
         + month_line
     ).rstrip()
 
-    content = "" if suppress_ping else "@everyone"
+    content = ""  # Daily recap posts silently — no @everyone ping
 
     return {
         "username": "PicksByJonny",
@@ -1452,6 +1698,8 @@ try:
     from discord_guard import (
         load_guard as _shared_load_guard,
         save_guard as _shared_save_guard,
+        mark_posted as _shared_mark_posted,
+        claim_post as _shared_claim_post,
         prune_guard as _shared_prune_guard,
     )
     _HAS_SHARED_GUARD = True
@@ -1525,9 +1773,16 @@ def _already_posted(guard, event_key):
 
 
 def _mark_posted(guard, event_key):
-    """Mark an event as posted and save the guard file."""
-    guard[event_key] = True
-    _save_guard(guard)
+    """Mark an event as posted via atomic discord_guard.mark_posted.
+    Also updates the local guard dict so subsequent _already_posted checks
+    in the same run see the new state without another disk read.
+    Fixes audit C3 (TOCTOU) + H3 (suppress_ping guard omission).
+    """
+    if _HAS_SHARED_GUARD:
+        _shared_mark_posted(event_key)
+    else:
+        _save_guard(guard)  # fallback: save the locally-mutated dict
+    guard[event_key] = True  # keep local view consistent
 
 
 def post_grading_results(date_str, day_picks, all_rows, suppress_ping=False, force=False):
@@ -1551,8 +1806,7 @@ def post_grading_results(date_str, day_picks, all_rows, suppress_ping=False, for
         recap_payload = build_recap_embed(date_str, day_picks, all_rows, suppress_ping=suppress_ping)
         if _webhook_post(DISCORD_RECAP_WEBHOOK, recap_payload, label=f"daily recap {date_str}"):
             print(f"  [Discord] ✅ Daily recap posted for {date_str}")
-            if not suppress_ping:
-                _mark_posted(guard, recap_key)
+            _mark_posted(guard, recap_key)
 
     # ── Results graphic PNG ───────────────────────────────────
     graphic_key = f"graphic:{date_str}"
@@ -1562,8 +1816,7 @@ def post_grading_results(date_str, day_picks, all_rows, suppress_ping=False, for
         try:
             from results_graphic import post_results_graphic
             if post_results_graphic(date_str, day_picks, suppress_ping=suppress_ping):
-                if not suppress_ping:
-                    _mark_posted(guard, graphic_key)
+                _mark_posted(guard, graphic_key)
         except ImportError:
             pass   # results_graphic.py not present or pillow not installed — non-fatal
         except Exception as _rg_err:
@@ -1708,8 +1961,8 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
         d = row["date"]
         s = row.get("sport", "")
         dates_sports.setdefault(d, set()).add(s)
-        # Daily lay is always NBA — ensure we fetch NBA scores for its date
-        if row.get("run_type", "").lower() == "daily_lay":
+        # Daily lay / longshot / SGP are always NBA — ensure NBA scores fetched
+        if row.get("run_type", "").lower() in ("daily_lay", "longshot", "sgp"):
             dates_sports.setdefault(d, set()).add("NBA")
 
     all_scores: dict = {}        # (date, sport) → {game_key: game_data}
@@ -1724,14 +1977,30 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
                 print(f"\n  {label} Fetching {sport} data for {date_str}…")
 
             scores = fetch_scores(sport, date_str)
-            scores_map = {f"{g.get('away_team','')} @ {g.get('home_team','')}": g for g in scores}
+            # None = plan limit (422) — store None so grading loop skips the
+            # game-complete gate and grades purely from stat APIs.
+            # []   = valid API response with no completed games.
+            if scores is None:
+                scores_map = None
+                count_str = "unavailable (plan limit)"
+            else:
+                scores_map = {f"{g.get('away_team','')} @ {g.get('home_team','')}": g for g in scores}
+                count_str = f"{len(scores)} completed games"
             all_scores[(date_str, sport)] = scores_map
             if not is_shadow:
-                print(f"    {len(scores)} completed games found")
+                print(f"    {count_str} found")
 
             pstats: dict = {}
             if sport == "NBA":
                 pstats = fetch_nba_boxscore(date_str)
+                # If Odds API scores unavailable (plan limit), fall back to ESPN
+                # game scores so daily lay / game-line grading still works.
+                if scores_map is None:
+                    espn_scores = fetch_espn_game_scores(date_str)
+                    if espn_scores:
+                        all_scores[(date_str, sport)] = espn_scores
+                        if not is_shadow:
+                            print(f"    ESPN fallback: {len(espn_scores)} game scores loaded")
             elif sport == "NHL":
                 pstats = fetch_nhl_boxscores(date_str)
             elif sport == "MLB":
@@ -1754,14 +2023,22 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
         sport    = row.get("sport", "")
         stat     = row.get("stat", "")
 
-        if row.get("run_type", "").lower() == "daily_lay":
+        # all_scores values may be None when the Odds API returned 422 (plan
+        # limit). Normalise to {} so callers don't crash on .items() etc.
+        # grade_prop receives None explicitly so it skips the game-complete gate.
+        _raw_scores = all_scores.get((date_str, sport))
+        _scores_dict = _raw_scores if isinstance(_raw_scores, dict) else {}
+
+        if row.get("run_type", "").lower() in ("longshot", "sgp"):
+            result = grade_parlay_legs(row, all_player_stats, all_scores)
+        elif row.get("run_type", "").lower() == "daily_lay":
             result = grade_daily_lay(row, all_scores)
         elif stat in GAME_LINE_STATS:
             ls = all_linescores.get((date_str, sport)) if sport == "MLB" else None
-            result = grade_game_line(row, all_scores.get((date_str, sport), {}), linescores=ls)
+            result = grade_game_line(row, _scores_dict, linescores=ls)
         else:
             result = grade_prop(row, all_player_stats.get((date_str, sport), {}),
-                                scores_by_game=all_scores.get((date_str, sport), {}))
+                                scores_by_game=_raw_scores)
 
         if result:
             # Defensive idempotency guard (audit M-23). The ungraded filter
@@ -1772,8 +2049,8 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
             if _is_terminal_result(existing):
                 if not is_shadow:
                     print(
-                        f"  ⚠ M-23 skip: row {idx} already terminal "
-                        f"({str(existing).strip().upper()}) — refusing to overwrite "
+                        f"  \u26a0 M-23 skip: row {idx} already terminal "
+                        f"({str(existing).strip().upper()}) \u2014 refusing to overwrite "
                         f"with fresh grade {result!r}. "
                         f"player={row.get('player','')!r} stat={stat!r} date={date_str}"
                     )
@@ -1781,28 +2058,28 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
             rows[idx]["result"] = result
             graded_count += 1
             if not is_shadow:
-                if result == "W":   emoji = "✅"
-                elif result == "L": emoji = "❌"
-                elif result == "P": emoji = "➖"
-                else:               emoji = "🚫"  # VOID
-                print(f"  {emoji} {row.get('player','')} {row.get('direction','')} {row.get('line','')} {stat} → {result}")
+                if result == "W":   emoji = "\u2705"
+                elif result == "L": emoji = "\u274c"
+                elif result == "P": emoji = "\u2796"
+                else:               emoji = "\U0001f6ab"  # VOID
+                print(f"  {emoji} {row.get('player','')} {row.get('direction','')} {row.get('line','')} {stat} \u2192 {result}")
 
     if not is_shadow:
         print(f"\n  {label} Graded {graded_count}/{len(ungraded)} picks")
 
-    # ── Write back ─────────────────────────────────────────────
+    # \u2500\u2500 Write back \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     if not args.dry_run and graded_count > 0:
         _atomic_write_rows(log_path, fieldnames, rows)
         if not is_shadow:
-            print(f"  ✅ Updated {log_path}")
+            print(f"  \u2705 Updated {log_path}")
     elif args.dry_run and not is_shadow:
-        print("  (dry run — no changes written)")
+        print("  (dry run \u2014 no changes written)")
 
-    # ── Dates with new grades in this log ──────────────────────
+    # \u2500\u2500 Dates with new grades in this log \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     dates_from_this = {row["date"] for idx, row in ungraded
                        if rows[idx].get("result") in ("W", "L", "P")}
 
-    # ── Discord posting (skip for shadow sports) ───────────────
+    # \u2500\u2500 Discord posting (skip for shadow sports) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     if not is_shadow and not args.dry_run:
         dates_for_recap = dates_from_this | extra_dates
         if dates_for_recap:
@@ -1820,7 +2097,7 @@ def _post_merged_recaps(dates_for_recap, main_rows, recap_merge_logs, args):
     that landed in pick_log.csv (e.g. a manually-overridden MLB bonus) are
     also excluded so they don't appear on the card.
     """
-    # Note: recap_merge_logs is intentionally ignored here — manual picks
+    # Note: recap_merge_logs is intentionally ignored here \u2014 manual picks
     # are not shown in Discord recaps. The parameter is kept for API compat.
     for date_str in sorted(dates_for_recap):
         day_picks = [r for r in main_rows
@@ -1858,7 +2135,7 @@ Examples:
 
     if args.repost and not args.date:
         print("  ❌ --repost requires --date YYYY-MM-DD")
-        sys.exit(1)
+        import sys; sys.exit(1)
 
     global _CONFIRM_MODE
     _CONFIRM_MODE = args.confirm

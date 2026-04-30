@@ -28,10 +28,18 @@ from pick_log_io import load_rows  # noqa: E402
 # to pick_labels.py once.
 from pick_labels import detail_line as _pick_detail_line  # noqa: E402
 
-PICK_LOG_PATH        = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log.csv")
-PICK_LOG_MANUAL_PATH = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log_manual.csv")
-PICK_LOG_MLB_PATH    = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log_mlb.csv")
-OUTPUT_FOLDER        = os.path.expanduser("~/Documents/JonnyParlay/data/picks")
+# M9: resolved via paths.py — honours $JONNYPARLAY_ROOT
+from paths import (  # noqa: E402
+    PICK_LOG_PATH as _PICK_LOG_PATH_P,
+    PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
+    PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    data_path as _data_path,
+)
+
+PICK_LOG_PATH        = str(_PICK_LOG_PATH_P)
+PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
+PICK_LOG_MLB_PATH    = str(_PICK_LOG_MLB_PATH_P)
+OUTPUT_FOLDER        = str(_data_path("picks"))
 
 MIN_SAMPLE_NOTE = 20  # Warn when a bucket has fewer than this many picks
 

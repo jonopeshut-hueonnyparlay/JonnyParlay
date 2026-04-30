@@ -27,3 +27,16 @@ Pillow
 # Context sanity system (disabled by default; enable with --context).
 # Only needed when you pass --context to run_picks.py.
 # anthropic
+
+# ── Custom projection engine ────────────────────────────────────────────────
+# Optional until custom projector goes live (currently parallel-running with
+# SaberSim). Required by engine/projections_db.py and engine/nba_projector.py.
+# Safe to skip if you only run the existing engine against SaberSim CSVs.
+#
+# EWMA + DataFrame transforms over historical game logs.
+pandas
+# Historical player / team stats source (NBA). One call per season.
+nba_api
+# Daily NBA injury report PDF parser (used by engine/injury_parser.py).
+# Pin to 1.1.1 -- column shape is stable at that version.
+nbainjuries==1.1.1

@@ -44,14 +44,21 @@ try:
 except ImportError:
     _HAS_PIL = False
 
+# M9: resolved via paths.py — honours $JONNYPARLAY_ROOT
+from paths import (  # noqa: E402
+    PICK_LOG_PATH as _PICK_LOG_PATH_P,
+    PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
+    project_path as _project_path,
+)
+
 # ── Config ────────────────────────────────────────────────────────────────────
-PICK_LOG_PATH         = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log.csv")
-PICK_LOG_MANUAL_PATH  = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log_manual.csv")
+PICK_LOG_PATH         = str(_PICK_LOG_PATH_P)
+PICK_LOG_MANUAL_PATH  = str(_PICK_LOG_MANUAL_PATH_P)
 
 # Recap webhook loaded from env/.env — see secrets_config.py (audit C-6).
 from secrets_config import DISCORD_RECAP_WEBHOOK
 
-OUTPUT_DIR            = os.path.expanduser("~/Documents/JonnyParlay/results_graphics")
+OUTPUT_DIR            = str(_project_path("results_graphics"))
 
 GAME_LINE_STATS = {"TOTAL", "SPREAD", "TEAM_TOTAL", "ML_FAV", "ML_DOG",
                    "F5_TOTAL", "F5_SPREAD", "F5_ML", "NRFI", "YRFI"}

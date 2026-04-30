@@ -1,6 +1,6 @@
 # JonnyParlay Engine — Full Audit Report
 
-**Audit date:** 2026-04-19
+**Audit date:** 2026-04-19 (original); **2026-04-24 (supplemental sections 61-69)**
 **Scope:** every file reachable from `run_picks.py`, `grade_picks.py`, `capture_clv.py`, plus every support script, launcher, and data file under `data/`.
 **Method:** line-by-line read of each file plus parallel sub-audits of the three largest modules, cross-file consistency checks, and a direct inspection of every data artifact on disk.
 **Read:** this report is the punch list, not the fix list. Nothing has been changed on disk.
@@ -446,4 +446,114 @@ If I were fixing this in one sitting, the order would be:
 6. Rotate the hardcoded API key and webhooks into env vars (C-5, C-6)
 7. Everything else in priority order.
 
-End of audit.
+End of Apr 19 audit.
+
+---
+
+## SUPPLEMENTAL AUDIT — Sections 61-69 (Apr 24 2026)
+
+**Focus:** SGP builder, longshot parlay, gameline run_type, pick_log v3 schema migration, KILLSHOT v2 rules, new webhook secrets, file sync verification.
+
+### CRITICAL
+
+**SEC61-1 · Undefined variable in `_log_longshot()` causes NameError**
+- **File:** `engine/run_picks.py:3713`
+- **Now:** `header = reader.fieldnames or list(HEADER)`
+- **Issue:** `HEADER` is undefined in function scope. CANONICAL_HEADER is imported at module level (line 126) but this function references undefined `HEADER`, causing `NameError` at runtime when CSV fieldnames are missing (edge case but blocks longshot logging).
+- **Fix:** Change to `header = reader.fieldnames or list(CANONICAL_HEADER)`
+- **Impact:** CRITICAL — blocks longshot feature if pick_log.csv header ever becomes empty
+
+### HIGH
+
+**SEC61-2 · Bare except clause swallows all exceptions**
+- **File:** `engine/run_picks.py:4778-4779`
+- **Now:** `except: continue` in CSV collector loop
+- **Issue:** Catches KeyboardInterrupt and SystemExit, preventing graceful shutdown
+- **Fix:** Change to `except (IOError, OSError, UnicodeDecodeError): continue`
+
+**SEC62-1 · Missing Discord guard for SGP posts**
+- **File:** `engine/sgp_builder.py:post_sgp()` (called from run_picks.py:5424)
+- **Now:** Posts SGP without checking `discord_posted.json` guard
+- **Issue:** Violates audit category 10. Will double-post if `post_sgp()` called twice same day. All other parlay types (bonus, daily_lay, longshot) check guard.
+- **Fix:** Add guard key before posting: `guard_key = f"sgp:{today}"`; check and update guard
+
+**SEC65-1 · Grading dispatch missing explicit handler for gameline run_type**
+- **File:** `engine/grade_picks.py:1831-1840`
+- **Now:** Dispatch logic: `if run_type in (longshot, sgp) → parlay`, `elif run_type == daily_lay → daily_lay`, `elif stat in GAME_LINE_STATS → game_line`, `else → prop`
+- **Issue:** If run_type="gameline" but stat not in GAME_LINE_STATS (typo), falls to `else` and tries `grade_prop()`, which fails for spreads/MLs. No explicit gameline handler.
+- **Fix:** Add `elif run_type == "gameline"` before the stat check
+
+### MEDIUM
+
+**SEC62-2 · `grade_parlay_legs()` doesn't validate JSON structure**
+- **File:** `engine/grade_picks.py:625-678`
+- **Now:** Parses legs JSON and grades each leg without validating required fields
+- **Issue:** No check that each leg has (player, direction, line, stat, sport). Malformed legs fail silently or produce wrong grades.
+- **Fix:** Validate before grading: `if not all(leg.get(k) for k in ["player","direction","line","stat","sport"]): return None`
+
+**SEC68-1 · File sync — root copies may diverge**
+- **Files:** `engine/run_picks.py` vs `run_picks.py` (and grade_picks.py, sgp_builder.py)
+- **Issue:** Manual `cp engine/X.py X.py` is error-prone. Critical bugs could exist in only one copy (see SEC61-1).
+- **Fix:** Add pre-commit hook or startup check to verify engine/ ↔ root byte-for-byte parity. Currently no automation.
+
+**SEC62-3 · Schema field count mismatch risk**
+- **Now:** `CANONICAL_HEADER` in `pick_log_schema.py:41` has 28 fields for v3. `pick_log.csv` verified to have 28 fields. All writers should produce 28.
+- **Issue:** No assertion at writer time that row has exactly 28 fields before append.
+- **Fix:** Add: `assert len(row) == 28, f"Row has {len(row)} fields, expected 28"`
+
+### LOW
+
+**SEC61-3 · KILLSHOT `_player_matches()` substring matching too loose**
+- **File:** `engine/run_picks.py:4099`
+- **Now:** Allows `tok in full_lower` substring match; "son" matches "Anderson"
+- **Issue:** Manual --killshot overrides could match unintended players
+- **Fix:** Require word-boundary match
+
+**SEC63-1 · SGP builder missing save parameter**
+- **File:** `engine/sgp_builder.py`
+- **Status:** PASS — `run_sgp_builder()` signature has `save=True` parameter (line 697), `post_sgp()` has `save=True` (line 628), correctly passed from run_picks.py:5429. No issue.
+
+### Constants Verification (Section 17)
+
+All KILLSHOT v2 constants match CLAUDE.md:
+- KILLSHOT_SCORE_FLOOR = 90.0 (line 175) ✓
+- KILLSHOT_TIER_REQUIRED = "T1" strict (line 176) ✓
+- KILLSHOT_WIN_PROB_FLOOR = 0.65 (line 177) ✓
+- KILLSHOT_ODDS_MIN = -200, KILLSHOT_ODDS_MAX = 110 (lines 178-179) ✓
+- KILLSHOT_STAT_ALLOW = {PTS, REB, AST, SOG, 3PM} (line 180) ✓
+- KILLSHOT_WEEKLY_CAP = 2 (line 183) ✓
+- KILLSHOT_SIZE_BASE = 3.0, KILLSHOT_SIZE_BUMP = 4.0 (lines 185-186) ✓
+
+**All constants verified. No drift.**
+
+### Schema Integrity (Sections 62, 69)
+
+- pick_log.csv header: 28 columns (correct for v3) ✓
+- Column order: matches CANONICAL_HEADER ✓
+- Sample rows (lines 2-5): all 28 fields present ✓
+- SCHEMA_VERSION: correctly set to 3 in pick_log_schema.py:39 ✓
+- Legs column (v3): present at position 28, blank for non-parlay rows ✓
+
+### Open Questions
+
+1. **Does CLV daemon skip SGP/longshot rows?** Audit section 63 says SGP has no individual closing line. Verify `capture_clv.py` skips run_type in (sgp, longshot).
+2. **Is legs JSON format validated before grading?** `_legs_json()` called in run_picks.py but logic not examined. Verify it produces valid JSON.
+3. **Do parlay VOIDs propagate?** If leg is VOID, should whole parlay be VOID? Current code treats VOID like "L". Confirm business logic.
+
+### Recommended Fix Priority
+
+**P0 (deploy before longshot feature):**
+1. SEC61-1: Fix undefined HEADER → CANONICAL_HEADER
+2. SEC61-2: Fix bare except clause
+3. SEC62-1: Add SGP Discord guard
+
+**P1 (before next session):**
+4. SEC65-1: Add explicit gameline dispatcher
+5. SEC62-2: Add legs JSON validation
+6. SEC68-1: Verify file sync with diffs
+
+**P2 (refactor, not urgent):**
+7. SEC61-3: Restrict substring matching
+8. SEC62-3: Add field-count assertion
+
+End of Apr 24 supplemental audit.
