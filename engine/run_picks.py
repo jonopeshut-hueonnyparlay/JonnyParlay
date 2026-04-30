@@ -3531,17 +3531,12 @@ def post_to_discord(premium, mode, today, suppress_ping=False):
             _notify_post_failure("premium_card", guard_key=premium_key)
 
     # POTD — separate embed, same channel, same webhook.
-    # Skip if the top pick is a KILLSHOT — it already gets a dedicated embed
-    # in #killshot with @everyone; a redundant POTD in #premium-portfolio
-    # would double-post the same pick.
+    # premium[0] is guaranteed non-KILLSHOT (KILLSHOTs are excluded from premium).
     potd_key = f"potd:{today}"
-    potd = premium[0]
-    if potd.get("tier") == "KILLSHOT":
-        print(f"  [Discord] ⏭️  POTD skipped — top pick is KILLSHOT ({potd['player']} {potd['stat']})")
-        _discord_claim_post(potd_key)  # consume the guard key so rerun doesn't retry
-    elif not _discord_claim_post(potd_key):
+    if not _discord_claim_post(potd_key):
         print(f"  [Discord] ⏭️  POTD already posted for {today} — skipping")
     else:
+        potd = premium[0]
         potd_payload = build_potd_embed(potd, today)
         if _webhook_post(DISCORD_WEBHOOK_URL, potd_payload, label=f"POTD: {potd['player']} {potd['stat']}"):
             print(f"  [Discord] ✅ POTD posted: {potd['player']} {potd['stat']}")
@@ -5328,27 +5323,26 @@ def main():
     # Apply caps
     qualified = apply_caps(qualified, {}, max_per_game=args.max_per_game) if qualified else []
 
-    # Build Premium 5
-    premium = apply_soft_rules_premium([], qualified, max_per_game=args.max_per_game) if qualified else []
+    # ── KILLSHOT selection (runs BEFORE premium build) ───────────────────────
+    # KILLSHOTs are excluded from the premium card — they get their own dedicated
+    # embed in #killshot with @everyone. Premium card + POTD show the next best 5.
+    manual_ks = {n.strip() for n in args.killshot.split(",") if n.strip()} if args.killshot else set()
+    killshots  = select_killshots(qualified, today_str, manual_players=manual_ks)
+    ks_keys    = {(p["player"], p["stat"], p["line"]) for p in killshots}
+
+    # Build Premium 5 from non-KILLSHOT qualified picks only
+    non_ks_qualified = [p for p in qualified if (p["player"], p["stat"], p["line"]) not in ks_keys]
+    premium = apply_soft_rules_premium([], non_ks_qualified, max_per_game=args.max_per_game) if non_ks_qualified else []
 
     # Apply VAKE sizing to Premium 5 only (overwrites base sizing for these 5)
     premium = size_picks_vake(premium) if premium else []
 
-    # ── KILLSHOT selection ────────────────────────────────────
-    manual_ks = {n.strip() for n in args.killshot.split(",") if n.strip()} if args.killshot else set()
-    killshots  = select_killshots(qualified, today_str, manual_players=manual_ks)
-    # Promote tier label on matching premium picks so the card shows KILLSHOT
-    ks_keys = {(p["player"], p["stat"], p["line"]) for p in killshots}
-    for p in premium:
-        if (p["player"], p["stat"], p["line"]) in ks_keys:
-            p["tier"] = "KILLSHOT"
-            p["size"] = _killshot_size(p)
-
-    # Log only premium card picks — only on first run of the day (skip if card already posted)
+    # Log premium picks + KILLSHOT picks on first run of the day.
+    # KILLSHOT picks carry tier=KILLSHOT and no card_slot; premium picks get slots 1-5.
     today_str_log = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     _card_was_already_up = _card_already_posted_today(today_str_log)
     if not args.no_save and not _card_was_already_up:
-        log_picks(premium, args.mode, premium_picks=premium)
+        log_picks(premium + killshots, args.mode, premium_picks=premium)
 
     # Safest 5
     safest5 = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)[:5] if qualified else []
