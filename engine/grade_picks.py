@@ -1225,7 +1225,8 @@ def daily_stats(picks):
     return w, l, pu, round(pl, 2), round(roi, 1)
 
 
-COUNTED_RUN_TYPES = {"primary", "bonus", "manual", "daily_lay", "longshot", "sgp", "gameline", "", None}
+# F4.13: removed "" and None — blank/null run_type should never count toward W-L
+COUNTED_RUN_TYPES = {"primary", "bonus", "manual", "daily_lay", "longshot", "sgp", "gameline"}
 PROP_RUN_TYPES    = {"primary", "bonus"}          # model props — used for W-L record / week / month
 PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # parlays — shown separately in recap
 

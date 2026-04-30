@@ -172,6 +172,7 @@ MIN_DAILY_LAY_MARGIN = 4.0      # Minimum projected margin (pts) for a team to q
 MIN_LEG_EDGE_DAILY = 0.025      # Minimum per-leg edge for daily lay legs (screens out noise)
 MIN_LEG_COVER_PROB_DAILY = 0.58 # Minimum per-leg cover probability for daily lay legs
 LONGSHOT_SIZE = 0.25            # Unit size for longshot parlay (high variance, small stake)
+LONGSHOT_MAX_PER_GAME = 2       # F2.20: moved from inside build_safest6_parlay to top-level constant
 SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_builder.SGP_SIZE)
 
 # ── KILLSHOT tier (v2 — safer/tighter; see CLAUDE.md) ─────────
@@ -706,7 +707,8 @@ def auto_r12_from_log(today_str: str, window_days: int = 5) -> list[str]:
     if not log_path.exists():
         return []
     try:
-        cutoff = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=window_days - 1)).strftime("%Y-%m-%d")
+        # F2.8: was window_days-1 (gave 4 days not 5); fixed to window_days
+        cutoff = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=window_days)).strftime("%Y-%m-%d")
         # Shared lock — must not race a concurrent capture_clv write (audit H-8).
         with _pick_log_lock(log_path):
             with open(log_path, "r", newline="", encoding="utf-8") as f:
@@ -2776,7 +2778,6 @@ def build_safest6_parlay(qualified):
     If the top 6 by WP would pull 3+ from one game, the 3rd+ are skipped
     and replaced by the next-best picks from other games.
     """
-    LONGSHOT_MAX_PER_GAME = 2
     ranked = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
     game_counts: dict = {}
     safest = []
@@ -3175,6 +3176,7 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
                         p.get("context_verdict", ""),
                         p.get("context_reason", ""),
                         p.get("context_score", ""),
+                        "",  # legs — blank for primary/bonus (F2.5: was missing, silently dropped)
                     ])
                 # Commit to disk before releasing the outer lock (audit H-5).
                 f.flush()

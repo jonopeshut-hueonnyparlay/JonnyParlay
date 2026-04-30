@@ -1225,7 +1225,8 @@ def daily_stats(picks):
     return w, l, pu, round(pl, 2), round(roi, 1)
 
 
-COUNTED_RUN_TYPES = {"primary", "bonus", "manual", "daily_lay", "longshot", "sgp", "gameline", "", None}
+# F4.13: removed "" and None — blank/null run_type should never count toward W-L
+COUNTED_RUN_TYPES = {"primary", "bonus", "manual", "daily_lay", "longshot", "sgp", "gameline"}
 PROP_RUN_TYPES    = {"primary", "bonus"}          # model props — used for W-L record / week / month
 PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # parlays — shown separately in recap
 
@@ -2152,4 +2153,14 @@ Examples:
     # ── Grade main log (posts to Discord, includes manual rows in recap) ──
     merge_logs = [PICK_LOG_MANUAL_PATH] if use_default_paths else []
     _grade_one_log(main_log_path, args, is_shadow=False,
-            
+                   recap_merge_logs=merge_logs,
+                   extra_dates=manual_dates)
+
+    # ── Grade shadow sport logs silently (no Discord post) ────
+    if not args.repost and use_default_paths:
+        for shadow_path in (PICK_LOG_MLB_PATH,):
+            _grade_one_log(shadow_path, args, is_shadow=True)
+
+
+if __name__ == "__main__":
+    main()
