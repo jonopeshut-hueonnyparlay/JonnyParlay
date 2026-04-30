@@ -73,10 +73,9 @@ PICK_LOG_MLB_PATH    = str(_PICK_LOG_MLB_PATH_P)
 DISCORD_GUARD_FILE   = str(_DISCORD_GUARD_FILE_P)
 LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
 
-# All log paths — main log first, then manual, then shadow sport logs.
-# Manual picks are graded alongside primary/bonus so recap totals are accurate,
-# but live in their own file to keep model-generated data clean.
-ALL_LOG_PATHS = [PICK_LOG_PATH, PICK_LOG_MANUAL_PATH, PICK_LOG_MLB_PATH]
+# All log paths — main log first, then shadow sport logs.
+# Manual picks excluded: no manual tracking going forward.
+ALL_LOG_PATHS = [PICK_LOG_PATH, PICK_LOG_MLB_PATH]
 # Shadow sports: grade silently, no Discord post
 SHADOW_SPORTS = {"MLB"}
 
@@ -1225,10 +1224,12 @@ def daily_stats(picks):
     return w, l, pu, round(pl, 2), round(roi, 1)
 
 
-# F4.13: removed "" and None — blank/null run_type should never count toward W-L
-COUNTED_RUN_TYPES = {"primary", "bonus", "manual", "daily_lay", "longshot", "sgp", "gameline"}
+# Only primary/bonus (props) count toward W-L tracking.
+# Parlays (daily_lay, sgp, longshot) are for entertainment — no results tracking.
+# Manual picks discontinued.
+COUNTED_RUN_TYPES = {"primary", "bonus"}
 PROP_RUN_TYPES    = {"primary", "bonus"}          # model props — used for W-L record / week / month
-PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # parlays — shown separately in recap
+PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # kept for grading only — not shown in recaps
 
 def get_graded_primary(all_rows):
     """Return graded picks (primary + bonus + manual) grouped by date."""
@@ -1378,9 +1379,9 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     _tier = lambda p: p.get("tier", "")
 
     # ── Day splits ────────────────────────────────────────────────────────────
-    reg_props    = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
-    ks_picks     = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
-    parlay_picks = [p for p in day_picks if _rt(p) in PARLAY_RUN_TYPES]
+    reg_props = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
+    ks_picks  = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
+    # Parlays excluded from tracking — graded in pick_log but not shown in recap.
 
     # Props record (non-KILLSHOT primary/bonus)
     w, l, pu, pl, roi = daily_stats(reg_props)
@@ -1395,14 +1396,6 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
         ks_record_line = f"\n**⚡ KILLSHOT: {ks_w}-{ks_l} · {ks_pl_str}**"
     else:
         ks_record_line = ""
-
-    # Parlay record (if any today)
-    if parlay_picks:
-        p_w, p_l, p_pu, p_pl, _ = daily_stats(parlay_picks)
-        p_pl_str = f"+{p_pl:.2f}u" if p_pl >= 0 else f"{p_pl:.2f}u"
-        parlay_record_line = f"\n**Parlays: {p_w}-{p_l} · {p_pl_str}**"
-    else:
-        parlay_record_line = ""
 
     # ── Streaks ───────────────────────────────────────────────────────────────
     grouped = get_graded_primary(all_rows)
@@ -1425,24 +1418,6 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
         for p in ks_picks:
             pick_lines.append(_recap_pick_line(p))
 
-    daily_lays = [p for p in parlay_picks if _rt(p) == "daily_lay"]
-    if daily_lays:
-        pick_lines.append("\n**📋 Daily Lay**")
-        for p in daily_lays:
-            pick_lines.append(_recap_pick_line(p))
-
-    longshot_picks = [p for p in parlay_picks if _rt(p) == "longshot"]
-    if longshot_picks:
-        pick_lines.append("\n**🎯 Longshot**")
-        for p in longshot_picks:
-            pick_lines.append(_recap_pick_line(p))
-
-    sgp_picks = [p for p in parlay_picks if _rt(p) == "sgp"]
-    if sgp_picks:
-        pick_lines.append("\n**🎲 Same-Game Parlay**")
-        for p in sgp_picks:
-            pick_lines.append(_recap_pick_line(p))
-
     # ── Week breakdown (props / KILLSHOT / parlays separately) ───────────────
     ref = datetime.strptime(date_str, "%Y-%m-%d")
     mon_str = (ref - timedelta(days=ref.weekday())).strftime("%Y-%m-%d")
@@ -1455,7 +1430,6 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
 
     wk_reg = [p for p in all_week if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
     wk_ks  = [p for p in all_week if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
-    wk_par = [p for p in all_week if _rt(p) in PARLAY_RUN_TYPES]
 
     ww, wl, _, wpl, _ = daily_stats(wk_reg)
     wpl_str = f"+{wpl:.1f}u" if wpl >= 0 else f"{wpl:.1f}u"
@@ -1463,9 +1437,6 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     if wk_ks:
         ks_ww, ks_wl, _, ks_wpl, _ = daily_stats(wk_ks)
         week_str += f" · ⚡ {ks_ww}-{ks_wl} · {('+' if ks_wpl >= 0 else '')}{ks_wpl:.1f}u"
-    if wk_par:
-        pw, p_l_, _, ppl, _ = daily_stats(wk_par)
-        week_str += f" · Parlays {pw}-{p_l_} · {('+' if ppl >= 0 else '')}{ppl:.1f}u"
 
     # ── Month breakdown ───────────────────────────────────────────────────────
     dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -1480,22 +1451,18 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     if len(all_month) >= 5:
         mo_reg = [p for p in all_month if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
         mo_ks  = [p for p in all_month if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
-        mo_par = [p for p in all_month if _rt(p) in PARLAY_RUN_TYPES]
 
         mw, ml, _, mpl, _ = daily_stats(mo_reg)
         mo_str = f"Props {mw}-{ml} · {('+' if mpl >= 0 else '')}{mpl:.1f}u"
         if mo_ks:
             ks_mw, ks_ml, _, ks_mpl, _ = daily_stats(mo_ks)
             mo_str += f" · ⚡ {ks_mw}-{ks_ml} · {('+' if ks_mpl >= 0 else '')}{ks_mpl:.1f}u"
-        if mo_par:
-            pmw, pml, _, pmpl, _ = daily_stats(mo_par)
-            mo_str += f" · Parlays {pmw}-{pml} · {('+' if pmpl >= 0 else '')}{pmpl:.1f}u"
         month_line = f"**{dt.strftime('%B')}:** {mo_str}\n"
 
     color = 0x2ECC71 if pl >= 0 else 0xFF4444
 
     desc = (
-        f"{record}{ks_record_line}{parlay_record_line}{streak_line}{pick_streak_line}\n\n"
+        f"{record}{ks_record_line}{streak_line}{pick_streak_line}\n\n"
         + "\n".join(pick_lines)
         + f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + f"**This week:** {week_str}\n"

@@ -62,8 +62,9 @@ BRAND_LOGO               = "https://cdn.discordapp.com/attachments/1115840612915
 # PARLAY" as a prop until someone remembered to fix both sides.
 from pick_labels import GAME_LINE_STATS, short_label as _pick_short_label  # noqa: E402
 
-# Run types counted in weekly/monthly totals (matches grade_picks.py COUNTED_RUN_TYPES).
-COUNTED_RUN_TYPES = {"primary", "bonus", "manual", "daily_lay", "", None}
+# Only props count toward weekly/monthly totals — parlays excluded from tracking.
+# Matches grade_picks.py COUNTED_RUN_TYPES. Manual picks discontinued.
+COUNTED_RUN_TYPES = {"primary", "bonus"}
 
 # Sportsbook display contract — canonical definition in book_names.py (audit H-13).
 from book_names import BOOK_DISPLAY as _BOOK_DISPLAY, display_book  # noqa: E402
@@ -207,9 +208,8 @@ def compute_clv_summary(picks):
         "worst": (worst_pair[0], round(worst_pair[1] * 100.0, 2)),
     }
 
-def load_picks(path=PICK_LOG_PATH, extra_paths=(PICK_LOG_MANUAL_PATH,)):
-    """Load rows from main pick log plus any extra logs (e.g. manual).
-    Manual picks are merged so weekly/monthly totals include every real bet.
+def load_picks(path=PICK_LOG_PATH, extra_paths=()):
+    """Load rows from main pick log. Manual log excluded — no manual tracking.
 
     Arch note #3: row-reading goes through ``pick_log_io.load_rows``, which
     takes the shared FileLock per path so concurrent engine/grader/CLV-daemon
