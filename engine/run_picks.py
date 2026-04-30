@@ -3530,12 +3530,18 @@ def post_to_discord(premium, mode, today, suppress_ping=False):
         else:
             _notify_post_failure("premium_card", guard_key=premium_key)
 
-    # POTD — separate embed, same channel, same webhook
+    # POTD — separate embed, same channel, same webhook.
+    # Skip if the top pick is a KILLSHOT — it already gets a dedicated embed
+    # in #killshot with @everyone; a redundant POTD in #premium-portfolio
+    # would double-post the same pick.
     potd_key = f"potd:{today}"
-    if not _discord_claim_post(potd_key):
+    potd = premium[0]
+    if potd.get("tier") == "KILLSHOT":
+        print(f"  [Discord] ⏭️  POTD skipped — top pick is KILLSHOT ({potd['player']} {potd['stat']})")
+        _discord_claim_post(potd_key)  # consume the guard key so rerun doesn't retry
+    elif not _discord_claim_post(potd_key):
         print(f"  [Discord] ⏭️  POTD already posted for {today} — skipping")
     else:
-        potd = premium[0]
         potd_payload = build_potd_embed(potd, today)
         if _webhook_post(DISCORD_WEBHOOK_URL, potd_payload, label=f"POTD: {potd['player']} {potd['stat']}"):
             print(f"  [Discord] ✅ POTD posted: {potd['player']} {potd['stat']}")
