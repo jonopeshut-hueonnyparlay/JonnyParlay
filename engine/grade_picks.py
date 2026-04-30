@@ -1442,12 +1442,9 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     wk_reg = [p for p in all_week if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
     wk_ks  = [p for p in all_week if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
 
-    ww, wl, _, wpl, _ = daily_stats(wk_reg)
+    ww, wl, _, wpl, _ = daily_stats(wk_reg + wk_ks)
     wpl_str = f"+{wpl:.1f}u" if wpl >= 0 else f"{wpl:.1f}u"
-    week_str = f"Picks {ww}-{wl} | {wpl_str}"
-    if wk_ks:
-        ks_ww, ks_wl, _, ks_wpl, _ = daily_stats(wk_ks)
-        week_str += f" | ⚡ KILLSHOT {ks_ww}-{ks_wl} | {('+' if ks_wpl >= 0 else '')}{ks_wpl:.1f}u"
+    week_str = f"{ww}-{wl} | {wpl_str}"
 
     # ── Month breakdown ───────────────────────────────────────────────────────
     dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -1463,17 +1460,14 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
         mo_reg = [p for p in all_month if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
         mo_ks  = [p for p in all_month if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
 
-        mw, ml, _, mpl, _ = daily_stats(mo_reg)
-        mo_str = f"Picks {mw}-{ml} | {('+' if mpl >= 0 else '')}{mpl:.1f}u"
-        if mo_ks:
-            ks_mw, ks_ml, _, ks_mpl, _ = daily_stats(mo_ks)
-            mo_str += f" | ⚡ KILLSHOT {ks_mw}-{ks_ml} | {('+' if ks_mpl >= 0 else '')}{ks_mpl:.1f}u"
+        mw, ml, _, mpl, _ = daily_stats(mo_reg + mo_ks)
+        mo_str = f"{mw}-{ml} | {('+' if mpl >= 0 else '')}{mpl:.1f}u"
         month_line = f"**{dt.strftime('%B')}:** {mo_str}\n"
 
     color = 0x2ECC71 if pl >= 0 else 0xFF4444
 
     desc = (
-        f"{record}{ks_record_line}{streak_line}{pick_streak_line}\n\n"
+        f"{record}{streak_line}{pick_streak_line}\n\n"
         + "\n".join(pick_lines)
         + f"\n\n━━━━━━━━━━━━━━━━\n"
         + f"**This week:** {week_str}\n"
@@ -1774,19 +1768,7 @@ def post_grading_results(date_str, day_picks, all_rows, suppress_ping=False, for
             print(f"  [Discord] ✅ Daily recap posted for {date_str}")
             _mark_posted(guard, recap_key)
 
-    # ── Results graphic PNG ───────────────────────────────────
-    graphic_key = f"graphic:{date_str}"
-    if not force and _already_posted(guard, graphic_key):
-        print(f"  [Discord] ⏭️  Results graphic already posted for {date_str} — skipping")
-    else:
-        try:
-            from results_graphic import post_results_graphic
-            if post_results_graphic(date_str, day_picks, suppress_ping=suppress_ping):
-                _mark_posted(guard, graphic_key)
-        except ImportError:
-            pass   # results_graphic.py not present or pillow not installed — non-fatal
-        except Exception as _rg_err:
-            print(f"  ⚠ Results graphic failed: {_rg_err}")
+    # Results graphic disabled — recap embed contains all necessary info.
 
     # ── Streak announcement (skip in test mode) ───────────────
     if not suppress_ping:
@@ -2128,4 +2110,5 @@ Examples:
             _grade_one_log(shadow_path, args, is_shadow=True)
 
 
-if __name__ == "
+if __name__ == "__main__":
+    main()
