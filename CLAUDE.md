@@ -7,7 +7,7 @@ Full audit doc: `docs/audits/AUDIT_2026-04-28.md`. **52 findings: 3 CRIT / 11 HI
 
 **MED — all closed:** M1 (mlb schema), M2 (csv_writer TZ), M3 (KILLSHOT substring), M5 (push-leg drop), M6 (empty CSV abort), M8 (run lock), M9 (paths.py sweep), M12 (stdout utf-8).
 
-**LOW — all closed Apr 30 2026:** L1 (tests/ dir), L2 (docs/audits/), L3 (marketing/ untracked), L5 (fuse artifacts — auto-clear), L6 (backtest logs — never tracked), L7 (pre-commit hook), L9 (REB dropped from KILLSHOT_STAT_ALLOW), L10 (is_decimal_leak — already invoked), L11 (SIGMA fallthrough warning), L12 (unit cap docs), L13 ($PSScriptRoot in setup_clv_task.ps1), L14 (legs column docs), L15 (MBP terminology note), L16 (root shims — eliminate copy-sync drift), L17 (NHL sizing docs), L18 (conftest.py), L19 (streak docs), L20 (discord corruption test). **Audit fully closed.**
+**LOW — all closed Apr 30 2026:** L1 (tests/ dir), L2 (docs/audits/), L3 (marketing/ untracked), L5 (fuse artifacts — auto-clear), L6 (backtest logs — never tracked), L7 (pre-commit hook — `.git/hooks/pre-commit` guards shims), L9 (REB dropped from KILLSHOT_STAT_ALLOW), L10 (is_decimal_leak — already invoked), L11 (SIGMA fallthrough warning), L12 (unit cap docs), L13 ($PSScriptRoot in setup_clv_task.ps1), L14 (legs column docs), L15 (MBP terminology note), L16 (root shims — eliminate copy-sync drift), L17 (NHL sizing docs), L18 (conftest.py), L19 (streak docs), L20 (discord corruption test). **Audit fully closed.**
 
 ## Me
 Jono (jonopeshut@gmail.com). Sports bettor, DFS player, Discord community operator. Runs picks as a trading business — analytical, sharp, luxury brand.
