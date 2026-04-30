@@ -34,10 +34,10 @@ sys.path.insert(0, str(HERE / "engine"))
 # Canonical invariants
 # ─────────────────────────────────────────────────────────────────
 
-def test_canonical_header_is_27_cols():
+def test_canonical_header_is_28_cols():
     from pick_log_schema import CANONICAL_HEADER
-    assert len(CANONICAL_HEADER) == 27, (
-        f"CANONICAL_HEADER length locked at 27 (v2); got {len(CANONICAL_HEADER)}. "
+    assert len(CANONICAL_HEADER) == 28, (
+        f"CANONICAL_HEADER length locked at 28 (v3); got {len(CANONICAL_HEADER)}. "
         "If adding a new column: bump SCHEMA_VERSION, update this test, and "
         "verify migrate_row() still produces canonical rows."
     )
@@ -56,9 +56,9 @@ def test_canonical_header_contains_every_v2_only_column():
         assert col in CANONICAL_HEADER, f"v2 column '{col}' missing from canonical"
 
 
-def test_schema_version_is_2():
+def test_schema_version_is_3():
     from pick_log_schema import SCHEMA_VERSION
-    assert SCHEMA_VERSION == 2
+    assert SCHEMA_VERSION == 3
 
 
 # ─────────────────────────────────────────────────────────────────

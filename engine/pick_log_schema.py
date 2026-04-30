@@ -8,7 +8,7 @@ both definitions had to be updated in lockstep, and reader modules
 know whether an on-disk row was from an older schema version.
 
 This module:
-  1. Exports `CANONICAL_HEADER` — the 27-column schema as of SCHEMA_VERSION.
+  1. Exports `CANONICAL_HEADER` — the 28-column schema as of SCHEMA_VERSION.
   2. Defines migration rules so old-schema rows (e.g. pre-CLV, pre-context)
      can be read alongside current-schema rows without silent data loss.
   3. Gives every reader one helper — `migrate_row()` — to get a canonical
@@ -17,8 +17,9 @@ This module:
 SCHEMA HISTORY
   v1 (deprecated)  : original 20-col schema, pre-CLV, pre-context
                      date..result
-  v2 (current)     : adds closing_odds, clv, card_slot, is_home,
+  v2 (deprecated)  : adds closing_odds, clv, card_slot, is_home,
                      context_verdict, context_reason, context_score (27 cols)
+  v3 (current)     : adds legs — JSON parlay leg detail (28 cols)
 
 Bumping the schema:
   - Add new columns to the end of CANONICAL_HEADER (append-only keeps
@@ -33,7 +34,7 @@ from __future__ import annotations
 from typing import Iterable, Mapping
 
 # ─────────────────────────────────────────────────────────────────
-# Canonical schema (v2)
+# Canonical schema (v3)
 # ─────────────────────────────────────────────────────────────────
 
 SCHEMA_VERSION = 3
