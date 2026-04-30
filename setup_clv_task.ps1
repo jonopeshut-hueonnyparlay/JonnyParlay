@@ -5,8 +5,8 @@
 # ============================================================
 
 $taskName   = "JonnyParlay CLV Daemon"
-$batFile    = "C:\Users\jono4\Documents\JonnyParlay\start_clv_daemon.bat"
-$startDir   = "C:\Users\jono4\Documents\JonnyParlay"
+$batFile    = "$PSScriptRoot\start_clv_daemon.bat"   # L13: was hardcoded to jono4 home
+$startDir   = $PSScriptRoot
 $startTime  = "10:00"   # 10am — runs before picks are posted, waits if needed
 
 # Remove existing task if present (clean reinstall)

@@ -53,3 +53,5 @@ slice_*.csv
 slice_*.txt
 engine/_bash_write_test.py
 engine/_write_test.py
+
+marketing/

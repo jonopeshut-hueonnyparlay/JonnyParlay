@@ -193,7 +193,7 @@ KILLSHOT_TIER_REQUIRED  = "T1"                             # v2: strict T1 only 
 KILLSHOT_WIN_PROB_FLOOR = 0.65                             # v2: hard win-prob floor
 KILLSHOT_ODDS_MIN       = -200                             # v2: no razor-thin chalk
 KILLSHOT_ODDS_MAX       =  110                             # v2: no live dogs
-KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "REB", "AST", "SOG", "3PM"})  # v2: mainline counting stats only
+KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "AST", "SOG", "3PM"})  # v2: mainline counting stats only; REB dropped (L9)
 # Manual override (via --killshot NAME): bypasses v2 filters but still counts toward weekly cap
 KILLSHOT_MANUAL_FLOOR   = 75.0                             # Minimum score to allow manual promote
 KILLSHOT_WEEKLY_CAP     = 2                                # v2: was 3 — rarer = more signal
@@ -522,7 +522,10 @@ def calc_prop_prob(proj, line, stat):
             under_p = poisson_cdf(k, proj)
             over_p = 1.0 - poisson_cdf(k, proj)
     else:
-        s = SIGMA.get(stat, {"mult": 0.40, "min": 2.0})
+        s = SIGMA.get(stat)
+        if s is None:  # L11: warn on unknown stat so calibration gaps surface early
+            logger.warning("calc_prop_prob: no SIGMA entry for stat=%r — using default fallback {mult:0.40, min:2.0}", stat)
+            s = {"mult": 0.40, "min": 2.0}
         sigma = max(proj * s["mult"], s["min"])
         under_p = normal_cdf(line, proj, sigma)
         over_p = 1.0 - normal_cdf(line, proj, sigma)
@@ -4252,7 +4255,7 @@ def select_killshots(qualified, today_str, manual_players=None):
       - pick_score >= KILLSHOT_SCORE_FLOOR (90)
       - win_prob >= KILLSHOT_WIN_PROB_FLOOR (0.65)
       - odds in [KILLSHOT_ODDS_MIN, KILLSHOT_ODDS_MAX] ([-200, +110])
-      - stat in KILLSHOT_STAT_ALLOW ({PTS, REB, AST, SOG, 3PM})
+      - stat in KILLSHOT_STAT_ALLOW ({PTS, AST, SOG, 3PM})  # REB dropped L9
 
     Manual promote (--killshot NAME): bypasses v2 gate but still requires
       pick_score >= KILLSHOT_MANUAL_FLOOR (75) and counts toward weekly cap.
