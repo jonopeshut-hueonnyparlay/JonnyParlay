@@ -3414,7 +3414,7 @@ def build_premium_embed(premium, mode, today, suppress_ping=False):
     now_et = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
     mode_str = f"{mode_emoji.get(mode, '⚖️')} {mode}"
 
-    lines = [f"**{len(picks)} picks · {total_u:.2f}u · {mode_str}**\n"]
+    lines = [f"**{len(picks)} picks | {total_u:.2f}u | {mode_str}**\n"]
     for i, p in enumerate(picks):
         e = emojis[i] if i < len(emojis) else "•"
         stat = p.get("stat", "")
@@ -3433,18 +3433,18 @@ def build_premium_embed(premium, mode, today, suppress_ping=False):
             display_name = p["player"]
             pick_label = f"{display_name} {direction} {line_val}"
         else:
-            last = p["player"].split()[-1].upper()
+            last = p["player"].split()[-1]
             pick_label = f"{last} {direction} {line_val} {stat}"
 
         ctx_verdict = p.get("context_verdict", "")
         ctx_reason  = p.get("context_reason", "")
         ctx_flag    = " ⚠️" if ctx_verdict == "conflicts" else ""
-        lines.append(f"{e} **{pick_label}** · {odds_str} · {book_str} · **{size:.2f}u**{ctx_flag}")
-        lines.append(f"╰ {game} · Edge {edge_str} · Score {score_str} · {tier}")
+        lines.append(f"{e} **{pick_label}** | {odds_str} | {book_str} | **{size:.2f}u**{ctx_flag}")
+        lines.append(f"╰ {game} | Edge {edge_str} | Score {score_str}")
         if ctx_verdict == "supports" and ctx_reason:
             lines.append(f"  ↳ ✅ {ctx_reason}")
 
-    lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"\n━━━━━━━━━━━━━━━━")
     lines.append(f"**Total:** {total_u:.2f}u")
 
     return {
@@ -3478,7 +3478,7 @@ def build_potd_embed(potd, today):
     if stat == "TEAM_TOTAL":
         pick_label = f"{potd['player']} {direction} {line_val}"
     else:
-        last = potd["player"].split()[-1].upper()
+        last = potd["player"].split()[-1]
         pick_label = f"{last} {direction} {line_val} {stat}"
 
     ctx_verdict = potd.get("context_verdict", "")
@@ -3486,13 +3486,13 @@ def build_potd_embed(potd, today):
     ctx_line    = f"\n↳ ✅ {ctx_reason}" if ctx_verdict == "supports" and ctx_reason else ""
 
     description = (
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"━━━━━━━━━━━━━━━━\n"
         f"**{pick_label}**\n"
-        f"{potd['player']} · {game}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{odds_str} @ {book_str} · **{size:.2f}u**\n\n"
-        f"Edge: **{edge_str}** · Score: **{score_str}** · Tier: {tier}\n"
-        f"Projection: {proj:.1f} {stat.lower()}"
+        f"{potd['player']} | {game}\n"
+        f"━━━━━━━━━━━━━━━━\n\n"
+        f"{odds_str} @ {book_str} | **{size:.2f}u**\n\n"
+        f"Edge: **{edge_str}** | Score: **{score_str}**\n"
+        f"Proj: {proj:.1f} {stat.lower()}"
         f"{ctx_line}"
     )
 
@@ -3611,11 +3611,11 @@ def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
         leg_odds = fmt_odds(leg.get("real_odds", 0)) if leg.get("real_odds") else "N/A"
         cover_pct = f"{leg.get('alt_cover_prob', 0)*100:.0f}%"
         game = leg.get("game", "")
-        leg_lines.append(f"**Leg {i}** · {team} {sign}{spread:.1f} (alt) · {leg_odds} · {cover_pct} cover")
+        leg_lines.append(f"**Leg {i}** | {team} {sign}{spread:.1f} (alt) | {leg_odds} | {cover_pct} cover")
         leg_lines.append(f"╰ {game}")
 
-    leg_lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━")
-    leg_lines.append(f"**{parlay_odds}** combined · **{DAILY_LAY_SIZE:.2f}u**")
+    leg_lines.append(f"\n━━━━━━━━━━━━━━━━")
+    leg_lines.append(f"**{parlay_odds}** combined | **{DAILY_LAY_SIZE:.2f}u**")
 
     payload = {
         "username": "PicksByJonny",
@@ -3806,11 +3806,11 @@ def post_longshot(safest6_parlay, today, suppress_ping=False, save=True):
         dir_word  = "Over" if str(leg.get("direction", "")).lower() == "over" else "Under"
         wp_pct    = f"{leg.get('win_prob', 0)*100:.0f}%"
         leg_lines.append(
-            f"**Leg {i}** · {leg.get('player','')} {dir_word} {leg.get('line','')} "
-            f"{leg.get('stat','')} · {wp_pct} model"
+            f"**Leg {i}** | {leg.get('player','')} {dir_word} {leg.get('line','')} "
+            f"{leg.get('stat','')} | {wp_pct}"
         )
-    leg_lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━")
-    leg_lines.append(f"**{parlay_odds}** combined · **{LONGSHOT_SIZE:.2f}u** · {combined_prob*100:.1f}% model prob")
+    leg_lines.append(f"\n━━━━━━━━━━━━━━━━")
+    leg_lines.append(f"**{parlay_odds}** combined | **{LONGSHOT_SIZE:.2f}u** | {combined_prob*100:.1f}% model prob")
 
     payload = {
         "username": "PicksByJonny",
@@ -3927,14 +3927,14 @@ def post_card_announcement(premium, mode, today, suppress_ping=False):
     if potd_stat == "TEAM_TOTAL":
         potd_label = f"{potd.get('player', '')} {potd_dir} {potd_line}"
     else:
-        potd_last = potd.get("player", "").split()[-1].upper()
+        potd_last = potd.get("player", "").split()[-1]
         potd_label = f"{potd_last} {potd_dir} {potd_line} {potd_stat}"
     sport_counts = {}
     for p in premium[:5]:
         s = p.get("sport", "")
         if s:
             sport_counts[s] = sport_counts.get(s, 0) + 1
-    sport_str = " · ".join(f"{s} ({n})" for s, n in sorted(sport_counts.items())) if sport_counts else ""
+    sport_str = " | ".join(f"{s} ({n})" for s, n in sorted(sport_counts.items())) if sport_counts else ""
     total_u = sum(p.get("size", 0) for p in premium[:5])
     payload = {
         "username": "PicksByJonny",
@@ -3942,7 +3942,7 @@ def post_card_announcement(premium, mode, today, suppress_ping=False):
         "embeds": [{
             "title": "🔒 Premium card is live",
             "description": (
-                f"{sport_str} · {min(len(premium), 5)} picks · {total_u:.2f}u\n"
+                f"{sport_str} | {min(len(premium), 5)} picks | {total_u:.2f}u\n"
                 f"POTD: **{potd_label}**\n\n"
                 f"→ #premium-portfolio"
             ),
@@ -4081,8 +4081,8 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
         f"**{best['player']} ({team}) {dir_word} {best['line']} {best['stat']}**",
         f"{fmt_odds(best['odds'])} @ {display_book(best['book'])} — **{best.get('size',0):.2f}u**",
         "",
-        f"Win: **{fmt_pct(best['win_prob'])}** · Edge: **{fmt_pct(best['adj_edge'])}** · Score: **{best.get('pick_score',0):.1f}**",
-        f"Projection: {best['proj']:.2f} · Tier: {best['tier']} · {best['game']}",
+        f"Win: **{fmt_pct(best['win_prob'])}** | Edge: **{fmt_pct(best['adj_edge'])}** | Score: **{best.get('pick_score',0):.1f}**",
+        f"Proj: {best['proj']:.1f} | {best['game']}",
     ]
     payload = {
         "username": "PicksByJonny",
@@ -4326,15 +4326,15 @@ def build_killshot_embed(pick, today, suppress_ping=False):
         f"**{pick['player']} ({team}) {dir_word} {pick['line']} {pick['stat']}**",
         f"{fmt_odds(pick['odds'])} @ {display_book(pick['book'])} — **{pick.get('size', 0):.2f}u**",
         "",
-        f"Win: **{fmt_pct(pick['win_prob'])}** · Edge: **{fmt_pct(pick['adj_edge'])}** · Score: **{score:.1f}**",
-        f"Proj: {pick['proj']:.2f} · {pick['game']}",
+        f"Win: **{fmt_pct(pick['win_prob'])}** | Edge: **{fmt_pct(pick['adj_edge'])}** | Score: **{score:.1f}**",
+        f"Proj: {pick['proj']:.1f} | {pick['game']}",
     ])
 
     return {
         "username": "PicksByJonny",
         "content": content,
         "embeds": [{
-            "title":       "🎯 KILLSHOT",
+            "title":       "⚡ KILLSHOT",
             "description": desc,
             "color":       0xFF0000,
             "thumbnail":   {"url": BRAND_LOGO},

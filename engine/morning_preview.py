@@ -199,17 +199,15 @@ def build_preview_embed(date_str, today_picks, suppress_ping=False):
 
     n = len(today_picks)
 
-    # Tier breakdown
-    tier_counts = defaultdict(int)
-    for p in today_picks:
-        tier_counts[p.get("tier", "?")] += 1
-
     # Sport breakdown
     sport_counts = defaultdict(int)
     for p in today_picks:
         s = p.get("sport", "")
         if s:
             sport_counts[s] += 1
+
+    # KILLSHOT callout
+    ks_count = sum(1 for p in today_picks if p.get("tier") == "KILLSHOT")
 
     # Date formatting (cross-platform)
     try:
@@ -220,38 +218,25 @@ def build_preview_embed(date_str, today_picks, suppress_ping=False):
         date_display = date_str
         day_name     = "Today"
 
-    # Tier lines (respect display order)
-    tier_lines = []
-    shown = set()
-    for t in TIER_ORDER:
-        if t in tier_counts:
-            cnt = tier_counts[t]
-            tier_lines.append(f"**{t}:** {cnt} {'pick' if cnt == 1 else 'picks'}")
-            shown.add(t)
-    for t, cnt in sorted(tier_counts.items()):
-        if t not in shown:
-            tier_lines.append(f"**{t}:** {cnt} {'pick' if cnt == 1 else 'picks'}")
-
     # Sport lines
     sport_lines = []
     for s in sorted(sport_counts.keys()):
         emoji = SPORT_EMOJI.get(s, "🎯")
         cnt   = sport_counts[s]
-        sport_lines.append(f"{emoji} **{s}** · {cnt}")
+        sport_lines.append(f"{emoji} **{s}** | {cnt}")
 
     picks_noun = "pick" if n == 1 else "picks"
     total_line = f"**{n} {picks_noun}** locked in for {day_name}'s slate"
 
-    desc = "\n".join([
-        total_line,
-        "",
-        "\n".join(tier_lines),
-        "",
-        "\n".join(sport_lines),
-        "",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "Head to **#premium-portfolio** for the full card.",
-    ]).strip()
+    body_lines = [total_line, ""]
+    if ks_count:
+        ks_noun = "pick" if ks_count == 1 else "picks"
+        body_lines.append(f"⚡ **KILLSHOT** · {ks_count} {ks_noun} — check #killshot")
+        body_lines.append("")
+    body_lines += sport_lines
+    body_lines += ["", "━━━━━━━━━━━━━━━━", "Head to **#premium-portfolio** for the full card."]
+
+    desc = "\n".join(body_lines).strip()
 
     content = "" if suppress_ping else "@everyone"
 
@@ -259,7 +244,7 @@ def build_preview_embed(date_str, today_picks, suppress_ping=False):
         "username": "PicksByJonny",
         "content":  content,
         "embeds": [{
-            "title":       f"🎯 Tonight's Card Is Live",
+            "title":       f"🎯 Today's Card Is Live",
             "description": desc,
             "color":       0xFFD700,
             "thumbnail":   {"url": BRAND_LOGO},

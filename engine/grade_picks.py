@@ -1358,7 +1358,7 @@ def _recap_pick_line(p) -> str:
         return f"{emoji} {label} | {pl_tag}"
     else:
         # Prop: last name title case, no book tag
-        last  = p.get("player", "").split()[-1].title()
+        last  = p.get("player", "").split()[-1]
         dir_  = p.get("direction", "").upper()
         line_ = p.get("line", "")
         return f"{emoji} {last} {dir_} {line_} {stat} | {pl_tag}"
@@ -1514,7 +1514,7 @@ def build_monthly_embed(year, month, all_rows):
     worst = min(pick_pls, key=lambda x: x[1], default=None)
 
     def pick_label(p, ppl):
-        last = p.get("player", "").split()[-1].title()
+        last = p.get("player", "").split()[-1]
         dir_ = p.get("direction", "").upper()
         stat = p.get("stat", "")
         line = p.get("line", "")
