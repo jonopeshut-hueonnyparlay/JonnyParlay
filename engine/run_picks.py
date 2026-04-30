@@ -5339,10 +5339,17 @@ def main():
 
     # Log premium picks + KILLSHOT picks on first run of the day.
     # KILLSHOT picks carry tier=KILLSHOT and no card_slot; premium picks get slots 1-5.
+    # On subsequent runs (card already up), still log any new KILLSHOT picks that
+    # weren't present in the earlier run — dedup in log_picks prevents duplicates.
     today_str_log = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     _card_was_already_up = _card_already_posted_today(today_str_log)
     if not args.no_save and not _card_was_already_up:
         log_picks(premium + killshots, args.mode, premium_picks=premium)
+    elif not args.no_save and killshots:
+        # Card already posted but new KILLSHOTs may have emerged (e.g. updated CSVs).
+        # Log them separately — dedup key (date+player+stat+line+direction) prevents
+        # double-logging picks that were already recorded.
+        log_picks(killshots, args.mode, premium_picks=[])
 
     # Safest 5
     safest5 = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)[:5] if qualified else []
@@ -5593,6 +5600,11 @@ def main():
                 print("\n  [Discord] Card already posted today -- skipping premium card, POTD, daily lay.")
             print("  [Discord] Running bonus drop check only...")
             post_extras_to_discord(qualified, save=_save)
+            # Still attempt KILLSHOT posts — discord guard key prevents double-posting.
+            # Covers the case where updated CSVs produce a new KILLSHOT after the card
+            # was already posted (e.g. better projection data downloaded mid-afternoon).
+            if not _bonus_only:
+                post_killshots_to_discord(killshots, today, today_str, suppress_ping=suppress_ping)
             if _repost_daily_lay:
                 print("  [Discord] --repost-daily-lay: force-posting daily lay...")
                 post_daily_lay(alt_spread_parlay, today_str, suppress_ping=True, save=_save)
