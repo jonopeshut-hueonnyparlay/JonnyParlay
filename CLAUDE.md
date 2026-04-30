@@ -1,14 +1,13 @@
 # Memory
 
 ## Audit 2026-04-28 — Status
-Full audit doc: `AUDIT_2026-04-28.md` at repo root. **52 findings: 3 CRIT / 11 HIGH / 14 MED / 20 LOW / 4 CLEAN.**
+Full audit doc: `docs/audits/AUDIT_2026-04-28.md`. **52 findings: 3 CRIT / 11 HIGH / 14 MED / 20 LOW / 4 CLEAN.**
 
-**All CRIT + HIGH items closed (Apr 28–29 2026).** Branch: `audit-2026-04-28-fixes` pushed to GitHub.
+**All CRIT + HIGH items closed (Apr 28–29 2026).** Branch: `audit-2026-04-28-fixes` merged to main.
 
-**MED — closed:** M1 (mlb schema), M2 (csv_writer TZ), M3 (KILLSHOT substring), M5 (push-leg drop), M6 (empty CSV abort), M8 (run lock), M9 (paths.py sweep), M12 (stdout utf-8).
+**MED — all closed:** M1 (mlb schema), M2 (csv_writer TZ), M3 (KILLSHOT substring), M5 (push-leg drop), M6 (empty CSV abort), M8 (run lock), M9 (paths.py sweep), M12 (stdout utf-8).
 
-**Remaining backlog:**
-- L items — low priority, see `AUDIT_2026-04-28.md`
+**LOW — all closed Apr 30 2026:** L1 (tests/ dir), L2 (docs/audits/), L3 (marketing/ untracked), L5 (fuse artifacts — auto-clear), L6 (backtest logs — never tracked), L7 (pre-commit hook), L9 (REB dropped from KILLSHOT_STAT_ALLOW), L10 (is_decimal_leak — already invoked), L11 (SIGMA fallthrough warning), L12 (unit cap docs), L13 ($PSScriptRoot in setup_clv_task.ps1), L14 (legs column docs), L15 (MBP terminology note), L16 (root shims — eliminate copy-sync drift), L17 (NHL sizing docs), L18 (conftest.py), L19 (streak docs), L20 (discord corruption test). **Audit fully closed.**
 
 ## Me
 Jono (jonopeshut@gmail.com). Sports bettor, DFS player, Discord community operator. Runs picks as a trading business — analytical, sharp, luxury brand.
@@ -23,7 +22,7 @@ Discord bot display name: **PicksByJonny**
 |------|------|
 | **JonnyParlay** | Python betting engine — run_picks.py + grade_picks.py. Runs on Windows at `C:\Users\jono4\Documents\JonnyParlay\` |
 | **Discord Overhaul** | Full server rebuild — **done**. Phase 1 design + Phase 2 manual build both shipped. |
-| **KILLSHOT** | Premium tier (v2, Apr 21 2026). Auto-qualifies only when ALL pass: `tier=T1` strict, `pick_score≥90`, `win_prob≥0.65`, `odds ∈ [-200, +110]`, `stat ∈ {PTS,REB,AST,SOG,3PM}`. Sizing: 3u default, 4u iff `win_prob≥0.70 AND edge≥0.06` (no 5u). Weekly cap: **2**. Manual override (`--killshot NAME`) bypasses gate but still counts toward cap + requires `score≥75`. Posts to #killshot with @everyone. |
+| **KILLSHOT** | Premium tier (v2, Apr 21 2026). Auto-qualifies only when ALL pass: `tier=T1` strict, `pick_score≥90`, `win_prob≥0.65`, `odds ∈ [-200, +110]`, `stat ∈ {PTS,AST,SOG,3PM}`. Sizing: 3u default, 4u iff `win_prob≥0.70 AND edge≥0.06` (no 5u). Weekly cap: **2**. Manual override (`--killshot NAME`) bypasses gate but still counts toward cap + requires `score≥75`. Posts to #killshot with @everyone. |
 | **KairosEdge** | Halftime trade system — buying trailing team YES in full-game winner market. Tracked separately from props. |
 | **Custom Projection Engine** | In-flight replacement for SaberSim as the CSV input to `run_picks.py`. **Code lives in this repo** (engine/nba_projector.py + projections_db.py + injury_parser.py + csv_writer.py + backtest_*.py = ~159 KB; data/projections.db = 14.8 MB SQLite). Committed to git (C1 closed Apr 28). Zero production-path imports — verified isolated. Output CSV must match SaberSim schema exactly. SaberSim stays live until custom CLV ≥ SaberSim CLV over 100+ picks (no comparison harness wired yet). Full spec: `memory/projects/custom-projection-engine.md`. |
 
@@ -31,7 +30,7 @@ Discord bot display name: **PicksByJonny**
 
 | File | Purpose |
 |------|---------|
-| `engine/run_picks.py` | Main betting engine (large — ~5k+ lines and growing). Source of truth — always sync to root after edits. |
+| `engine/run_picks.py` | Main betting engine (large — ~5k+ lines and growing). **Source of truth — edit engine/ only. Root entry points are shims (L16, Apr 30 2026) — no sync step needed.** |
 | `engine/grade_picks.py` | Auto-grades pick_log.csv results, posts Discord recap + results graphic. Monthly summary auto-fires on 1st of month. |
 | `engine/capture_clv.py` | CLV daemon — polls every 2 min, captures closing odds in T-30 to T+3 window per game. Writes `closing_odds` + `clv` to pick_log. Scheduled via Windows Task Scheduler at 10am daily. Single-instance guard via filelock. Ghost-game checkpoint integrity check on startup. |
 | `engine/clv_report.py` | CLI report: `python clv_report.py [--days N] [--sport X] [--tier Y] [--shadow]` |
@@ -42,11 +41,11 @@ Discord bot display name: **PicksByJonny**
 | `data/pick_log.csv` | Model-generated ledger (primary / bonus / daily_lay / sgp / longshot). Starts Apr 14 2026. **28-column** header (schema_version=3, last col is `legs` JSON for parlays). |
 | `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 28-column schema. Graded alongside main log but never posted to Discord recap. Excluded from CLV daemon. |
 | `data/pick_log_mlb.csv` | Shadow log for MLB (still in SHADOW_SPORTS). Include in analyze with --shadow flag. |
-| `sgp_builder.py` | Same-Game Parlay builder. Runs after every pick run. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
+| `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. Same-Game Parlay builder. Runs after every pick run. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
 | `start_clv_daemon.bat` | Launcher for CLV daemon — called by Task Scheduler. Requires `PYTHONUNBUFFERED=1` + `python -u` (S4U logon). **Must contain ASCII only** — non-ASCII chars (em-dash, box-drawing, ×) cause cmd.exe to crash with exit code 255. |
 | `setup_clv_task.ps1` | One-shot PowerShell script that registers the CLV daemon scheduled task. S4U logon + WakeToRun. Re-run as admin to reset. |
 | `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. Template for future manual webhooks. |
-| `test_context.py` | Manual test harness for context system — run on Windows to test `--context` flag behaviour. |
+| `tests/test_context.py` | Manual test harness for context system — run on Windows to test `--context` flag behaviour. |
 
 ## Discord Structure (Target)
 ```
@@ -66,7 +65,7 @@ ARCHIVE: (collapsed)
 | VAKE | Bankroll sizing system (proprietary) |
 | Pick Score | Model ranking score for each pick |
 | POTD | Pick of the Day — standalone embed, posted after premium card |
-| KILLSHOT | Highest-conviction tier. v2 gate (Apr 21 2026): tier=T1 strict, score≥90, win_prob≥0.65, odds ∈ [-200,+110], stat ∈ {PTS,REB,AST,SOG,3PM}. Sizing: 3u default, 4u iff wp≥0.70 AND edge≥0.06. Weekly cap: 2. @everyone ping. |
+| KILLSHOT | Highest-conviction tier. v2 gate (Apr 21 2026): tier=T1 strict, score≥90, win_prob≥0.65, odds ∈ [-200,+110], stat ∈ {PTS,AST,SOG,3PM} (REB dropped L9). Sizing: 3u default, 4u iff wp≥0.70 AND edge≥0.06. Weekly cap: 2. @everyone ping. |
 | Premium | Top 5 picks from the model each day |
 | Bonus Drop | Single highest-scoring NEW pick per run (max 5/day) |
 | Daily Lay | Alt spread parlay — 3-leg (min 2), model-identified mispriced lines. **Max combined odds: +100**. Per-leg gates: `edge≥0.025`, `cover_prob≥0.58`. `MIN_DAILY_LAY_PROB=0.47`. Kelly-derived sizing: 0.25–0.75u via `size_daily_lay()`. Redesigned Apr 28 2026. |
@@ -92,7 +91,7 @@ ARCHIVE: (collapsed)
 ## Audit Status
 - **Closed Apr 21 2026 — 78/78 items declared resolved.** Section 40 (schema-version fail-fast via sidecar) + Section 41 (print → logging via `engine/engine_logger.py`) were the final two items. Regression suite: 756 passed, 2 skipped.
 - **Apr 28 2026 — Parlay sharpness overhaul:** SGP redesigned 6→3-4 legs (+200–450), daily lay per-leg gates + Kelly sizing, longshot per-game cap of 2. All committed. engine/sgp_builder.py synced (H1 closed).
-- **Audit 2026-04-28 — 52 findings, all CRIT + HIGH closed Apr 28–29.** Most MED closed. Remaining: M9 (paths.py sweep) + LOW items. See `AUDIT_2026-04-28.md`.
+- **Audit 2026-04-28 — 52 findings, ALL items closed Apr 28–30 2026.** CRIT+HIGH closed Apr 28–29; all MED + all LOW closed Apr 29–30. See `docs/audits/AUDIT_2026-04-28.md`.
 
 ## pick_log.csv Schema (current — schema_version 3, 28 columns)
 `date, run_time, run_type, sport, player, team, stat, line, direction, proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode, result, closing_odds, clv, card_slot, is_home, context_verdict, context_reason, context_score, legs`
@@ -104,6 +103,11 @@ ARCHIVE: (collapsed)
 - `clv`: closing_implied_prob − your_implied_prob (positive = beat the close); filled by capture_clv.py
 - `context_verdict`: supports | neutral | conflicts | skipped | disabled — blank on normal runs (context disabled by default)
 - `legs`: JSON array for parlay rows. **SGP populates ✓** | longshot populates ✓ | **daily_lay populates ✓** (H9 closed Apr 28 — `_daily_lay_legs_json()` added; grader reads JSON-first with game-string fallback for 9 legacy rows). primary/bonus/manual leave it blank. pick_log_mlb.csv 282 short rows normalized to 28 cols (M1 closed Apr 29).
+
+## Sizing Caps (L12/L17)
+- **Daily total cap: 12u** (`G12` check in run_picks.py) — hard ceiling across all run_types per session.
+- **Sport unit caps:** NBA = 8.0u max per pick | NHL = 5.0u max per pick (`SPORT_UNIT_CAP` dict).
+- **NHL SOG stat cap:** max 6 picks per run (`STAT_CAP = {"SOG": 6, ...}`; default cap = 2 for other stats).
 
 ## Context Sanity System
 
@@ -156,7 +160,8 @@ If the engine runs on Windows and writes to pick_log.csv, do NOT use the Write t
 
 ## Preferences
 - Responses: terse, direct. No unnecessary summaries.
-- Code: edit `engine/run_picks.py` (source of truth). Always sync to root after edits (`copy engine\run_picks.py run_picks.py` on Windows). Same for grade_picks.py, results_graphic.py. Sync rule restored (H1+H2 closed Apr 28). Production loads root copies — verify via import resolution before editing. Cowork mount = `/sessions/.../mnt/JonnyParlay/`. Windows path = `C:\Users\jono4\Documents\JonnyParlay\`. **Cowork bash sync is unreliable** — use PowerShell `copy` + `git push` for all file syncs; bash `cp` can truncate files if the stream closes mid-write. mbp/ folder is RETIRED (but "MBP" terminology lives in run_picks.py print + R12 docstring + Master_Betting_Prompt_v9_4.md doc).
+- Code: edit `engine/run_picks.py` (source of truth). **No sync step needed** — root entry points are 5-line shims (L16, Apr 30 2026) that delegate to engine/ via `runpy.run_module`. Cowork mount = `/sessions/.../mnt/JonnyParlay/`. Windows path = `C:\Users\jono4\Documents\JonnyParlay\`. **Cowork bash sync is unreliable** — use `git push` for all changes; bash `cp` can truncate files if the stream closes mid-write. "MBP" terminology (Master Betting Prompt) lives in run_picks.py header/docstrings + `Master_Betting_Prompt_v9_4.md`; mbp/ folder is RETIRED but the term is preserved in code.
+- Manual picks are excluded from pick streaks. `compute_pick_streak()` uses `MODEL_RUN_TYPES = {"primary","bonus","daily_lay","longshot","sgp"}` — manual picks never count toward streak.
 - Premium tier stays at 5 picks — do not change.
 - Discord recap shows model picks only (primary/bonus/daily_lay from main log). Manual picks never appear in Discord. Shadow sports (MLB) excluded from all Discord output.
 - Recap embed W-L structure (Apr 28 2026): **Props** (primary+bonus, excl. KILLSHOT) · **⚡ KILLSHOT** (separate) · **Parlays** (daily_lay+sgp+longshot). Week/month footer shows all three independently. Constants: `PROP_RUN_TYPES = {"primary","bonus"}`, `PARLAY_RUN_TYPES = {"daily_lay","sgp","longshot"}` in grade_picks.py.
