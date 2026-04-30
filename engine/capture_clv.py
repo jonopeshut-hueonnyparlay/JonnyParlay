@@ -85,7 +85,12 @@ from io_utils import atomic_write_json  # noqa: E402
 from engine_logger import get_logger  # noqa: E402
 
 _LOG_PATH = str(Path(__file__).resolve().parent.parent / "data" / "clv_daemon.log")
-logger = get_logger("capture_clv", log_path=_LOG_PATH)
+try:
+    logger = get_logger("capture_clv", log_path=_LOG_PATH)
+except PermissionError:
+    # Windows file-locking: another daemon instance has the log open.
+    # Fall back to stderr-only — the lock check in run() will exit cleanly.
+    logger = get_logger("capture_clv")
 
 # ── Constants (mirrors run_picks.py) ──────────────────────────────────────────
 
