@@ -5,10 +5,9 @@ Full audit doc: `AUDIT_2026-04-28.md` at repo root. **52 findings: 3 CRIT / 11 H
 
 **All CRIT + HIGH items closed (Apr 28–29 2026).** Branch: `audit-2026-04-28-fixes` pushed to GitHub.
 
-**MED — closed:** M1 (mlb schema), M2 (csv_writer TZ), M3 (KILLSHOT substring), M5 (push-leg drop), M6 (empty CSV abort), M8 (run lock), M12 (stdout utf-8).
+**MED — closed:** M1 (mlb schema), M2 (csv_writer TZ), M3 (KILLSHOT substring), M5 (push-leg drop), M6 (empty CSV abort), M8 (run lock), M9 (paths.py sweep), M12 (stdout utf-8).
 
 **Remaining backlog:**
-- M9 — paths.py adoption sweep (~87% of modules still hardcode `~/Documents/JonnyParlay/`)
 - L items — low priority, see `AUDIT_2026-04-28.md`
 
 ## Me
@@ -125,14 +124,14 @@ Requires `anthropic` package + `ANTHROPIC_API_KEY` env var on Windows.
 Still in **SHADOW_SPORTS** — picks go to `pick_log_mlb.csv`, not posted to Discord. Sizing bug fixed (Apr 19 2026) — shadow picks now get VAKE base sizing. Go-live = Jono's call.
 
 ## Running grade_picks.py in Cowork
-Preferred (audit M-26, **only ~13% adopted** — `clv_report`, `csv_writer`, `grade_picks`, `projections_db` import paths.py; `run_picks`, `capture_clv`, `analyze_picks`, `morning_preview`, `discord_guard`, `results_graphic`, etc. still hardcode `~/Documents/JonnyParlay/`): set `JONNYPARLAY_ROOT` to the repo root. Modules that import `engine/paths.py` honor this env var.
+M9 closed Apr 29 2026 — all engine modules now use `paths.py`. Set `JONNYPARLAY_ROOT` to the repo root and every module resolves paths correctly:
 ```
 export JONNYPARLAY_ROOT=/sessions/.../mnt/JonnyParlay
 python engine/grade_picks.py --date YYYY-MM-DD [--repost] [--dry-run]
 ```
 Windows deployments leave the env var unset — `paths.py` falls back to `~/Documents/JonnyParlay` so existing behavior is unchanged.
 
-Legacy fallback (still works for scripts that haven't been migrated): symlink `~/Documents/JonnyParlay/data` → project data dir.
+Migrated: `clv_report`, `csv_writer`, `grade_picks`, `projections_db`, `discord_guard`, `morning_preview`, `weekly_recap`, `analyze_picks`, `results_graphic`, `run_picks`. Remaining hardcoders: `capture_clv` (CLV daemon — low priority, runs on Windows only).
 
 ## ⚠ Cowork Write Caution
 If the engine runs on Windows and writes to pick_log.csv, do NOT use the Write tool to rewrite pick_log.csv — it will clobber engine-written rows. Use Edit/append only.
