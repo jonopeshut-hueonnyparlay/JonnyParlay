@@ -1,29 +1,15 @@
 # Memory
 
-## ⚠ Audit 2026-04-28 — Outstanding Issues
+## Audit 2026-04-28 — Status
 Full audit doc: `AUDIT_2026-04-28.md` at repo root. **52 findings: 3 CRIT / 11 HIGH / 14 MED / 20 LOW / 4 CLEAN.**
 
-**CRIT (must fix this week):**
-- **C1** ~159 KB of CPE code (nba_projector, projections_db, injury_parser, backtest_*, csv_writer) + Apr 28 parlay overhaul + this CLAUDE.md draft are **uncommitted to git**. Single SSD failure = total work loss. Verify `git remote -v` exists, then commit + push.
-- **C2** `engine/discord_guard.py:_load_unlocked` returns `{}` on `JSONDecodeError` — every guard key resets, full daily run reposts to Discord with @everyone. The "regex rebuild from raw bytes" fix this CLAUDE.md claims (line 143) **does not exist in the codebase**.
-- **C3** TOCTOU race — `run_picks.py` + `grade_picks.py` + `weekly_recap.py` use `_discord_already_posted()` then `_discord_mark_posted()` (two separate lock acquisitions). The atomic `claim_post()` primitive exists in `discord_guard.py` and is used correctly in `morning_preview.py` — just not propagated.
+**All CRIT + HIGH items closed (Apr 28–29 2026).** Branch: `audit-2026-04-28-fixes` pushed to GitHub.
 
-**HIGH highlights:**
-- **H1** `engine/sgp_builder.py` has the OLD 6-leg design; root has the Apr 28 redesign. Production loads root so it works, but engine→root sync rule is violated. Run `cp sgp_builder.py engine/sgp_builder.py`.
-- **H2** Root `secrets_config.py` is **truncated** mid-function (ends with `    f`). Run `cp engine/secrets_config.py secrets_config.py`.
-- **H3** Discord guards never marked when `suppress_ping=True` — empirically confirmed: 9 daily_lay rows in pick_log, 0 daily_lay keys in `discord_posted.json`. Re-runs would double-post.
-- **H4** `_killshots_this_week` swallows all exceptions and returns 0 — corrupt pick_log → engine posts full weekly cap on top of existing KILLSHOTs.
-- **H5/H6** `webhook_fallback.notify_fallback` has zero call sites (audit H-7 close was fictitious) AND `DISCORD_FALLBACK_WEBHOOK` is missing from `.env`. Failed Discord posts are silent in production.
-- **H7** S-41 print→logging migration is **partial** (132 print() in run_picks.py, ~10 are warning/error paths that should be logger).
-- **H8** `compute_pl` includes VOIDed picks in ROI risked denominator — math drift over time.
-- **H9** `grade_daily_lay` parses `game` field as legs string (fragile) because `_log_daily_lay` doesn't populate the canonical `legs` JSON column like SGP/longshot do.
-- **H11** Apr 28 SGP/Daily Lay/Longshot redesigns have **zero test coverage** (KILLSHOT v2 has tests; this work doesn't).
+**MED — closed:** M1 (mlb schema), M2 (csv_writer TZ), M3 (KILLSHOT substring), M5 (push-leg drop), M6 (empty CSV abort), M8 (run lock), M12 (stdout utf-8).
 
-**Recommended order of operations:**
-1. Day 1 (~60 min): C1 (commit + push) → H2 (fix root secrets_config) → H1 (sync sgp_builder)
-2. Day 2 (3-4 hr): C2 (regex rebuild) + C3 (claim_post sweep) + tests
-3. Day 3-4: H3-H11 + CLAUDE.md refresh (ironic — but several inline statements below are inaccurate; see audit doc)
-4. Sprint backlog: M1-M14 + L items
+**Remaining backlog:**
+- M9 — paths.py adoption sweep (~87% of modules still hardcode `~/Documents/JonnyParlay/`)
+- L items — low priority, see `AUDIT_2026-04-28.md`
 
 ## Me
 Jono (jonopeshut@gmail.com). Sports bettor, DFS player, Discord community operator. Runs picks as a trading business — analytical, sharp, luxury brand.
@@ -40,7 +26,7 @@ Discord bot display name: **PicksByJonny**
 | **Discord Overhaul** | Full server rebuild — **done**. Phase 1 design + Phase 2 manual build both shipped. |
 | **KILLSHOT** | Premium tier (v2, Apr 21 2026). Auto-qualifies only when ALL pass: `tier=T1` strict, `pick_score≥90`, `win_prob≥0.65`, `odds ∈ [-200, +110]`, `stat ∈ {PTS,REB,AST,SOG,3PM}`. Sizing: 3u default, 4u iff `win_prob≥0.70 AND edge≥0.06` (no 5u). Weekly cap: **2**. Manual override (`--killshot NAME`) bypasses gate but still counts toward cap + requires `score≥75`. Posts to #killshot with @everyone. |
 | **KairosEdge** | Halftime trade system — buying trailing team YES in full-game winner market. Tracked separately from props. |
-| **Custom Projection Engine** | In-flight replacement for SaberSim as the CSV input to `run_picks.py`. **Code lives in this repo** (engine/nba_projector.py + projections_db.py + injury_parser.py + csv_writer.py + backtest_*.py = ~159 KB; data/projections.db = 14.8 MB SQLite). All currently uncommitted to git (audit C1). Zero production-path imports — verified isolated. Output CSV must match SaberSim schema exactly. SaberSim stays live until custom CLV ≥ SaberSim CLV over 100+ picks (no comparison harness wired yet — audit F9.5). Full spec: `memory/projects/custom-projection-engine.md`. |
+| **Custom Projection Engine** | In-flight replacement for SaberSim as the CSV input to `run_picks.py`. **Code lives in this repo** (engine/nba_projector.py + projections_db.py + injury_parser.py + csv_writer.py + backtest_*.py = ~159 KB; data/projections.db = 14.8 MB SQLite). Committed to git (C1 closed Apr 28). Zero production-path imports — verified isolated. Output CSV must match SaberSim schema exactly. SaberSim stays live until custom CLV ≥ SaberSim CLV over 100+ picks (no comparison harness wired yet). Full spec: `memory/projects/custom-projection-engine.md`. |
 
 ## Key Files
 
@@ -105,9 +91,9 @@ ARCHIVE: (collapsed)
 - Audit C-1 closed Apr 19 2026 — `filelock` is hard-required everywhere. If it's missing, the engine fails fast at import with a clear install hint.
 
 ## Audit Status
-- **Closed Apr 21 2026 — 78/78 items declared resolved.** Section 40 (schema-version fail-fast via sidecar) + Section 41 (print → logging via `engine/engine_logger.py`) were the final two items. Regression suite: 756 passed, 2 skipped (count not re-verified in Apr 28 audit).
-- **Apr 28 2026 — Parlay sharpness overhaul:** SGP redesigned 6→3-4 legs (+200–450), daily lay per-leg gates + Kelly sizing, longshot per-game cap of 2. **Lives in root copies; engine/sgp_builder.py is STALE with the OLD design (audit H1). Not committed to git.**
-- **Audit 2026-04-28 (this run) — 52 new findings, 3 CRIT.** S-41 actually only ~92% closed (132 print() in run_picks.py, ~10 are warnings/errors that should be logger). M-26 paths.py adoption only ~13% (most modules still hardcode `~/Documents/JonnyParlay/`). H-7 webhook_fallback module exists but is never invoked. See `AUDIT_2026-04-28.md` for full punch list.
+- **Closed Apr 21 2026 — 78/78 items declared resolved.** Section 40 (schema-version fail-fast via sidecar) + Section 41 (print → logging via `engine/engine_logger.py`) were the final two items. Regression suite: 756 passed, 2 skipped.
+- **Apr 28 2026 — Parlay sharpness overhaul:** SGP redesigned 6→3-4 legs (+200–450), daily lay per-leg gates + Kelly sizing, longshot per-game cap of 2. All committed. engine/sgp_builder.py synced (H1 closed).
+- **Audit 2026-04-28 — 52 findings, all CRIT + HIGH closed Apr 28–29.** Most MED closed. Remaining: M9 (paths.py sweep) + LOW items. See `AUDIT_2026-04-28.md`.
 
 ## pick_log.csv Schema (current — schema_version 3, 28 columns)
 `date, run_time, run_type, sport, player, team, stat, line, direction, proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode, result, closing_odds, clv, card_slot, is_home, context_verdict, context_reason, context_score, legs`
@@ -118,7 +104,7 @@ ARCHIVE: (collapsed)
 - `is_home`: True/False for SPREAD/ML/F5/TEAM_TOTAL picks; blank for props (canonical: `normalize_is_home`)
 - `clv`: closing_implied_prob − your_implied_prob (positive = beat the close); filled by capture_clv.py
 - `context_verdict`: supports | neutral | conflicts | skipped | disabled — blank on normal runs (context disabled by default)
-- `legs`: JSON array for parlay rows. **SGP populates ✓** | longshot populates ✓ (no rows yet) | **daily_lay does NOT populate** — puts string descriptor in `game` field instead (audit F2.6/F4.5 — pending fix). primary/bonus/manual leave it blank. NOTE: pick_log_mlb.csv has 282 rows (Apr 27-28) missing the trailing `legs` comma because positional writerow writes 27 fields and shadow CLV is off so the rewrite-normalization sweep never runs (audit F3.5).
+- `legs`: JSON array for parlay rows. **SGP populates ✓** | longshot populates ✓ | **daily_lay populates ✓** (H9 closed Apr 28 — `_daily_lay_legs_json()` added; grader reads JSON-first with game-string fallback for 9 legacy rows). primary/bonus/manual leave it blank. pick_log_mlb.csv 282 short rows normalized to 28 cols (M1 closed Apr 29).
 
 ## Context Sanity System
 
@@ -167,11 +153,11 @@ If the engine runs on Windows and writes to pick_log.csv, do NOT use the Write t
 - Graceful shutdown (audit H-10, closed Apr 20 2026): SIGTERM / SIGINT / SIGBREAK all trigger a clean exit at the next poll boundary — final checkpoint saved, daemon lock released. Second signal hard-exits.
 - `start_clv_daemon.bat` must keep `PYTHONUNBUFFERED=1` + `python -u` — required for S4U logon.
 - `start_clv_daemon.bat` must be ASCII-only — fixed Apr 28 2026 (non-ASCII chars were causing exit code 255 crash before Python started).
-- `data/discord_posted.json` can get truncated/corrupted on Windows mount. **CLAIMED FIX APR 28 NOT IMPLEMENTED (audit C2):** `_load_unlocked` in `engine/discord_guard.py:99-104` silently returns `{}` on `JSONDecodeError`. Every guard key resets, full daily run reposts to Discord with @everyone. The "regex scan of raw bytes" rebuild path documented here doesn't exist anywhere in the codebase. Manual recovery today: stop engine, restore from backup, restart.
+- `data/discord_posted.json` can get truncated/corrupted on Windows mount. **C2 FIXED Apr 28:** `_load_unlocked` in `engine/discord_guard.py` now attempts regex rebuild from raw bytes on `JSONDecodeError` before falling back to `{}`. Partial corruption is recovered automatically; total corruption (no extractable keys) logs a warning and resets safely.
 
 ## Preferences
 - Responses: terse, direct. No unnecessary summaries.
-- Code: edit `engine/run_picks.py` (source of truth). Always sync to root after edits (`cp engine/run_picks.py run_picks.py`). Same for grade_picks.py, results_graphic.py. **Sync rule is currently broken in BOTH directions** (audit H1+H2): root `secrets_config.py` is truncated, engine `sgp_builder.py` is stale. Production loads root copies — verify via import resolution before editing. Cowork mount = `/sessions/.../mnt/JonnyParlay/`. Windows path = `C:\Users\jono4\Documents\JonnyParlay\`. mbp/ folder is RETIRED (but "MBP" terminology lives in run_picks.py:5037 print + R12 docstring + Master_Betting_Prompt_v9_4.md doc).
+- Code: edit `engine/run_picks.py` (source of truth). Always sync to root after edits (`copy engine\run_picks.py run_picks.py` on Windows). Same for grade_picks.py, results_graphic.py. Sync rule restored (H1+H2 closed Apr 28). Production loads root copies — verify via import resolution before editing. Cowork mount = `/sessions/.../mnt/JonnyParlay/`. Windows path = `C:\Users\jono4\Documents\JonnyParlay\`. **Cowork bash sync is unreliable** — use PowerShell `copy` + `git push` for all file syncs; bash `cp` can truncate files if the stream closes mid-write. mbp/ folder is RETIRED (but "MBP" terminology lives in run_picks.py print + R12 docstring + Master_Betting_Prompt_v9_4.md doc).
 - Premium tier stays at 5 picks — do not change.
 - Discord recap shows model picks only (primary/bonus/daily_lay from main log). Manual picks never appear in Discord. Shadow sports (MLB) excluded from all Discord output.
 - Recap embed W-L structure (Apr 28 2026): **Props** (primary+bonus, excl. KILLSHOT) · **⚡ KILLSHOT** (separate) · **Parlays** (daily_lay+sgp+longshot). Week/month footer shows all three independently. Constants: `PROP_RUN_TYPES = {"primary","bonus"}`, `PARLAY_RUN_TYPES = {"daily_lay","sgp","longshot"}` in grade_picks.py.
