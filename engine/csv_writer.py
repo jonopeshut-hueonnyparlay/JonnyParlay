@@ -66,6 +66,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -591,7 +592,8 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
     )
 
-    target_date = args.date or datetime.now().strftime("%Y-%m-%d")
+    # M2: use ET-aware now() so date rolls at midnight Eastern, not UTC
+    target_date = args.date or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
     if not args.demo:
         logger.error(
