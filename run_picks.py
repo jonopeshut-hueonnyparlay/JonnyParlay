@@ -4978,6 +4978,19 @@ def main():
 
     args = parser.parse_args()
 
+    # M12: prevent emoji → UnicodeEncodeError crashes on Windows cmd.exe (cp1252)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+    # M8: prevent concurrent runs (double-post guard at the process level)
+    _run_lock_path = os.path.expanduser("~/Documents/JonnyParlay/data/run_picks.lock")
+    _run_lock = FileLock(_run_lock_path, timeout=0)
+    try:
+        _run_lock.acquire()
+    except _FileLockTimeout:
+        print("ERROR: another run_picks.py is already running. Aborting to prevent double-post.")
+        sys.exit(1)
+
     global _CONFIRM_MODE
     _CONFIRM_MODE = args.confirm
 
@@ -5585,22 +5598,4 @@ def main():
             from sgp_builder import run_sgp_builder
             _sgp_csv_strs = [str(p) for p in csv_paths]
             # --sgp-only forces a live post even if --no-discord was set
-            _sgp_only = getattr(args, 'sgp_only', False)
-            _sgp_dry  = (args.dry_run or args.no_discord) and not _sgp_only
-            _sgp_save = not args.no_save
-            print("\n  [SGP] Running SGP builder...")
-            run_sgp_builder(
-                _sgp_csv_strs,
-                dry_run=_sgp_dry,
-                confirm=_CONFIRM_MODE,
-                test=getattr(args, 'test', False),
-                save=_sgp_save,
-            )
-        except ImportError:
-            print('  [SGP] sgp_builder.py not found -- skipping.')
-
-    print("\n  Done. Let's eat.\n")
-
-
-if __name__ == "__main__":
-    main()
+            _sgp_only = getattr(args

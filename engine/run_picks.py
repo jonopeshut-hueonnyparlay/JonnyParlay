@@ -4978,6 +4978,19 @@ def main():
 
     args = parser.parse_args()
 
+    # M12: prevent emoji → UnicodeEncodeError crashes on Windows cmd.exe (cp1252)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+    # M8: prevent concurrent runs (double-post guard at the process level)
+    _run_lock_path = os.path.expanduser("~/Documents/JonnyParlay/data/run_picks.lock")
+    _run_lock = FileLock(_run_lock_path, timeout=0)
+    try:
+        _run_lock.acquire()
+    except _FileLockTimeout:
+        print("ERROR: another run_picks.py is already running. Aborting to prevent double-post.")
+        sys.exit(1)
+
     global _CONFIRM_MODE
     _CONFIRM_MODE = args.confirm
 

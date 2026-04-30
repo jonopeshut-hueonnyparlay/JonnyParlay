@@ -764,9 +764,15 @@ def grade_parlay_legs(row, all_player_stats, all_scores):
 
     if "L" in results:
         return "L"
-    if "P" in results:
-        return "P"   # pushing leg drops from parlay; whole bet treated as push
-    return "W"
+    # M5: push legs drop from parlay; re-evaluate remaining legs
+    # e.g. 3-leg parlay [W, P, W] → 2-leg effective parlay → W
+    #      3-leg parlay [P, P, P] → all dropped → P (stake returned)
+    remaining = [r for r in results if r != "P"]
+    if not remaining:
+        return "P"   # every leg pushed — full push, stake back
+    if "L" in remaining:
+        return "L"   # shouldn't be reachable but defensive
+    return "W"       # all non-pushed legs won
 
 
 def _find_linescore_innings(game_str, linescores):
@@ -2146,14 +2152,4 @@ Examples:
     # ── Grade main log (posts to Discord, includes manual rows in recap) ──
     merge_logs = [PICK_LOG_MANUAL_PATH] if use_default_paths else []
     _grade_one_log(main_log_path, args, is_shadow=False,
-                   recap_merge_logs=merge_logs,
-                   extra_dates=manual_dates)
-
-    # ── Grade shadow sport logs silently (no Discord post) ────
-    if not args.repost and use_default_paths:
-        for shadow_path in (PICK_LOG_MLB_PATH,):
-            _grade_one_log(shadow_path, args, is_shadow=True)
-
-
-if __name__ == "__main__":
-    main()
+            
