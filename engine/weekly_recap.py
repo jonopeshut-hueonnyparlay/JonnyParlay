@@ -384,7 +384,7 @@ def _format_clv_block(summary):
     total = summary["total"]
     miss  = summary["missing"]
 
-    header = "━━━━━━━━━━━━━━━━━━━━━━━━━"
+    header = "━━━━━━━━━━━━━━━━"
 
     if cap == 0:
         body = [
@@ -397,25 +397,25 @@ def _format_clv_block(summary):
     avg_str = f"{summary['avg_clv']:+.2f}pp"
     beat_str = f"{summary['beat_close']}/{cap} ({summary['beat_close_pct']:.0f}%)"
 
-    body = [f"📊 **CLV** ({BRAND_TAGLINE})"]
+    body = [f"📊 **CLV**"]
     if miss > 0:
         # Partial capture — mark it plainly so the averaged figure isn't
         # read as a full-week number.
         body.append(
-            f"⚠ Coverage: **{cap}/{total}** captured · "
+            f"⚠ Coverage: **{cap}/{total}** captured | "
             f"**{miss}** missing closing odds"
         )
     else:
         body.append(f"Coverage: {cap}/{total} captured")
 
-    body.append(f"Avg CLV: **{avg_str}** · Beat close: **{beat_str}**")
+    body.append(f"Avg CLV: **{avg_str}** | Beat close: **{beat_str}**")
 
     if summary.get("best"):
         best_p, best_v = summary["best"]
-        body.append(f"🔼 Best CLV: {_pick_short_label(best_p)} · {best_v:+.2f}pp")
+        body.append(f"🔼 Best CLV: {_pick_short_label(best_p)} | {best_v:+.2f}pp")
     if summary.get("worst") and summary["worst"] != summary.get("best"):
         worst_p, worst_v = summary["worst"]
-        body.append(f"🔽 Worst CLV: {_pick_short_label(worst_p)} · {worst_v:+.2f}pp")
+        body.append(f"🔽 Worst CLV: {_pick_short_label(worst_p)} | {worst_v:+.2f}pp")
 
     return "\n".join([header] + body)
 
@@ -454,27 +454,16 @@ def build_weekly_embed(mon_str, sun_str, week_picks, all_rows, suppress_ping=Fal
         emoji     = "✅" if dpl > 0 else ("❌" if dpl < 0 else "➖")
         dt        = datetime.strptime(d, "%Y-%m-%d")
         day_label = f"{dt.strftime('%a')} {dt.day}"
-        day_lines.append(f"{emoji} **{day_label}:** {dw}-{dl} · {dpl_str}")
+        day_lines.append(f"{emoji} **{day_label}:** {dw}-{dl} | {dpl_str}")
 
-    # Tier breakdown
-    tier_stats = defaultdict(lambda: [0, 0, 0.0])
-    for p in week_picks:
-        t = p.get("tier", "?"); res = p.get("result", "")
-        ppl = compute_pl(p.get("size", 0), p.get("odds", "-110"), res)
-        if res == "W":   tier_stats[t][0] += 1
-        elif res == "L": tier_stats[t][1] += 1
-        tier_stats[t][2] += ppl
-    tier_lines = []
-    for t in sorted(tier_stats.keys()):
-        tw, tl, tpl = tier_stats[t]
-        tier_lines.append(f"**{t}:** {tw}-{tl} · {('+' if tpl >= 0 else '')}{tpl:.1f}u")
+    # Tier breakdown removed from public embed — internal diagnostic only (analyze_picks.py)
 
     # Best / worst
     pick_pls = [(p, compute_pl(p.get("size",0), p.get("odds","-110"), p.get("result",""))) for p in week_picks]
     best  = max(pick_pls, key=lambda x: x[1], default=None)
     worst = min(pick_pls, key=lambda x: x[1], default=None)
-    best_line  = f"\n🏆 **Best:** {_pick_short_label(best[0])} · {best[1]:+.2f}u"   if best  else ""
-    worst_line = f"\n💀 **Worst:** {_pick_short_label(worst[0])} · {worst[1]:+.2f}u" if (worst and worst != best) else ""
+    best_line  = f"\n🏆 **Best:** {_pick_short_label(best[0])} | {best[1]:+.2f}u"   if best  else ""
+    worst_line = f"\n💀 **Worst:** {_pick_short_label(worst[0])} | {worst[1]:+.2f}u" if (worst and worst != best) else ""
 
     # Month running total
     dt = datetime.strptime(sun_str, "%Y-%m-%d")
@@ -497,19 +486,18 @@ def build_weekly_embed(mon_str, sun_str, week_picks, all_rows, suppress_ping=Fal
     content    = "" if suppress_ping else "@everyone"
 
     desc = "\n".join([
-        f"**{w}-{l}{('-' + str(pu) + 'P') if pu else ''} · {pl_str} · ROI {roi_str}**",
+        f"**{w}-{l} ({round(w/(w+l)*100) if w+l else 0}%) | {pl_str} | ROI {roi_str}**",
         "",
         "\n".join(day_lines),
         "",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "\n".join(tier_lines),
+        "━━━━━━━━━━━━━━━━",
         best_line + worst_line,
         "",
         clv_block,
         "",
-        f"**{MONTH_NAMES[dt.month]} so far:** {mw}-{ml} · {mpl_str}",
+        f"**{MONTH_NAMES[dt.month]} so far:** {mw}-{ml} | {mpl_str}",
         "",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "━━━━━━━━━━━━━━━━",
         footer_cta,
     ]).strip()
 
@@ -521,7 +509,7 @@ def build_weekly_embed(mon_str, sun_str, week_picks, all_rows, suppress_ping=Fal
             "description": desc,
             "color":       color,
             "thumbnail":   {"url": BRAND_LOGO},
-            "footer":      {"text": f"{BRAND_HANDLE} · {BRAND_TAGLINE} · {now_str}"},
+            "footer":      {"text": f"{BRAND_HANDLE} | {BRAND_TAGLINE} | {now_str}"},
         }]
     }
 
@@ -664,7 +652,7 @@ def post_weekly_recap(week_picks, mon_str, sun_str, all_rows, suppress_ping=Fals
     if _webhook_post_with_file(DISCORD_ANNOUNCE_WEBHOOK, payload, xlsx_buf, xlsx_name):
         w, l, _, pl, roi = daily_stats(week_picks)
         pl_str = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
-        print(f"  [Discord] ✅ Weekly recap posted — {w}W-{l}L · {pl_str} · week of {_fmt_week_label(mon_str, sun_str)}")
+        print(f"  [Discord] ✅ Weekly recap posted — {w}W-{l}L |{pl_str} |week of {_fmt_week_label(mon_str, sun_str)}")
         if not _HAS_SHARED_GUARD:
             _save_guard(guard)  # fallback: persist the pre-claimed guard
         return True
@@ -708,7 +696,7 @@ def main():
 
     w, l, pu, pl, roi = daily_stats(week_picks)
     pl_str = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
-    print(f"  {w}W-{l}L · {pl_str} · ROI {roi:+.1f}%  ({len(week_picks)} picks)")
+    print(f"  {w}W-{l}L |{pl_str} |ROI {roi:+.1f}%  ({len(week_picks)} picks)")
 
     posted = post_weekly_recap(
         week_picks, mon_str, sun_str, all_rows,

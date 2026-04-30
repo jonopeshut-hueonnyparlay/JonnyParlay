@@ -1338,7 +1338,7 @@ def _recap_pick_line(p) -> str:
     # Parlay / Daily Lay
     if stat in ("PARLAY", "DAILY_LAY") or p.get("run_type") == "daily_lay":
         game = p.get("game", p.get("player", ""))
-        return f"{emoji} {game}{book} · {pl_tag}"
+        return f"{emoji} {game}{book} | {pl_tag}"
 
     if stat in GAME_LINE_STATS:
         team  = p.get("player", p.get("team", ""))
@@ -1355,13 +1355,13 @@ def _recap_pick_line(p) -> str:
             label = f"{team_abbr} Team Total {dir_} {line_} {odds_}{book}"
         else:
             label = f"{team} {stat} {dir_} {line_} {odds_}{book}"
-        return f"{emoji} {label} · {pl_tag}"
+        return f"{emoji} {label} | {pl_tag}"
     else:
-        # Prop: last name only
-        last  = p.get("player", "").split()[-1].upper()
+        # Prop: last name title case, no book tag
+        last  = p.get("player", "").split()[-1].title()
         dir_  = p.get("direction", "").upper()
         line_ = p.get("line", "")
-        return f"{emoji} {last} {dir_} {line_} {stat}{book} · {pl_tag}"
+        return f"{emoji} {last} {dir_} {line_} {stat} | {pl_tag}"
 
 
 def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
@@ -1385,15 +1385,15 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
 
     # Props record (non-KILLSHOT primary/bonus)
     w, l, pu, pl, roi = daily_stats(reg_props)
-    pl_str  = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
-    roi_str = f"+{roi:.1f}%" if roi >= 0 else f"{roi:.1f}%"
-    record  = f"**Props: {w}-{l}{'-%dP' % pu if pu else ''} · {pl_str} · ROI {roi_str}**"
+    pl_str   = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
+    win_pct  = f"{round(w / (w + l) * 100)}%" if (w + l) > 0 else "—"
+    record   = f"**{w}-{l} ({win_pct}){'  · %dP' % pu if pu else ''} | {pl_str}**"
 
     # KILLSHOT record (if any today)
     if ks_picks:
         ks_w, ks_l, ks_pu, ks_pl, _ = daily_stats(ks_picks)
         ks_pl_str = f"+{ks_pl:.2f}u" if ks_pl >= 0 else f"{ks_pl:.2f}u"
-        ks_record_line = f"\n**⚡ KILLSHOT: {ks_w}-{ks_l} · {ks_pl_str}**"
+        ks_record_line = f"\n**⚡ KILLSHOT: {ks_w}-{ks_l} | {ks_pl_str}**"
     else:
         ks_record_line = ""
 
@@ -1411,7 +1411,18 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
         pick_streak_line = ""
 
     # ── Pick list ─────────────────────────────────────────────────────────────
-    pick_lines = [_recap_pick_line(p) for p in reg_props]
+    premium_picks = [p for p in reg_props if _rt(p) == "primary"]
+    bonus_picks   = [p for p in reg_props if _rt(p) == "bonus"]
+
+    pick_lines = []
+    if premium_picks:
+        pick_lines.append("**Premium**")
+        for p in premium_picks:
+            pick_lines.append(_recap_pick_line(p))
+    if bonus_picks:
+        pick_lines.append("\n**Bonus**")
+        for p in bonus_picks:
+            pick_lines.append(_recap_pick_line(p))
 
     if ks_picks:
         pick_lines.append("\n**⚡ KILLSHOT**")
@@ -1433,10 +1444,10 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
 
     ww, wl, _, wpl, _ = daily_stats(wk_reg)
     wpl_str = f"+{wpl:.1f}u" if wpl >= 0 else f"{wpl:.1f}u"
-    week_str = f"Props {ww}-{wl} · {wpl_str}"
+    week_str = f"Picks {ww}-{wl} | {wpl_str}"
     if wk_ks:
         ks_ww, ks_wl, _, ks_wpl, _ = daily_stats(wk_ks)
-        week_str += f" · ⚡ {ks_ww}-{ks_wl} · {('+' if ks_wpl >= 0 else '')}{ks_wpl:.1f}u"
+        week_str += f" | ⚡ KILLSHOT {ks_ww}-{ks_wl} | {('+' if ks_wpl >= 0 else '')}{ks_wpl:.1f}u"
 
     # ── Month breakdown ───────────────────────────────────────────────────────
     dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -1453,10 +1464,10 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
         mo_ks  = [p for p in all_month if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
 
         mw, ml, _, mpl, _ = daily_stats(mo_reg)
-        mo_str = f"Props {mw}-{ml} · {('+' if mpl >= 0 else '')}{mpl:.1f}u"
+        mo_str = f"Picks {mw}-{ml} | {('+' if mpl >= 0 else '')}{mpl:.1f}u"
         if mo_ks:
             ks_mw, ks_ml, _, ks_mpl, _ = daily_stats(mo_ks)
-            mo_str += f" · ⚡ {ks_mw}-{ks_ml} · {('+' if ks_mpl >= 0 else '')}{ks_mpl:.1f}u"
+            mo_str += f" | ⚡ KILLSHOT {ks_mw}-{ks_ml} | {('+' if ks_mpl >= 0 else '')}{ks_mpl:.1f}u"
         month_line = f"**{dt.strftime('%B')}:** {mo_str}\n"
 
     color = 0x2ECC71 if pl >= 0 else 0xFF4444
@@ -1464,7 +1475,7 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     desc = (
         f"{record}{ks_record_line}{streak_line}{pick_streak_line}\n\n"
         + "\n".join(pick_lines)
-        + f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + f"\n\n━━━━━━━━━━━━━━━━\n"
         + f"**This week:** {week_str}\n"
         + month_line
     ).rstrip()
@@ -1479,7 +1490,7 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
             "description": desc,
             "color": color,
             "thumbnail": {"url": BRAND_LOGO},
-            "footer": {"text": f"{BRAND_TAGLINE} · full transparency · {now_str}"}
+            "footer": {"text": f"{BRAND_TAGLINE} | full transparency | {now_str}"}
         }]
     }
 
@@ -1495,21 +1506,7 @@ def build_monthly_embed(year, month, all_rows):
     pl_str  = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
     roi_str = f"+{roi:.1f}%" if roi >= 0 else f"{roi:.1f}%"
 
-    # Tier breakdown
-    tier_stats = defaultdict(lambda: [0, 0, 0.0])  # tier → [w, l, pl]
-    for p in picks:
-        t   = p.get("tier", "T?")
-        res = p.get("result", "")
-        pick_pl = compute_pl(p.get("size", 0), p.get("odds", "-110"), res)
-        if res == "W": tier_stats[t][0] += 1
-        elif res == "L": tier_stats[t][1] += 1
-        tier_stats[t][2] += pick_pl
-
-    tier_lines = []
-    for t in sorted(tier_stats.keys()):
-        tw, tl, tpl = tier_stats[t]
-        tpl_str = f"+{tpl:.1f}u" if tpl >= 0 else f"{tpl:.1f}u"
-        tier_lines.append(f"{t}: {tw}-{tl} · {tpl_str}")
+    # Tier breakdown removed from public embed — internal diagnostic only (analyze_picks.py)
 
     # Best and worst pick
     pick_pls = [(p, compute_pl(p.get("size", 0), p.get("odds", "-110"), p.get("result", ""))) for p in picks]
@@ -1517,22 +1514,24 @@ def build_monthly_embed(year, month, all_rows):
     worst = min(pick_pls, key=lambda x: x[1], default=None)
 
     def pick_label(p, ppl):
-        last = p.get("player", "").split()[-1].upper()
+        last = p.get("player", "").split()[-1].title()
         dir_ = p.get("direction", "").upper()
         stat = p.get("stat", "")
         line = p.get("line", "")
         ppl_str = f"+{ppl:.2f}u" if ppl >= 0 else f"{ppl:.2f}u"
-        return f"{last} {dir_} {line} {stat} · {ppl_str}"
+        return f"{last} {dir_} {line} {stat} | {ppl_str}"
 
+    win_pct = f"{round(w / (w + l) * 100)}%" if (w + l) > 0 else "—"
     desc = (
-        f"**{w}-{l}{'-%dP' % pu if pu else ''} · {pl_str} · ROI {roi_str}**\n\n"
+        f"**{w}-{l} ({win_pct}) | {pl_str} | ROI {roi_str}**\n\n"
         + "\n".join(tier_lines)
+        + best_tier_line
     )
     if best:
-        desc += f"\n\n**Best pick:** {pick_label(*best)}"
+        desc += f"\n\n🏆 **Best:** {pick_label(*best)}"
     if worst and worst != best:
-        desc += f"\n**Worst pick:** {pick_label(*worst)}"
-    desc += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n{BRAND_TAGLINE}"
+        desc += f"\n💀 **Worst:** {pick_label(*worst)}"
+    desc += f"\n\n━━━━━━━━━━━━━━━━\n{BRAND_TAGLINE}"
 
     color = 0xFFD700 if pl >= 0 else 0xFF4444
 
@@ -1540,10 +1539,10 @@ def build_monthly_embed(year, month, all_rows):
         "username": "PicksByJonny",
         "content": "@everyone",
         "embeds": [{
-            "title": f"📅 {month_name} {year} — Final",
+            "title": f"📅 {month_name} {year} Recap",
             "description": desc,
             "color": color,
-            "footer": {"text": f"picksbyjonny · {MONTH_NAMES[(month % 12) + 1]} starts now"}
+            "footer": {"text": f"picksbyjonny | {MONTH_NAMES[(month % 12) + 1]} starts now"}
         }]
     }
 
@@ -1551,7 +1550,7 @@ def build_monthly_embed(year, month, all_rows):
 def build_streak_embed(streak, streak_pl=0.0, streak_w=0, streak_l=0):
     """Build the streak announcement embed with P/L stats and milestone copy."""
     pl_str  = f"{streak_pl:+.2f}u"
-    rec_str = f"{streak_w}W · {streak_l}L"
+    rec_str = f"{streak_w}W | {streak_l}L"
 
     if streak >= 7:
         title = "🔥 WEEK-LONG STREAK"
