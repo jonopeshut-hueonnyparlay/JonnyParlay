@@ -1,14 +1,9 @@
 # Project: Custom Projection Engine
 
 ## Status
-**Last updated: Apr 30 2026.** All 5 engine files built and committed. DB has 79k game log rows + 587 players indexed. Steps 1–4 coded but not fully wired — three DB tables are empty and blocking a meaningful backtest.
+**Fresh start — Apr 30 2026.** Previous build wiped (engine files + projections.db deleted). Starting clean from scratch in a single session.
 
-**Blocking issues:**
-- `team_defense` — 0 rows → matchup_factor not computing (TODO at nba_projector.py:522)
-- `pace_factors` — 0 rows → pace_factor defaulting to 1.0
-- `injury_status` — 0 rows → no injury adjustments in projections
-
-**Next session:** populate those three tables, verify projector produces sensible output, then run the backtest (step 5).
+**Research report preserved:** `memory/projects/custom-projection-engine-research-report.md` — the architectural bible. Architecture A+ verdict. Read before building anything.
 
 **SaberSim stays live as the data source until custom projector is proven.** Parallel run, not a cutover.
 
@@ -18,13 +13,13 @@ Replace SaberSim ($197/mo) as the CSV input for `engine/run_picks.py`. Zero chan
 ## Go-Live Gate
 100+ picks, custom CLV ≥ SaberSim-sourced CLV → cancel SaberSim.
 
-## Files (all exist)
+## Files (none exist yet — rebuild from scratch)
 - `engine/projections_db.py` — SQLite schema + historical pull
-- `engine/nba_projector.py` — EWMA rates, minutes, pace, matchup
+- `engine/nba_projector.py` — role-conditional rates, minutes regression, pace, matchup
 - `engine/injury_parser.py` — nbainjuries integration + minutes redistribution
 - `engine/csv_writer.py` — SaberSim schema output
 - `engine/backtest_projections.py` — MAE + CLV comparison harness
-- `data/projections.db` — 79k rows, 587 players; team_defense/pace_factors/injury_status empty
+- `data/projections.db` — new SQLite DB
 
 ## Output Schema (must match SaberSim exactly)
 `Name, Pos, Team, Opp, Status, Saber Team, Saber Total, dk_std` + sport stats
