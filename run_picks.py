@@ -1057,8 +1057,10 @@ def parse_csv(filepath):
         rows = list(reader)
 
     if not rows:
-        print(f"  [!] Empty CSV: {filepath}")
-        return [], "NBA"
+        # M6: error + abort instead of silently defaulting to NBA
+        name = Path(filepath).name
+        print(f"  [!] Empty CSV: {filepath} — aborting. Check that {name} is a valid SaberSim export.")
+        sys.exit(1)
 
     headers = {h.strip().lower() for h in rows[0].keys()}
 
@@ -4262,8 +4264,8 @@ def select_killshots(qualified, today_str, manual_players=None):
             return False
         parts = {w.lower() for w in full_name.split() if w}
         full_lower = full_name.lower()
-        # Exact full-name match OR any token matches any name part OR substring match
-        return any(tok == full_lower or tok in parts or tok in full_lower for tok in manual_tokens)
+        # M3: match on exact full name OR per-word token only (no substring — "son" must not match "Johnson")
+        return any(tok == full_lower or tok in parts for tok in manual_tokens)
 
     candidates = []
     for p in qualified:
@@ -5598,4 +5600,22 @@ def main():
             from sgp_builder import run_sgp_builder
             _sgp_csv_strs = [str(p) for p in csv_paths]
             # --sgp-only forces a live post even if --no-discord was set
-            _sgp_only = getattr(args
+            _sgp_only = getattr(args, 'sgp_only', False)
+            _sgp_dry  = (args.dry_run or args.no_discord) and not _sgp_only
+            _sgp_save = not args.no_save
+            print("\n  [SGP] Running SGP builder...")
+            run_sgp_builder(
+                _sgp_csv_strs,
+                dry_run=_sgp_dry,
+                confirm=_CONFIRM_MODE,
+                test=getattr(args, 'test', False),
+                save=_sgp_save,
+            )
+        except ImportError:
+            print('  [SGP] sgp_builder.py not found -- skipping.')
+
+    print("\n  Done. Let's eat.\n")
+
+
+if __name__ == "__main__":
+    main()

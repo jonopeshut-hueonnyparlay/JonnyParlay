@@ -1057,8 +1057,10 @@ def parse_csv(filepath):
         rows = list(reader)
 
     if not rows:
-        print(f"  [!] Empty CSV: {filepath}")
-        return [], "NBA"
+        # M6: error + abort instead of silently defaulting to NBA
+        name = Path(filepath).name
+        print(f"  [!] Empty CSV: {filepath} — aborting. Check that {name} is a valid SaberSim export.")
+        sys.exit(1)
 
     headers = {h.strip().lower() for h in rows[0].keys()}
 
@@ -4262,8 +4264,8 @@ def select_killshots(qualified, today_str, manual_players=None):
             return False
         parts = {w.lower() for w in full_name.split() if w}
         full_lower = full_name.lower()
-        # Exact full-name match OR any token matches any name part OR substring match
-        return any(tok == full_lower or tok in parts or tok in full_lower for tok in manual_tokens)
+        # M3: match on exact full name OR per-word token only (no substring — "son" must not match "Johnson")
+        return any(tok == full_lower or tok in parts for tok in manual_tokens)
 
     candidates = []
     for p in qualified:
