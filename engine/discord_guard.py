@@ -38,6 +38,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from io_utils import atomic_write_json  # noqa: E402
+from paths import DISCORD_GUARD_FILE as _GUARD_FILE_P  # noqa: E402
 
 try:
     from filelock import FileLock, Timeout as _FileLockTimeout
@@ -48,10 +49,10 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths  (M9: resolved via paths.py — honours $JONNYPARLAY_ROOT)
 # ---------------------------------------------------------------------------
 
-GUARD_FILE: Path = Path(os.path.expanduser("~/Documents/JonnyParlay/data/discord_posted.json"))
+GUARD_FILE: Path = _GUARD_FILE_P
 LOCK_FILE: str = str(GUARD_FILE) + ".lock"
 
 # ---------------------------------------------------------------------------

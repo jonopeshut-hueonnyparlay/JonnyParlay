@@ -80,21 +80,32 @@ from secrets_config import (
     DISCORD_SGP_WEBHOOK,
 )
 
-CSV_FOLDER    = os.path.expanduser("~/Documents/JonnyParlay/projections")
+# M9: resolved via paths.py — honours $JONNYPARLAY_ROOT
+from paths import (  # noqa: E402
+    PICK_LOG_PATH as _PICK_LOG_PATH_P,
+    PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
+    PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
+    LOG_FILE_PATH as _LOG_FILE_PATH_P,
+    project_path as _project_path,
+    data_path as _data_path,
+)
+
+CSV_FOLDER    = str(_project_path("projections"))
 # Additional drop locations scanned by find_csvs(). Preserves backward compatibility
 # with the primary CSV_FOLDER while also picking up SaberSim exports from Downloads.
 CSV_FOLDER_FALLBACKS = [
     os.path.expanduser("~/Downloads/projections"),
     os.path.expanduser("~/Downloads"),
 ]
-OUTPUT_FOLDER = os.path.expanduser("~/Documents/JonnyParlay/data/picks")
-PICK_LOG_PATH = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log.csv")
+OUTPUT_FOLDER = str(_data_path("picks"))
+PICK_LOG_PATH = str(_PICK_LOG_PATH_P)
 # Manual picks (entered via --log-manual) go to their own file so they don't
 # pollute the model-generated log, don't burn CLV API calls (markets often
 # missing), and don't confuse analysis of model performance.
-PICK_LOG_MANUAL_PATH = os.path.expanduser("~/Documents/JonnyParlay/data/pick_log_manual.csv")
-LOG_FILE_PATH = os.path.expanduser("~/Documents/JonnyParlay/data/jonnyparlay.log")
-DISCORD_GUARD_FILE = os.path.expanduser("~/Documents/JonnyParlay/data/discord_posted.json")
+PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
+LOG_FILE_PATH = str(_LOG_FILE_PATH_P)
+DISCORD_GUARD_FILE = str(_DISCORD_GUARD_FILE_P)
 
 # ── File logger setup (file only — console output stays as print()) ───────────
 # Rotation is wired through engine/log_setup.attach_rotating_handler so
@@ -199,7 +210,7 @@ SHADOW_SPORTS = {"MLB"}
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
 SHADOW_LOG_PATHS = {
-    "MLB": os.path.expanduser("~/Documents/JonnyParlay/data/pick_log_mlb.csv"),
+    "MLB": str(_PICK_LOG_MLB_PATH_P),
 }
 
 # Per-sport alt spread market names for the parlay builder
@@ -4987,7 +4998,7 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     # M8: prevent concurrent runs (double-post guard at the process level)
-    _run_lock_path = os.path.expanduser("~/Documents/JonnyParlay/data/run_picks.lock")
+    _run_lock_path = str(_data_path("run_picks.lock"))
     _run_lock = FileLock(_run_lock_path, timeout=0)
     try:
         _run_lock.acquire()
