@@ -1383,8 +1383,8 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     ks_picks  = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
     # Parlays excluded from tracking — graded in pick_log but not shown in recap.
 
-    # Props record (non-KILLSHOT primary/bonus)
-    w, l, pu, pl, roi = daily_stats(reg_props)
+    # Combined record (props + KILLSHOT) for the header line
+    w, l, pu, pl, roi = daily_stats(reg_props + ks_picks)
     pl_str   = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
     win_pct  = f"{round(w / (w + l) * 100)}%" if (w + l) > 0 else "—"
     record   = f"**{w}-{l} ({win_pct}){'  · %dP' % pu if pu else ''} | {pl_str}**"
@@ -2128,5 +2128,4 @@ Examples:
             _grade_one_log(shadow_path, args, is_shadow=True)
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "
