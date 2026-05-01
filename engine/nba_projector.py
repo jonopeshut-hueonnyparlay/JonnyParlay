@@ -524,12 +524,3 @@ def _main():
 
 if __name__ == "__main__":
     _main()
-proj_pts", ascending=False)
-    cols = ["player_name", "role_tier", "proj_min", "proj_pts",
-            "proj_reb", "proj_ast", "proj_fg3m", "pace_factor",
-            "matchup_factor_pts", "injury_status"]
-    print(df[cols].head(args.top).to_string(index=False))
-    print(f"\nTotal: {len(df)} players projected.")
-
-if __name__ == "__main__":
-    _main()
