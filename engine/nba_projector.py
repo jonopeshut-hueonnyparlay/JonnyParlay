@@ -76,10 +76,27 @@ BLOWOUT_SIGMOID_K        = 0.40   # steepness
 BLOWOUT_SIGMOID_MID      = 12.0   # inflection point (spread units)
 BLOWOUT_MAX_REDUCTION    = 0.20   # max minutes reduction (20%)
 MATCHUP_CLIP             = (0.80, 1.20)
-B2B_MINUTE_FACTOR = {
-    "starter": 0.90, "sixth_man": 0.88, "rotation": 0.85,
-    "spot": 0.82, "cold_start": 0.85,
+
+# Days-rest reduction function (Brief P3, Sec. 6b — 2026-05-01).
+# Continuous days_rest variable replaces binary B2B flag.
+# Empirical findings (sports science literature):
+#   - 0 days (back-to-back): ~8–12% minutes reduction across all roles
+#   - 1 day rest: ~3–5% reduction (elevated fatigue signals persist)
+#   - 2+ days: approaches full recovery
+# Functional form: exponential decay toward full capacity.
+# max_reduction and half_life calibrated from NBA literature (~3 games data).
+DAYS_REST_MAX_REDUCTION = 0.10   # max reduction at 0 days rest (10%)
+DAYS_REST_HALF_LIFE     = 1.5    # half-recovery after 1.5 days
+# role-specific scalar: how much the player's rest sensitivity varies by role
+DAYS_REST_ROLE_SCALAR = {
+    "starter": 1.0,     # starters most sensitive to rest
+    "sixth_man": 0.95,
+    "rotation": 0.90,
+    "spot": 0.75,       # bench players less impacted by fatigue
+    "cold_start": 0.90,
 }
+# B2B_MINUTE_FACTOR removed 2026-05-01: replaced by continuous days-rest model
+# (DAYS_REST_ROLE_SCALAR + _compute_days_rest_reduction).
 PROJ_STATS    = ["pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]
 CURRENT_SEASON = "2025-26"
 
@@ -115,6 +132,15 @@ _AST_EWMA_SPAN = {"G": 10, "F": 6, "C": 5}
 _AST_POS_PRIOR = {"G": 0.073, "F": 0.050, "C": 0.045}  # AST per team possession
 _AST_PRIOR_N   = {"G":  22,  "F":  32,    "C":  35}    # shrinkage weight (games equivalent)
 AST_ALPHA      = 0.40   # lean toward baseline until rates stabilise over longer sample
+FG3M_BLEND_ALPHA = 0.50  # weight on FGA-decomp path for 3PM; re-evaluate after grid search
+
+# STL/BLK Bayesian shrinkage priors (Brief P3, Sec. 5 — 2026-05-01).
+# Per-minute rates derived from DB: stl_per_min = stl_per36 / 36.
+_STL_POS_PRIOR = {"G": 0.0333, "F": 0.0250, "C": 0.0194}  # STL per minute
+_STL_PRIOR_N   = 25  # shrinkage weight — STL is noisy, strong prior needed
+_BLK_POS_PRIOR = {"G": 0.0083, "F": 0.0167, "C": 0.0500}  # BLK per minute
+_BLK_PRIOR_N   = 30  # BLK extremely concentrated by position — heavy shrinkage
+LEAGUE_AVG_TOV_RATE = 0.136  # turnovers per possession, league-wide (2024-25 calibrated)
 
 _ARCHETYPE_PER36 = {
     "G": {"pts": 14.5, "reb": 3.2, "ast": 5.8, "fg3m": 1.8, "stl": 1.2, "blk": 0.3, "tov": 2.5},
@@ -234,6 +260,44 @@ def compute_ast_rate(df_clean: pd.DataFrame,
     # Bayesian shrinkage to positional prior
     ast_rate = (n_games * ast_ewma + prior_n * prior) / (n_games + prior_n)
     return float(ast_rate)
+
+
+def compute_stl_blk_rates(df_clean: pd.DataFrame,
+                           pos_group: str) -> tuple[float, float]:
+    """Bayesian-shrunk per-minute STL and BLK rates (Brief P3, Sec. 5).
+
+    EWMA (span=EWMA_SPAN) of stl/min and blk/min, then Bayesian shrinkage
+    to positional priors.  STL is noisy (CV~0.80) and BLK extremely so
+    (CV~0.85), so strong shrinkage is critical.
+
+    Returns (stl_rate, blk_rate) in units of [events per minute].
+    """
+    stl_prior = _STL_POS_PRIOR.get(pos_group, 0.025)
+    blk_prior = _BLK_POS_PRIOR.get(pos_group, 0.017)
+
+    if df_clean.empty or "stl" not in df_clean.columns:
+        return stl_prior, blk_prior
+
+    d = df_clean.sort_values("game_date").copy()
+    n_games = len(d)
+    mins = d["min"].clip(lower=1.0)
+
+    # Per-minute rates
+    stl_raw = (d["stl"].fillna(0) / mins).replace(
+        [np.inf, -np.inf], np.nan
+    ).fillna(stl_prior)
+    blk_col = d.get("blk", pd.Series([0] * len(d), index=d.index))
+    blk_raw = (blk_col.fillna(0) / mins).replace(
+        [np.inf, -np.inf], np.nan
+    ).fillna(blk_prior)
+
+    stl_ewma = float(stl_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    blk_ewma = float(blk_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+
+    # Bayesian shrinkage
+    stl_rate = (n_games * stl_ewma + _STL_PRIOR_N * stl_prior) / (n_games + _STL_PRIOR_N)
+    blk_rate = (n_games * blk_ewma + _BLK_PRIOR_N * blk_prior) / (n_games + _BLK_PRIOR_N)
+    return float(stl_rate), float(blk_rate)
 
 
 def compute_shooting_rates(df) -> dict:
@@ -362,6 +426,26 @@ def compute_shooting_rates(df) -> dict:
     }
 
 
+
+def _compute_days_rest_reduction(days_rest: int, role: str) -> float:
+    """Compute minutes reduction factor from days of rest.
+
+    Uses exponential decay: reduction = max_reduction * exp(-days_rest / half_life).
+    At days_rest=0 (B2B): reduction ≈ max_reduction * role_scalar.
+    At days_rest=1.5: reduction ≈ max_reduction * role_scalar / 2.
+    At days_rest=5+: reduction ≈ 0 (full recovery).
+
+    Returns multiplicative factor in (0.90, 1.0] where 1.0 = no reduction.
+    """
+    days_rest = max(0, min(days_rest, 10))  # clip to [0, 10]
+    role_scalar = DAYS_REST_ROLE_SCALAR.get(role, 0.90)
+    # Exponential decay: after half_life days, reduction halves.
+    reduction = DAYS_REST_MAX_REDUCTION * role_scalar * math.exp(
+        -days_rest / DAYS_REST_HALF_LIFE
+    )
+    return 1.0 - reduction  # return multiplicative factor
+
+
 def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None):
     if injury_minutes_override is not None:
         return float(injury_minutes_override)
@@ -374,8 +458,13 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None):
         weight   = 0.0
     prior    = ROLE_MINUTE_PRIOR[role]
     proj_min = weight * ewma_min + (1 - weight) * prior
-    if b2b.get("is_b2b"):
-        proj_min *= B2B_MINUTE_FACTOR.get(role, 0.88)
+
+    # Days-rest reduction: continuous variable replaces binary B2B flag (Brief P3, Sec. 6b).
+    # Exponential decay from max reduction (B2B) toward full recovery.
+    days_rest = b2b.get("days_rest", 3)  # default 3 if missing
+    rest_factor = _compute_days_rest_reduction(days_rest, role)
+    proj_min *= rest_factor
+
     if spread is not None and abs(spread) > 0:
         # Sigmoid blowout reduction — continuous, centred at BLOWOUT_SIGMOID_MID.
         # Only material when |spread| > ~8; negligible for close games.
@@ -524,9 +613,8 @@ def project_player(
     # captures per-position-group pts allowed which includes 3PM contribution).
     proj_fg3m_fga  = player_proj_3pa * fg3_pct * matchup_pts
     baseline_fg3m  = rates.get("fg3m", 0.0) * proj_min
-    # 50/50 blend: FGA path has lower bias, per-min has lower variance.
-    # Re-evaluate once 3PM grid search is run; start at 0.50.
-    FG3M_BLEND_ALPHA = 0.50
+    # FG3M_BLEND_ALPHA: FGA path has lower bias, per-min has lower variance.
+    # Re-evaluate once 3PM grid search is run (module-level constant).
     projections["fg3m"] = max(0.0, round(
         FG3M_BLEND_ALPHA * proj_fg3m_fga + (1.0 - FG3M_BLEND_ALPHA) * baseline_fg3m, 2
     ))
@@ -553,13 +641,15 @@ def project_player(
     proj_ast        = AST_ALPHA * proj_ast_custom + (1.0 - AST_ALPHA) * baseline_ast
     projections["ast"] = max(0.0, round(proj_ast, 2))
 
-    # Other stats: per-minute rates. pts, fg3m, reb, and ast are handled above.
-    for stat in PROJ_STATS:
-        if stat in ("pts", "fg3m", "reb", "ast"):
-            continue
-        rate = rates.get(stat, 0.0)
-        mf   = matchup_factors.get(stat, 1.0)
-        projections[stat] = max(0.0, round(rate * proj_min * mf * pace_factor, 2))
+    # STL/BLK: Bayesian-shrunk per-minute rates (Brief P3, Sec. 5).
+    # Uses compute_stl_blk_rates for positional priors + shrinkage.
+    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg)
+    projections["stl"] = max(0.0, round(stl_rate * proj_min * pace_factor, 2))
+    projections["blk"] = max(0.0, round(blk_rate * proj_min * pace_factor, 2))
+
+    # TOV: per-minute rate (no decomposition model yet).
+    tov_rate = rates.get("tov", 0.0)
+    projections["tov"] = max(0.0, round(tov_rate * proj_min * pace_factor, 2))
 
     # Playoff calibration: regular-season per-minute rates over-project in
     # playoffs due to tighter defense and shorter rotations.
@@ -700,3 +790,4 @@ def _main():
 
 if __name__ == "__main__":
     _main()
+

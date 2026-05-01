@@ -27,13 +27,15 @@ from projections_db import (
     get_team_pace, get_player_b2b_context, get_team_def_ratio,
     get_team_shooting_stats,
 )
+from projections_db import get_team_tov_rate
 from nba_projector import (
     compute_shooting_rates, compute_per_minute_rates, compute_reb_rates,
-    compute_ast_rate,
+    compute_ast_rate, compute_stl_blk_rates,
     EWMA_SPAN, LEAGUE_AVG_PACE, MATCHUP_CLIP,
     PTS_BLEND_ALPHA, BLEND_BIAS_CORRECTION,
     _REB_POS_OREB_PRIOR, _REB_POS_DREB_PRIOR, REB_ALPHA,
-    AST_ALPHA,
+    AST_ALPHA, LEAGUE_AVG_TOV_RATE,
+    _STL_POS_PRIOR, _STL_PRIOR_N,
 )
 
 log = logging.getLogger("evaluate")
@@ -264,6 +266,37 @@ def project_ast(player_id: int, team_id: int, opp_team_id: int,
     return round(max(0.0, blended), 2)
 
 
+def project_stl(player_id: int, team_id: int, opp_team_id: int,
+                position: str, game_date: str, season: str,
+                proj_min: float, db_path, *, alpha: float = 1.0):
+    """Custom STL projection: Bayesian-shrunk per-min rate x opp TOV factor."""
+    import numpy as np
+    from projections_db import get_player_recent_games
+    df = get_player_recent_games(player_id, game_date, n_games=30,
+                                  season_filter=season, db_path=db_path)
+    min_min = 8.0
+    df = df[df["min"] >= min_min].copy() if not df.empty else df
+    pos_group   = _pos_to_group(position)
+    stl_rate, _ = compute_stl_blk_rates(df, pos_group)
+    opp_tov     = get_team_tov_rate(opp_team_id, season, db_path)
+    opp_tov_fac = float(np.clip(opp_tov / LEAGUE_AVG_TOV_RATE, 0.80, 1.30))
+    return max(0.0, stl_rate * proj_min * opp_tov_fac)
+
+
+def project_blk(player_id: int, team_id: int, opp_team_id: int,
+                position: str, game_date: str, season: str,
+                proj_min: float, db_path, *, alpha: float = 1.0):
+    """Custom BLK projection: Bayesian-shrunk per-min rate (positional prior)."""
+    from projections_db import get_player_recent_games
+    df = get_player_recent_games(player_id, game_date, n_games=30,
+                                  season_filter=season, db_path=db_path)
+    min_min = 8.0
+    df = df[df["min"] >= min_min].copy() if not df.empty else df
+    pos_group   = _pos_to_group(position)
+    _, blk_rate = compute_stl_blk_rates(df, pos_group)
+    return max(0.0, blk_rate * proj_min)
+
+
 def project_reb(player_id: int, team_id: int, opp_team_id: int,
                 position: str, game_date: str,
                 season: str, proj_min: float, db_path: Path) -> float | None:
@@ -349,6 +382,12 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                                      db_path)
             elif stat.upper() == "AST":
                 custom = project_ast(pid, tid, opp_tid, pos, gdate, szn, pmin,
+                                     db_path)
+            elif stat.upper() == "STL":
+                custom = project_stl(pid, tid, opp_tid, pos, gdate, szn, pmin,
+                                     db_path)
+            elif stat.upper() == "BLK":
+                custom = project_blk(pid, tid, opp_tid, pos, gdate, szn, pmin,
                                      db_path)
             else:
                 custom = project_per_min(pid, gdate, szn, pmin, stat, db_path)

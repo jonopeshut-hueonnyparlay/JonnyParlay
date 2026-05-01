@@ -652,6 +652,44 @@ def get_team_shooting_stats(team_id: int, season: str,
     }
 
 
+def get_team_tov_rate(team_id: int, season: str,
+                      db_path: Path = DB_PATH) -> float:
+    """Season-average team TOV rate (turnovers / possession).
+
+    tov_rate = tov_per_game / pace.
+    Falls back to league average (0.136) if insufficient data.
+    Calibrated from 2024-25 DB: league avg = 0.136 (2026-05-01).
+    """
+    _LEAGUE_AVG = 0.136
+    conn = get_conn(db_path)
+    df = pd.read_sql_query(
+        """
+        SELECT
+            SUM(pgs.tov)                AS total_tov,
+            COUNT(DISTINCT pgs.game_id) AS n_games
+        FROM player_game_stats pgs
+        JOIN games g ON g.game_id = pgs.game_id
+        WHERE pgs.team_id   = :team_id
+          AND g.season       = :season
+          AND g.season_type  = 'Regular Season'
+        """,
+        conn,
+        params={"team_id": team_id, "season": season},
+    )
+    conn.close()
+    if df.empty:
+        return _LEAGUE_AVG
+    row = df.iloc[0]
+    n = int(row["n_games"] or 0)
+    if n < 5:
+        return _LEAGUE_AVG
+    tov_per_game = float(row["total_tov"] or 0) / n
+    pace = get_team_pace(team_id, season, "Regular Season", db_path)
+    if pace <= 0:
+        return _LEAGUE_AVG
+    return float(max(0.05, min(0.30, tov_per_game / pace)))
+
+
 def get_team_avg_fga(team_id: int, before_date: str,
                      season: str, n_games: int = 20,
                      db_path: Path = DB_PATH) -> float:
