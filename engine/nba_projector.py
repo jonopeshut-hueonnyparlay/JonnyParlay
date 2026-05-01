@@ -32,7 +32,7 @@ from projections_db import (
     DB_PATH, get_player_recent_games, get_player_season_game_count,
     get_team_pace, get_team_def_ratio, get_player_b2b_context,
     get_all_active_players, get_games_for_date, upsert_projection, get_conn,
-    get_team_avg_fga,
+    get_team_avg_fga, get_team_shooting_stats,
 )
 
 log = logging.getLogger("nba_projector")
@@ -92,6 +92,17 @@ PTS_BLEND_ALPHA       = 0.50   # calibrated 2026-05-01: bias-optimal vs MAE-flat
                                # (alpha=0.30 MAE-optimal but +0.086 more bias; 0.50 dominates)
 BLEND_BIAS_CORRECTION = 0.0    # no additive correction — fix root causes structurally
 
+# REB decomposition constants (Brief P3, Sec. 2 — 2026-05-01)
+# Model OREB and DREB separately via available-rebound denominators.
+# OREB: player OREB / (team_misses * min/48). Stabilises ~200-250 possessions (~20 games).
+# DREB: player DREB / (opp_misses * min/48).  Stabilises ~250-300 possessions (~28 games).
+# Positional priors calibrated from 2024-25 NBA averages.
+_REB_POS_OREB_PRIOR = {"G": 0.022, "F": 0.044, "C": 0.078}   # OREB per team miss/48
+_REB_POS_DREB_PRIOR = {"G": 0.078, "F": 0.133, "C": 0.200}   # DREB per opp miss/48
+_REB_PRIOR_N_OREB   = 20   # shrinkage weight ≈ 20-game sample
+_REB_PRIOR_N_DREB   = 28   # stabilises slower — stronger shrinkage
+REB_ALPHA           = 0.45  # weight on decomposed path (lean baseline until rates stabilise)
+
 _ARCHETYPE_PER36 = {
     "G": {"pts": 14.5, "reb": 3.2, "ast": 5.8, "fg3m": 1.8, "stl": 1.2, "blk": 0.3, "tov": 2.5},
     "F": {"pts": 13.8, "reb": 5.8, "ast": 2.8, "fg3m": 1.2, "stl": 0.9, "blk": 0.6, "tov": 1.8},
@@ -133,6 +144,47 @@ def compute_per_minute_rates(df):
         ewma_e   = d["era_weight"].ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1]
         rates[stat] = float(ewma_w / max(ewma_e, 1e-6))
     return rates
+
+def compute_reb_rates(df_clean: pd.DataFrame,
+                      avail_oreb_per_game: float,
+                      avail_dreb_per_game: float,
+                      pos_group: str) -> tuple[float, float]:
+    """Bayesian-shrunk OREB and DREB rates per available rebound.
+
+    avail_oreb_per_game: team_FGA/g * (1 - team_FG%) — OREB pool (own misses).
+    avail_dreb_per_game: opp_FGA/g  * (1 - opp_FG%)  — DREB pool (opp misses).
+
+    Rate formula per game i:
+        oreb_rate[i] = player_oreb[i] / (avail_oreb_per_game * min[i] / 48)
+        dreb_rate[i] = player_dreb[i] / (avail_dreb_per_game * min[i] / 48)
+
+    EWMA (span=10) then Bayesian shrinkage to positional priors.
+    Returns (oreb_rate, dreb_rate) — both in units of [rebounds per available rebound].
+    """
+    oreb_prior = _REB_POS_OREB_PRIOR.get(pos_group, 0.044)
+    dreb_prior = _REB_POS_DREB_PRIOR.get(pos_group, 0.133)
+
+    if df_clean.empty or "oreb" not in df_clean.columns or "dreb" not in df_clean.columns:
+        return oreb_prior, dreb_prior
+
+    d = df_clean.sort_values("game_date").copy()
+    n_games = len(d)
+
+    # Available rebound pool scaled to each game's minutes
+    avail_oreb_g = (avail_oreb_per_game * d["min"] / 48.0).clip(lower=0.1)
+    avail_dreb_g = (avail_dreb_per_game * d["min"] / 48.0).clip(lower=0.1)
+
+    oreb_raw = (d["oreb"].fillna(0) / avail_oreb_g).replace([np.inf, -np.inf], np.nan).fillna(oreb_prior)
+    dreb_raw = (d["dreb"].fillna(0) / avail_dreb_g).replace([np.inf, -np.inf], np.nan).fillna(dreb_prior)
+
+    oreb_ewma = float(oreb_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    dreb_ewma = float(dreb_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+
+    # Bayesian shrinkage: (observed_n * ewma + prior_n * prior) / (observed_n + prior_n)
+    oreb_rate = (n_games * oreb_ewma + _REB_PRIOR_N_OREB * oreb_prior) / (n_games + _REB_PRIOR_N_OREB)
+    dreb_rate = (n_games * dreb_ewma + _REB_PRIOR_N_DREB * dreb_prior) / (n_games + _REB_PRIOR_N_DREB)
+    return float(oreb_rate), float(dreb_rate)
+
 
 def compute_shooting_rates(df) -> dict:
     """Compute EWMA shooting efficiency rates for FGA/FTA PTS decomposition.
@@ -365,6 +417,13 @@ def project_player(
         "fg3m": matchup_pts, "stl": 1.0, "blk": 1.0, "tov": 1.0,
     }
 
+    # --- Team shooting stats for REB decomposition ---
+    team_shoot    = get_team_shooting_stats(team_id,     season, db_path)
+    opp_shoot     = get_team_shooting_stats(opp_team_id, season, db_path)
+    # Own misses = OREB pool; opp misses = DREB pool
+    avail_oreb_pg = team_shoot["fga_per_game"] * (1.0 - team_shoot["fg_pct"])
+    avail_dreb_pg = opp_shoot["fga_per_game"]  * (1.0 - opp_shoot["fg_pct"])
+
     # --- Shooting efficiency rates for 2P%/3P% decomposition ---
     shoot         = compute_shooting_rates(df_clean)
     fg2_pct       = shoot["fg2_pct"]
@@ -422,9 +481,20 @@ def project_player(
         FG3M_BLEND_ALPHA * proj_fg3m_fga + (1.0 - FG3M_BLEND_ALPHA) * baseline_fg3m, 2
     ))
 
-    # Other stats: per-minute rates. pts and fg3m are handled above.
+    # REB: OREB/DREB decomposition (Brief P3, Sec. 2).
+    # Separate rates for OREB and DREB — different stabilisation timescales
+    # and different contextual drivers (OREB = own-miss recovery; DREB = opp-miss recovery).
+    oreb_rate, dreb_rate = compute_reb_rates(df_clean, avail_oreb_pg, avail_dreb_pg, pg)
+    proj_oreb       = oreb_rate * avail_oreb_pg * (proj_min / 48.0)
+    proj_dreb       = dreb_rate * avail_dreb_pg * (proj_min / 48.0)
+    proj_reb_custom = (proj_oreb + proj_dreb) * matchup_reb   # DvP [0.80, 1.20]
+    baseline_reb    = rates.get("reb", 0.0) * proj_min
+    proj_reb        = REB_ALPHA * proj_reb_custom + (1.0 - REB_ALPHA) * baseline_reb
+    projections["reb"] = max(0.0, round(proj_reb, 2))
+
+    # Other stats: per-minute rates. pts, fg3m, and reb are handled above.
     for stat in PROJ_STATS:
-        if stat in ("pts", "fg3m"):
+        if stat in ("pts", "fg3m", "reb"):
             continue
         rate = rates.get(stat, 0.0)
         mf   = matchup_factors.get(stat, 1.0)

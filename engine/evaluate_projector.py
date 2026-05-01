@@ -25,11 +25,13 @@ if str(_HERE) not in sys.path:
 from projections_db import (
     DB_PATH, get_conn, get_player_recent_games, get_team_avg_fga,
     get_team_pace, get_player_b2b_context, get_team_def_ratio,
+    get_team_shooting_stats,
 )
 from nba_projector import (
-    compute_shooting_rates, compute_per_minute_rates,
+    compute_shooting_rates, compute_per_minute_rates, compute_reb_rates,
     EWMA_SPAN, LEAGUE_AVG_PACE, MATCHUP_CLIP,
     PTS_BLEND_ALPHA, BLEND_BIAS_CORRECTION,
+    _REB_POS_OREB_PRIOR, _REB_POS_DREB_PRIOR, REB_ALPHA,
 )
 
 log = logging.getLogger("evaluate")
@@ -191,17 +193,18 @@ def project_pts(player_id: int, team_id: int, opp_team_id: int,
 
 
 def _pos_to_group(position: str) -> str:
-    """Map raw position string to DvP position group (Guard/Forward/Center)."""
-    pos = (position or "").upper().strip()
-    if pos in ("PG", "SG", "G"):
-        return "Guard"
-    if pos in ("SF", "PF", "F"):
-        return "Forward"
-    if pos in ("C",):
-        return "Center"
-    # Multi-position (G-F, F-C, etc.) — use first token
-    first = pos.split("-")[0].strip()
-    return _pos_to_group(first) if first != pos else "Forward"  # safe default
+    """Map raw position string to position group key.
+
+    Returns 'G', 'F', or 'C' — matches team_def_splits.position_group and
+    the _REB_POS_*_PRIOR dict keys in nba_projector.py.
+    Mirrors nba_projector._pos_group exactly so DvP lookups hit the right rows.
+    """
+    p = (position or "").upper().strip()
+    if p.startswith("G"):
+        return "G"
+    if p.startswith("C"):
+        return "C"
+    return "F"
 
 
 def project_per_min(player_id: int, game_date: str, season: str,
@@ -224,6 +227,45 @@ def project_per_min(player_id: int, game_date: str, season: str,
     if col not in rates:
         return None
     return round(rates[col] * proj_min, 2)
+
+
+def project_reb(player_id: int, team_id: int, opp_team_id: int,
+                position: str, game_date: str,
+                season: str, proj_min: float, db_path: Path) -> float | None:
+    """Project REB via OREB/DREB decomposition (Brief P3, Sec. 2).
+
+    OREB: player rate per own-team miss (avail_oreb = team_FGA*(1-team_FG%)).
+    DREB: player rate per opp-team miss (avail_dreb = opp_FGA*(1-opp_FG%)).
+    Both rates Bayesian-shrunk to positional priors, then blended 45/55 with baseline.
+    """
+    df_raw = get_player_recent_games(player_id, game_date, n_games=20, db_path=db_path)
+    df = df_raw[df_raw["min"] >= RATE_MIN_MIN].copy()
+    if len(df) < 3:
+        return None
+    if "oreb" not in df.columns or "dreb" not in df.columns:
+        return None
+
+    team_shoot = get_team_shooting_stats(team_id,     season, db_path)
+    opp_shoot  = get_team_shooting_stats(opp_team_id, season, db_path)
+    avail_oreb = team_shoot["fga_per_game"] * (1.0 - team_shoot["fg_pct"])
+    avail_dreb = opp_shoot["fga_per_game"]  * (1.0 - opp_shoot["fg_pct"])
+
+    pos_group = _pos_to_group(position)
+    oreb_rate, dreb_rate = compute_reb_rates(df, avail_oreb, avail_dreb, pos_group)
+
+    proj_oreb = oreb_rate * avail_oreb * (proj_min / 48.0)
+    proj_dreb = dreb_rate * avail_dreb * (proj_min / 48.0)
+
+    matchup_reb = get_team_def_ratio(opp_team_id, pos_group, "reb", season, db_path=db_path)
+    matchup_reb = max(MATCHUP_CLIP[0], min(MATCHUP_CLIP[1], matchup_reb))
+
+    proj_reb_custom = (proj_oreb + proj_dreb) * matchup_reb
+
+    rates = compute_per_minute_rates(df)
+    baseline_reb = rates.get("reb", 0.0) * proj_min
+
+    blended = REB_ALPHA * proj_reb_custom + (1.0 - REB_ALPHA) * baseline_reb
+    return round(max(0.0, blended), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +308,9 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                                      db_path, alpha=alpha)
             elif stat.upper() == "3PM":
                 custom = project_3pm(pid, tid, opp_tid, pos, gdate, szn, pmin,
+                                     db_path)
+            elif stat.upper() == "REB":
+                custom = project_reb(pid, tid, opp_tid, pos, gdate, szn, pmin,
                                      db_path)
             else:
                 custom = project_per_min(pid, gdate, szn, pmin, stat, db_path)
