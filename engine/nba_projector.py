@@ -46,7 +46,8 @@ LEAGUE_AVG_TOTAL  = 222.0
 # Playoffs run slower / lower-scoring — separate baselines
 LEAGUE_AVG_PACE_PO  = 96.5
 LEAGUE_AVG_TOTAL_PO = 210.0
-EWMA_SPAN         = 10
+EWMA_SPAN         = 10   # shooting/per-min rates — longer span for stability
+EWMA_SPAN_MIN     = 5    # minutes projection — shorter span; more responsive to role changes
 MIN_GAMES_FOR_TIER = 5
 
 USG_ROLE_PRIOR = {
@@ -142,7 +143,8 @@ def compute_shooting_rates(df) -> dict:
     LG_3P_PCT    = 0.360   # league avg 3P%
     LG_FT_PCT    = 0.780
     LG_FG3A_RATE = 0.420   # ~42% of FGA are 3PA league-wide (was 0.385 — stale)
-    LG_FTA_FGA   = 0.245   # FTA/FGA ratio (was 0.280 — inflating FT projection +14%)
+    LG_FTA_FGA   = 0.257   # FTA/FGA ratio; calibrated Apr 30 2026:
+                           # 0.280→+0.510 bias, 0.245→-0.651, 0.265→+0.431; interp→0.257
 
     if df.empty:
         return {
@@ -246,7 +248,7 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None):
         return float(injury_minutes_override)
     if not df.empty:
         clean = df.sort_values("game_date")
-        ewma_min = float(clean["min"].ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+        ewma_min = float(clean["min"].ewm(span=EWMA_SPAN_MIN, min_periods=1).mean().iloc[-1])
         weight = min(len(clean) / 20.0, 1.0)
     else:
         ewma_min = ROLE_MINUTE_PRIOR[role]
