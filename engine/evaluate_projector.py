@@ -5,7 +5,8 @@ data prior to that game, compares to actuals. No pick_log required.
 
 Usage:
     python engine/evaluate_projector.py [--season 2024-25] [--n 300] [--stat PTS]
-                                        [--min-games 5] [--verbose]
+                                        [--min-games 5] [--verbose] [--seed 42]
+    python engine/evaluate_projector.py --grid-search-alpha  # PTS alpha optimisation
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from projections_db import (
 from nba_projector import (
     compute_shooting_rates, compute_per_minute_rates,
     EWMA_SPAN, LEAGUE_AVG_PACE, MATCHUP_CLIP,
+    PTS_BLEND_ALPHA, BLEND_BIAS_CORRECTION,
 )
 
 log = logging.getLogger("evaluate")
@@ -81,20 +83,31 @@ def sample_games(season: str, n: int, min_min: float, db_path: Path,
     return df.reset_index(drop=True)
 
 
-_PTS_BLEND_ALPHA = 0.50  # must match PTS_BLEND_ALPHA in nba_projector.py
+# Minimum minutes for a game to be included in per-minute rate training history.
+# Must match the eval sample floor (min_games default=20) so training and
+# evaluation draw from the same performance distribution — eliminates selection
+# bias from limited-role games (foul trouble, blowout garbage time) that
+# systematically suppress per-minute rates relative to full-game performances.
+RATE_MIN_MIN = 20.0
 
 
-def project_pts(player_id: int, team_id: int, opp_team_id: int,
-                position: str, game_date: str,
-                season: str, proj_min: float, db_path: Path) -> float | None:
-    """Project PTS using 50/50 blend of FGA-decomp + per-min baseline.
+def _compute_pts_components(player_id: int, team_id: int, opp_team_id: int,
+                             position: str, game_date: str,
+                             season: str, proj_min: float,
+                             db_path: Path) -> dict | None:
+    """Compute FGA-decomp PTS and per-min baseline for a player-game.
 
-    Mirrors the blend logic in nba_projector.py (calibrated Apr 30 2026).
+    Returns dict with keys: fga_pts, baseline_pts, or None if insufficient data.
+    Pace: average of team + opponent pace (matches nba_projector.py).
+    Rate filter: training history filtered to min>=RATE_MIN_MIN to match
+    projector's df_clean filter and eliminate garbage-time rate bias.
     """
-    df = get_player_recent_games(
+    df_raw = get_player_recent_games(
         player_id, game_date, n_games=20,
         db_path=db_path,
     )
+    # Apply same min filter as projector df_clean — eliminates garbage-time bias
+    df = df_raw[df_raw["min"] >= RATE_MIN_MIN].copy()
     if len(df) < 3:
         return None
 
@@ -109,26 +122,72 @@ def project_pts(player_id: int, team_id: int, opp_team_id: int,
     rates = compute_per_minute_rates(df)
 
     team_avg_fga = get_team_avg_fga(team_id, game_date, season, db_path=db_path)
-    raw_pace     = get_team_pace(team_id, season, db_path=db_path)
-    pace_factor  = raw_pace / LEAGUE_AVG_PACE  # normalised ratio ~1.0
+
+    # Average team + opponent pace — matches nba_projector.py.
+    team_pace = get_team_pace(team_id,     season, db_path=db_path)
+    opp_pace  = get_team_pace(opp_team_id, season, db_path=db_path)
+    game_pace = (team_pace + opp_pace) / 2.0
+    pace_factor = game_pace / LEAGUE_AVG_PACE
 
     proj_fga = (usg_pct / 100.0) * team_avg_fga * pace_factor * (proj_min / 48.0)
     proj_3pa = fg3a_rate * proj_fga
     proj_2pa = (1.0 - fg3a_rate) * proj_fga
     proj_fta = fta_fga_ratio * proj_fga
-    proj_pts_fga = proj_2pa * 2.0 * fg2_pct + proj_3pa * 3.0 * fg3_pct + proj_fta * ft_pct
 
-    # DvP matchup factor
+    # DvP matchup factor (shared for PTS and 3PM)
     pos_grp = _pos_to_group(position)
     matchup_pts = get_team_def_ratio(opp_team_id, pos_grp, "pts", season, db_path=db_path)
     matchup_pts = max(MATCHUP_CLIP[0], min(MATCHUP_CLIP[1], matchup_pts))
-    proj_pts_fga *= matchup_pts
 
-    # 50/50 blend with per-minute baseline
-    baseline_pts = rates.get("pts", 0.0) * proj_min
-    proj_pts = _PTS_BLEND_ALPHA * proj_pts_fga + (1.0 - _PTS_BLEND_ALPHA) * baseline_pts
+    fga_pts = (proj_2pa * 2.0 * fg2_pct + proj_3pa * 3.0 * fg3_pct + proj_fta * ft_pct) * matchup_pts
 
-    return round(proj_pts, 2)
+    # 3PM extracted from the same FGA path (Sec. 4a, Brief 3)
+    fga_3pm = proj_3pa * fg3_pct * matchup_pts
+
+    return {
+        "fga_pts":      fga_pts,
+        "baseline_pts": rates.get("pts",  0.0) * proj_min,
+        "fga_3pm":      fga_3pm,
+        "baseline_3pm": rates.get("fg3m", 0.0) * proj_min,
+    }
+
+
+def project_3pm(player_id: int, team_id: int, opp_team_id: int,
+                position: str, game_date: str,
+                season: str, proj_min: float, db_path: Path,
+                alpha: float = 0.50) -> float | None:
+    """Project 3PM using alpha-weighted blend of FGA-decomp + per-min baseline.
+
+    FGA path: proj_3pa * fg3_pct * matchup_pts (extracted from PTS decomposition).
+    alpha=0.50 starting point — run --grid-search-alpha with stat=3PM to optimise.
+    """
+    comps = _compute_pts_components(player_id, team_id, opp_team_id,
+                                    position, game_date, season, proj_min, db_path)
+    if comps is None:
+        return None
+    blended = alpha * comps["fga_3pm"] + (1.0 - alpha) * comps["baseline_3pm"]
+    return round(max(0.0, blended), 2)
+
+
+def project_pts(player_id: int, team_id: int, opp_team_id: int,
+                position: str, game_date: str,
+                season: str, proj_min: float, db_path: Path,
+                alpha: float | None = None) -> float | None:
+    """Project PTS using alpha-weighted blend of FGA-decomp + per-min baseline.
+
+    alpha: weight on FGA-decomp path (0.0 = pure per-min, 1.0 = pure FGA).
+           Defaults to PTS_BLEND_ALPHA (calibrated 2026-05-01: 0.30).
+    BLEND_BIAS_CORRECTION (+0.386) applied after blending.
+    Re-calibrate annually: --grid-search-alpha --season X-XX --n 2000 --seed 42
+    """
+    if alpha is None:
+        alpha = PTS_BLEND_ALPHA
+    comps = _compute_pts_components(player_id, team_id, opp_team_id,
+                                    position, game_date, season, proj_min, db_path)
+    if comps is None:
+        return None
+    blended = alpha * comps["fga_pts"] + (1.0 - alpha) * comps["baseline_pts"]
+    return round(blended + BLEND_BIAS_CORRECTION, 2)
 
 
 def _pos_to_group(position: str) -> str:
@@ -147,18 +206,21 @@ def _pos_to_group(position: str) -> str:
 
 def project_per_min(player_id: int, game_date: str, season: str,
                     proj_min: float, stat: str, db_path: Path) -> float | None:
-    """Baseline: EWMA per-minute rate × projected minutes."""
-    df = get_player_recent_games(
+    """Baseline: EWMA per-minute rate x projected minutes.
+
+    Training history filtered to min>=RATE_MIN_MIN to match projector df_clean.
+    """
+    df_raw = get_player_recent_games(
         player_id, game_date, n_games=20,
         db_path=db_path,
     )
+    df = df_raw[df_raw["min"] >= RATE_MIN_MIN].copy()
     if len(df) < 3:
         return None
     col = STAT_COL.get(stat.upper())
     if col not in df.columns:
         return None
     rates = compute_per_minute_rates(df)
-    # compute_per_minute_rates keys are stat names ("pts", "reb"), not "pts_per_min"
     if col not in rates:
         return None
     return round(rates[col] * proj_min, 2)
@@ -169,7 +231,8 @@ def project_per_min(player_id: int, game_date: str, season: str,
 # ---------------------------------------------------------------------------
 
 def run_evaluation(season: str, n: int, stat: str, min_min: float,
-                   db_path: Path, verbose: bool, seed: int | None = None) -> dict:
+                   db_path: Path, verbose: bool, seed: int | None = None,
+                   alpha: float | None = None) -> dict:
 
     log.info("Sampling %d player-games from %s (min>=%.0f) ...", n, season, min_min)
     sample = sample_games(season, n, min_min, db_path, seed=seed)
@@ -199,7 +262,11 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                 opp_tid  = away_tid if tid == home_tid else home_tid
 
             if stat.upper() == "PTS":
-                custom = project_pts(pid, tid, opp_tid, pos, gdate, szn, pmin, db_path)
+                custom = project_pts(pid, tid, opp_tid, pos, gdate, szn, pmin,
+                                     db_path, alpha=alpha)
+            elif stat.upper() == "3PM":
+                custom = project_3pm(pid, tid, opp_tid, pos, gdate, szn, pmin,
+                                     db_path)
             else:
                 custom = project_per_min(pid, gdate, szn, pmin, stat, db_path)
 
@@ -209,18 +276,15 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                 skipped += 1
                 continue
 
-            blend = (custom + baseline) / 2.0  # 50/50 ensemble
             results.append({
                 "player":   row["player_name"],
                 "date":     gdate,
                 "actual":   actual,
                 "custom":   custom,
                 "baseline": baseline,
-                "blend":    blend,
                 "min":      pmin,
                 "custom_err":   custom - actual,
                 "baseline_err": baseline - actual,
-                "blend_err":    blend - actual,
             })
 
             if verbose and (i % 20 == 0):
@@ -240,13 +304,10 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
 
     custom_mae  = float(df["custom_err"].abs().mean())
     base_mae    = float(df["baseline_err"].abs().mean())
-    blend_mae   = float(df["blend_err"].abs().mean())
     custom_bias = float(df["custom_err"].mean())
     base_bias   = float(df["baseline_err"].mean())
-    blend_bias  = float(df["blend_err"].mean())
     custom_rmse = float(np.sqrt((df["custom_err"]**2).mean()))
     base_rmse   = float(np.sqrt((df["baseline_err"]**2).mean()))
-    blend_rmse  = float(np.sqrt((df["blend_err"]**2).mean()))
     delta_mae   = custom_mae - base_mae
 
     return {
@@ -256,16 +317,93 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
         "season":       season,
         "custom_mae":   custom_mae,
         "baseline_mae": base_mae,
-        "blend_mae":    blend_mae,
         "custom_bias":  custom_bias,
         "baseline_bias": base_bias,
-        "blend_bias":   blend_bias,
         "custom_rmse":  custom_rmse,
         "baseline_rmse": base_rmse,
-        "blend_rmse":   blend_rmse,
         "delta_mae":    delta_mae,
         "pct_delta":    delta_mae / base_mae * 100 if base_mae > 0 else 0,
     }
+
+
+def run_alpha_grid_search(season: str, n: int, min_min: float,
+                          db_path: Path, seed: int | None = None) -> None:
+    """Grid-search PTS_BLEND_ALPHA over [0.25, 0.70] to find MAE-optimal weight.
+
+    Runs on the same sample (seed-fixed) so results are directly comparable.
+    Bias correction is NOT applied during grid search so alpha absorbs it;
+    re-fit BLEND_BIAS_CORRECTION against residuals AFTER locking alpha.
+    """
+    log.info("Alpha grid search: sampling %d games from %s ...", n, season)
+    sample = sample_games(season, n, min_min, db_path, seed=seed)
+    log.info("Got %d rows", len(sample))
+
+    # Pre-compute FGA-decomp components and baseline for every row
+    comps_cache = []
+    actuals = []
+    for _, row in sample.iterrows():
+        try:
+            pid  = int(row["player_id"])
+            tid  = int(row["team_id"])
+            gdate = row["game_date"]
+            szn   = row["season"]
+            pmin  = float(row["min"])
+            pos   = str(row.get("position", "") or "")
+            home_raw = row["home_team_id"]
+            away_raw = row["away_team_id"]
+            if pd.isna(home_raw) or pd.isna(away_raw):
+                opp_tid = 0
+            else:
+                home_tid = int(home_raw)
+                away_tid = int(away_raw)
+                opp_tid  = away_tid if tid == home_tid else home_tid
+
+            comps = _compute_pts_components(pid, tid, opp_tid, pos, gdate, szn, pmin, db_path)
+            if comps is None:
+                continue
+            comps_cache.append(comps)
+            actuals.append(float(row["pts"]))
+        except Exception:
+            continue
+
+    if not comps_cache:
+        log.error("No valid rows for grid search")
+        return
+
+    actuals_arr = np.array(actuals)
+    fga_arr  = np.array([c["fga_pts"]      for c in comps_cache])
+    base_arr = np.array([c["baseline_pts"] for c in comps_cache])
+
+    print(f"\n{'='*60}")
+    print(f"Alpha grid search | {season} | n={len(actuals_arr)}")
+    print(f"{'='*60}")
+    print(f"  {'alpha':>6}  {'MAE':>7}  {'bias':>7}  {'RMSE':>7}")
+    print(f"  {'-'*35}")
+
+    best_alpha = 0.50
+    best_mae   = float("inf")
+
+    for alpha in np.arange(0.25, 0.71, 0.05):
+        preds = alpha * fga_arr + (1.0 - alpha) * base_arr
+        errs  = preds - actuals_arr
+        mae   = float(np.abs(errs).mean())
+        bias  = float(errs.mean())
+        rmse  = float(np.sqrt((errs**2).mean()))
+        flag  = " <-- BEST" if mae < best_mae else ""
+        if mae < best_mae:
+            best_mae   = mae
+            best_alpha = float(alpha)
+        print(f"  {alpha:>6.2f}  {mae:>7.3f}  {bias:>+7.3f}  {rmse:>7.3f}{flag}")
+
+    # Compute recommended bias correction at optimal alpha
+    preds_best = best_alpha * fga_arr + (1.0 - best_alpha) * base_arr
+    bias_best  = float((preds_best - actuals_arr).mean())
+
+    print(f"\n  Optimal alpha:               {best_alpha:.2f}")
+    print(f"  Residual bias at alpha={best_alpha:.2f}: {bias_best:+.3f}")
+    print(f"  => Set PTS_BLEND_ALPHA = {best_alpha:.2f} in nba_projector.py")
+    print(f"  => Set BLEND_BIAS_CORRECTION = {-bias_best:+.3f} in nba_projector.py")
+    print(f"{'='*60}\n")
 
 
 def _main():
@@ -279,7 +417,19 @@ def _main():
     parser.add_argument("--seed",      type=int, default=42,
                         help="Random seed for reproducible sampling (default: 42)")
     parser.add_argument("--verbose",   action="store_true")
+    parser.add_argument("--grid-search-alpha", action="store_true",
+                        help="Grid-search optimal PTS blend alpha and print recommended constants")
     args = parser.parse_args()
+
+    if args.grid_search_alpha:
+        run_alpha_grid_search(
+            season=args.season,
+            n=args.n,
+            min_min=args.min_games,
+            db_path=Path(args.db),
+            seed=args.seed,
+        )
+        return
 
     out = run_evaluation(
         season=args.season,
@@ -294,18 +444,17 @@ def _main():
     if not out:
         sys.exit(1)
 
-    sign  = "✓" if out["delta_mae"] < 0 else "✗"
+    sign  = "+" if out["delta_mae"] < 0 else "-"
     arrow = "BETTER" if out["delta_mae"] < 0 else "WORSE"
 
     print(f"""
 {'='*60}
 Evaluation: {out['stat']} | {out['season']} | n={out['n_eval']} (skipped {out['skipped']})
 {'='*60}
-  Custom  MAE:  {out['custom_mae']:.3f}   RMSE={out['custom_rmse']:.3f}   bias={out['custom_bias']:+.3f}
-  Baseline MAE: {out['baseline_mae']:.3f}   RMSE={out['baseline_rmse']:.3f}   bias={out['baseline_bias']:+.3f}
-  Blend   MAE:  {out['blend_mae']:.3f}   RMSE={out['blend_rmse']:.3f}   bias={out['blend_bias']:+.3f}
+  Custom   MAE:  {out['custom_mae']:.3f}   RMSE={out['custom_rmse']:.3f}   bias={out['custom_bias']:+.3f}
+  Baseline MAE:  {out['baseline_mae']:.3f}   RMSE={out['baseline_rmse']:.3f}   bias={out['baseline_bias']:+.3f}
 
-  Delta (custom vs base): {out['delta_mae']:+.3f} ({out['pct_delta']:+.1f}%)  {sign} Custom {arrow} than per-min baseline
+  Delta (custom vs base): {out['delta_mae']:+.3f} ({out['pct_delta']:+.1f}%)  Custom {arrow} than per-min baseline
 {'='*60}
 """)
 

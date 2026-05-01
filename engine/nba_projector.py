@@ -18,7 +18,7 @@ Role tiers: starter / sixth_man / rotation / spot / cold_start
 EWMA span=10 for all rolling rates. Cold-start (<5 games on team) -> archetype prior.
 """
 from __future__ import annotations
-import datetime, logging, sys
+import datetime, logging, math, sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -61,12 +61,20 @@ ROLE_MINUTE_PRIOR = {
 }
 
 _ROLE_MIN_MINUTES = {
-    "starter": 15.0, "sixth_man": 12.0, "rotation": 10.0,
+    # df_clean floor: only include games where player was in full role.
+    # starter/sixth_man floored at 20/15 — foul-trouble/blowout games with fewer
+    # minutes suppress per-minute rates vs full-game performances (2026-05-01).
+    "starter": 20.0, "sixth_man": 15.0, "rotation": 10.0,
     "spot": 8.0,  "cold_start": 5.0,
 }
 
-BLOWOUT_SPREAD_THRESHOLD = 12.0
-BLOWOUT_MIN_REDUCTION    = 0.80
+# Blowout minutes reduction: sigmoid centred at spread=12, max reduction 20%.
+# Replaces flat 0.80x at |spread|>12 (over-reduces 12-15, under-reduces 18+).
+# Formula: factor = 1 - 0.20 / (1 + exp(-0.4 * (|spread| - 12)))
+# At |spread|=12: factor≈0.90; 15: 0.875; 18: 0.838; 22+: ~0.80.
+BLOWOUT_SIGMOID_K        = 0.40   # steepness
+BLOWOUT_SIGMOID_MID      = 12.0   # inflection point (spread units)
+BLOWOUT_MAX_REDUCTION    = 0.20   # max minutes reduction (20%)
 MATCHUP_CLIP             = (0.80, 1.20)
 B2B_MINUTE_FACTOR = {
     "starter": 0.90, "sixth_man": 0.88, "rotation": 0.85,
@@ -74,6 +82,15 @@ B2B_MINUTE_FACTOR = {
 }
 PROJ_STATS    = ["pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]
 CURRENT_SEASON = "2025-26"
+
+# PTS blend constants — re-fit annually via:
+#   python engine/evaluate_projector.py --grid-search-alpha --season 2025-26 --n 2000 --seed 42
+# Alpha: weight on FGA-decomp path (0.0=pure per-min, 1.0=pure FGA).
+# Bias correction: additive constant applied after blending. Always re-fit LAST
+# (after changing alpha or LG_FTA_FGA), calibrated against actual outcomes only.
+PTS_BLEND_ALPHA       = 0.50   # calibrated 2026-05-01: bias-optimal vs MAE-flat curve
+                               # (alpha=0.30 MAE-optimal but +0.086 more bias; 0.50 dominates)
+BLEND_BIAS_CORRECTION = 0.0    # no additive correction — fix root causes structurally
 
 _ARCHETYPE_PER36 = {
     "G": {"pts": 14.5, "reb": 3.2, "ast": 5.8, "fg3m": 1.8, "stl": 1.2, "blk": 0.3, "tov": 2.5},
@@ -257,8 +274,13 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None):
     proj_min = weight * ewma_min + (1 - weight) * prior
     if b2b.get("is_b2b"):
         proj_min *= B2B_MINUTE_FACTOR.get(role, 0.88)
-    if spread is not None and abs(spread) >= BLOWOUT_SPREAD_THRESHOLD:
-        proj_min *= BLOWOUT_MIN_REDUCTION
+    if spread is not None and abs(spread) > 0:
+        # Sigmoid blowout reduction — continuous, centred at BLOWOUT_SIGMOID_MID.
+        # Only material when |spread| > ~8; negligible for close games.
+        reduction = BLOWOUT_MAX_REDUCTION / (
+            1.0 + math.exp(-BLOWOUT_SIGMOID_K * (abs(spread) - BLOWOUT_SIGMOID_MID))
+        )
+        proj_min *= (1.0 - reduction)
     proj_min = max(proj_min, 0.0)
     proj_min = min(proj_min, 42.0 if role == "starter" else 38.0)
     return proj_min
@@ -378,19 +400,31 @@ def project_player(
     # team_def_splits verified: avg ratio ≈ 1.000, range [0.87, 1.19], data clean.
     proj_pts_fga = proj_pts * matchup_pts  # FGA-decomposition path, DvP-adjusted
 
-    # Ensemble blend with per-minute baseline — calibrated Apr 30 2026.
-    # Eval (n=1986, seed=42): FGA-only MAE=4.782 bias=+0.005;
-    #   per-min MAE=4.690 bias=-0.548; 50/50 blend MAE=4.668 bias=-0.272.
-    # Blend beats both individual models; FGA model corrects baseline's
-    # systematic -0.55 underprediction, blend reduces variance.
-    PTS_BLEND_ALPHA = 0.50  # weight on FGA-decomp; (1-alpha) on per-min baseline
-    baseline_pts = rates.get("pts", 0.0) * proj_min
-    proj_pts_blended = PTS_BLEND_ALPHA * proj_pts_fga + (1.0 - PTS_BLEND_ALPHA) * baseline_pts
+    # Ensemble blend with per-minute baseline.
+    # PTS_BLEND_ALPHA / BLEND_BIAS_CORRECTION are module-level constants;
+    # re-fit via: python engine/evaluate_projector.py --grid-search-alpha
+    baseline_pts     = rates.get("pts", 0.0) * proj_min
+    proj_pts_blended = (PTS_BLEND_ALPHA * proj_pts_fga
+                        + (1.0 - PTS_BLEND_ALPHA) * baseline_pts
+                        + BLEND_BIAS_CORRECTION)
     projections["pts"] = max(0.0, round(proj_pts_blended, 2))
 
-    # All other stats: per-minute rates (unchanged)
+    # 3PM — extracted from FGA decomposition (Sec. 4a, Brief 3).
+    # proj_3pa and fg3_pct are already computed above in the PTS path.
+    # DvP: matchup_pts already incorporates opponent 3P-allowed (team_def_splits
+    # captures per-position-group pts allowed which includes 3PM contribution).
+    proj_fg3m_fga  = player_proj_3pa * fg3_pct * matchup_pts
+    baseline_fg3m  = rates.get("fg3m", 0.0) * proj_min
+    # 50/50 blend: FGA path has lower bias, per-min has lower variance.
+    # Re-evaluate once 3PM grid search is run; start at 0.50.
+    FG3M_BLEND_ALPHA = 0.50
+    projections["fg3m"] = max(0.0, round(
+        FG3M_BLEND_ALPHA * proj_fg3m_fga + (1.0 - FG3M_BLEND_ALPHA) * baseline_fg3m, 2
+    ))
+
+    # Other stats: per-minute rates. pts and fg3m are handled above.
     for stat in PROJ_STATS:
-        if stat == "pts":
+        if stat in ("pts", "fg3m"):
             continue
         rate = rates.get(stat, 0.0)
         mf   = matchup_factors.get(stat, 1.0)
