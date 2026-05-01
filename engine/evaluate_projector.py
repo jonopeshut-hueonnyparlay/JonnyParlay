@@ -29,9 +29,11 @@ from projections_db import (
 )
 from nba_projector import (
     compute_shooting_rates, compute_per_minute_rates, compute_reb_rates,
+    compute_ast_rate,
     EWMA_SPAN, LEAGUE_AVG_PACE, MATCHUP_CLIP,
     PTS_BLEND_ALPHA, BLEND_BIAS_CORRECTION,
     _REB_POS_OREB_PRIOR, _REB_POS_DREB_PRIOR, REB_ALPHA,
+    AST_ALPHA,
 )
 
 log = logging.getLogger("evaluate")
@@ -229,6 +231,39 @@ def project_per_min(player_id: int, game_date: str, season: str,
     return round(rates[col] * proj_min, 2)
 
 
+def project_ast(player_id: int, team_id: int, opp_team_id: int,
+                position: str, game_date: str,
+                season: str, proj_min: float, db_path: Path) -> float | None:
+    """Project AST via per-possession rate decomposition (Brief P3, Sec. 3).
+
+    Rate = player_ast / (team_pace * min/48), position-conditional EWMA + Bayesian shrinkage.
+    game_pace = (team_pace + opp_pace) / 2 at inference — incorporates opponent tempo.
+    """
+    df_raw = get_player_recent_games(player_id, game_date, n_games=20, db_path=db_path)
+    df = df_raw[df_raw["min"] >= RATE_MIN_MIN].copy()
+    if len(df) < 3:
+        return None
+
+    pos_group  = _pos_to_group(position)
+    team_pace  = get_team_pace(team_id,     season, db_path=db_path)
+    opp_pace   = get_team_pace(opp_team_id, season, db_path=db_path)
+    game_pace  = (team_pace + opp_pace) / 2.0
+
+    ast_rate = compute_ast_rate(df, team_pace, pos_group)
+    proj_poss = game_pace * proj_min / 48.0
+
+    matchup_ast = get_team_def_ratio(opp_team_id, pos_group, "ast", season, db_path=db_path)
+    matchup_ast = max(MATCHUP_CLIP[0], min(MATCHUP_CLIP[1], matchup_ast))
+
+    proj_ast_custom = ast_rate * proj_poss * matchup_ast
+
+    rates = compute_per_minute_rates(df)
+    baseline_ast = rates.get("ast", 0.0) * proj_min
+
+    blended = AST_ALPHA * proj_ast_custom + (1.0 - AST_ALPHA) * baseline_ast
+    return round(max(0.0, blended), 2)
+
+
 def project_reb(player_id: int, team_id: int, opp_team_id: int,
                 position: str, game_date: str,
                 season: str, proj_min: float, db_path: Path) -> float | None:
@@ -311,6 +346,9 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                                      db_path)
             elif stat.upper() == "REB":
                 custom = project_reb(pid, tid, opp_tid, pos, gdate, szn, pmin,
+                                     db_path)
+            elif stat.upper() == "AST":
+                custom = project_ast(pid, tid, opp_tid, pos, gdate, szn, pmin,
                                      db_path)
             else:
                 custom = project_per_min(pid, gdate, szn, pmin, stat, db_path)

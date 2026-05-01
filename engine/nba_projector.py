@@ -103,6 +103,19 @@ _REB_PRIOR_N_OREB   = 20   # shrinkage weight ≈ 20-game sample
 _REB_PRIOR_N_DREB   = 28   # stabilises slower — stronger shrinkage
 REB_ALPHA           = 0.45  # weight on decomposed path (lean baseline until rates stabilise)
 
+# AST decomposition constants (Brief P3, Sec. 3 — 2026-05-01)
+# AST rate per team possession: normalises for pace naturally; avoids per-FGA over-normalisation.
+# Position-conditional EWMA span: non-PGs have volatile AST roles → shorter span + stronger shrinkage.
+# G/F/C grouping: G prior = midpoint of brief's PG(0.140) and SG(0.075) = 0.110.
+_AST_EWMA_SPAN = {"G": 10, "F": 6, "C": 5}
+# Priors calibrated from 2024-25 DB (min>=20, Regular Season) — 2026-05-01.
+# Brief uses PG/SG split (0.140/0.075); our G bucket is dominated by SGs and combo
+# guards, so the midpoint (0.110) massively overstates the actual DB average (0.073).
+# Empirical: G=0.073, F=0.050, C=0.045. Re-calibrate annually from DB.
+_AST_POS_PRIOR = {"G": 0.073, "F": 0.050, "C": 0.045}  # AST per team possession
+_AST_PRIOR_N   = {"G":  22,  "F":  32,    "C":  35}    # shrinkage weight (games equivalent)
+AST_ALPHA      = 0.40   # lean toward baseline until rates stabilise over longer sample
+
 _ARCHETYPE_PER36 = {
     "G": {"pts": 14.5, "reb": 3.2, "ast": 5.8, "fg3m": 1.8, "stl": 1.2, "blk": 0.3, "tov": 2.5},
     "F": {"pts": 13.8, "reb": 5.8, "ast": 2.8, "fg3m": 1.2, "stl": 0.9, "blk": 0.6, "tov": 1.8},
@@ -184,6 +197,43 @@ def compute_reb_rates(df_clean: pd.DataFrame,
     oreb_rate = (n_games * oreb_ewma + _REB_PRIOR_N_OREB * oreb_prior) / (n_games + _REB_PRIOR_N_OREB)
     dreb_rate = (n_games * dreb_ewma + _REB_PRIOR_N_DREB * dreb_prior) / (n_games + _REB_PRIOR_N_DREB)
     return float(oreb_rate), float(dreb_rate)
+
+
+def compute_ast_rate(df_clean: pd.DataFrame,
+                     team_pace: float,
+                     pos_group: str) -> float:
+    """Bayesian-shrunk AST rate per team possession (Brief P3, Sec. 3).
+
+    Rate formula per game i:
+        ast_rate[i] = player_ast[i] / (team_pace * min[i] / 48)
+
+    EWMA span is position-conditional (non-PGs have volatile AST roles):
+        G=10, F=6, C=5.
+    Shrinkage to positional priors is stronger for non-PGs.
+
+    Returns rate in units of [assists per team-possession-equivalent].
+    """
+    prior   = _AST_POS_PRIOR.get(pos_group, 0.055)
+    prior_n = _AST_PRIOR_N.get(pos_group, 28)
+    span    = _AST_EWMA_SPAN.get(pos_group, 8)
+
+    if df_clean.empty or "ast" not in df_clean.columns:
+        return prior
+
+    d = df_clean.sort_values("game_date").copy()
+    n_games = len(d)
+
+    # Possessions available to the player in each game (scaled by minutes fraction)
+    poss_per_game = (team_pace * d["min"] / 48.0).clip(lower=0.1)
+    ast_raw = (
+        d["ast"].fillna(0) / poss_per_game
+    ).replace([np.inf, -np.inf], np.nan).fillna(prior)
+
+    ast_ewma = float(ast_raw.ewm(span=span, min_periods=1).mean().iloc[-1])
+
+    # Bayesian shrinkage to positional prior
+    ast_rate = (n_games * ast_ewma + prior_n * prior) / (n_games + prior_n)
+    return float(ast_rate)
 
 
 def compute_shooting_rates(df) -> dict:
@@ -492,9 +542,20 @@ def project_player(
     proj_reb        = REB_ALPHA * proj_reb_custom + (1.0 - REB_ALPHA) * baseline_reb
     projections["reb"] = max(0.0, round(proj_reb, 2))
 
-    # Other stats: per-minute rates. pts, fg3m, and reb are handled above.
+    # AST: per-possession rate decomposition (Brief P3, Sec. 3).
+    # Rate normalised by team possessions — avoids over-normalising via FGA.
+    # Position-conditional EWMA span + Bayesian shrinkage (non-PGs volatile).
+    # game_pace = (team_pace + opp_pace) / 2 — incorporates opponent tempo.
+    ast_rate        = compute_ast_rate(df_clean, team_pace, pg)
+    proj_poss       = game_pace * proj_min / 48.0        # game-specific possessions
+    proj_ast_custom = ast_rate * proj_poss * matchup_ast  # DvP [0.80, 1.20]
+    baseline_ast    = rates.get("ast", 0.0) * proj_min
+    proj_ast        = AST_ALPHA * proj_ast_custom + (1.0 - AST_ALPHA) * baseline_ast
+    projections["ast"] = max(0.0, round(proj_ast, 2))
+
+    # Other stats: per-minute rates. pts, fg3m, reb, and ast are handled above.
     for stat in PROJ_STATS:
-        if stat in ("pts", "fg3m", "reb"):
+        if stat in ("pts", "fg3m", "reb", "ast"):
             continue
         rate = rates.get(stat, 0.0)
         mf   = matchup_factors.get(stat, 1.0)
