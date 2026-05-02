@@ -134,9 +134,10 @@ BLEND_BIAS_CORRECTION = 0.0    # no additive correction — fix root causes stru
 # Model OREB and DREB separately via available-rebound denominators.
 # OREB: player OREB / (team_misses * min/48). Stabilises ~200-250 possessions (~20 games).
 # DREB: player DREB / (opp_misses * min/48).  Stabilises ~250-300 possessions (~28 games).
-# Positional priors calibrated from 2024-25 NBA averages.
-_REB_POS_OREB_PRIOR = {"G": 0.022, "F": 0.044, "C": 0.078}   # OREB per team miss/48
-_REB_POS_DREB_PRIOR = {"G": 0.078, "F": 0.133, "C": 0.200}   # DREB per opp miss/48
+# Positional priors calibrated from 2024-25 DB (min>=10, Regular Season) — P15 2026-05-01.
+# Denominator: (tm_fga - tm_fgm + 0.44*tm_fta) * min/48 — matches compute_reb_rates().
+_REB_POS_OREB_PRIOR = {"G": 0.02043, "F": 0.03247, "C": 0.07048}  # OREB per team miss/48
+_REB_POS_DREB_PRIOR = {"G": 0.08086, "F": 0.10569, "C": 0.17162}  # DREB per opp miss/48
 _REB_PRIOR_N_OREB   = 20   # shrinkage weight ≈ 20-game sample
 _REB_PRIOR_N_DREB   = 28   # stabilises slower — stronger shrinkage
 REB_ALPHA           = 0.45  # weight on decomposed path (lean baseline until rates stabilise)
@@ -161,7 +162,9 @@ FG3M_BLEND_ALPHA = 0.50  # weight on FGA-decomp path for 3PM; re-evaluate after 
 # compute_stl_blk_rates() and compute_tov_rate() now normalise training data by
 # (team_pace * min / 48) — matching the per-possession basis used by compute_ast_rate().
 # Projection: rate_per_poss * proj_poss * matchup  (pace_factor multiplier removed).
-_STL_POS_PRIOR = {"G": 0.01606, "F": 0.01206, "C": 0.00936}  # STL per possession
+# P15 (2026-05-01): re-calibrated from 2024-25 DB (min>=10, Regular Season).
+# Denominator: team_pace * min / 48 — matches compute_stl_blk_rates().
+_STL_POS_PRIOR = {"G": 0.01830, "F": 0.01664, "C": 0.01405}  # STL per possession
 _STL_PRIOR_N   = 25  # shrinkage weight — STL is noisy, strong prior needed
 
 # BLK priors: centers split into non-blockers (C_low) and rim protectors (C_high).
@@ -169,10 +172,12 @@ _STL_PRIOR_N   = 25  # shrinkage weight — STL is noisy, strong prior needed
 # threshold unchanged — classification is independent of the rate training basis).
 _BLK_CENTER_SPLIT_THRESHOLD = 0.030   # BLK/min cutoff for center classification (per-minute)
 _BLK_POS_PRIOR = {
-    "G":      0.00400,  # guards      — 0.0083/min * 0.4824
-    "F":      0.00806,  # forwards    — 0.0167/min * 0.4824
-    "C_low":  0.00965,  # non-blockers — 0.020/min * 0.4824
-    "C_high": 0.03618,  # rim protectors — 0.075/min * 0.4824
+    # P15 (2026-05-01): re-calibrated from 2024-25 DB (min>=10, Regular Season).
+    # C_low/C_high split uses same _BLK_CENTER_SPLIT_THRESHOLD=0.030 BLK/min.
+    "G":      0.00537,  # guards
+    "F":      0.00805,  # forwards
+    "C_low":  0.00886,  # non-blockers
+    "C_high": 0.02415,  # rim protectors
 }
 _BLK_PRIOR_N = {
     "G":     30,   # strong shrinkage — BLK noisy for non-centers
