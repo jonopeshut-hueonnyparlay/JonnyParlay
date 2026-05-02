@@ -32,12 +32,22 @@ except ImportError:
 
 DB_PATH: Path = DATA_DIR / "projections.db"
 
-# Era weights per research report §6.6
+# Era weights — exponential decay, half-life ≈ 2.8 seasons (Research Brief 5, 2026-05-02).
+# Formula: exp(-0.25 * seasons_ago). Bubble/compressed seasons additionally down-weighted.
+# 2019-20 and 2020-21 are included in the lookup but NOT in DEFAULT_SEASONS — they must be
+# pulled explicitly via pull_all_data(seasons=[...]) before they contribute to projections.
 SEASON_ERA_WEIGHTS: Dict[str, float] = {
-    "2021-22": 0.15, "2022-23": 0.30, "2023-24": 0.50,
-    "2024-25": 0.75, "2025-26": 1.00,
+    "2019-20": 0.11,  # bubble — exp(-0.25*6) * 0.5 ; not in DEFAULT_SEASONS
+    "2020-21": 0.20,  # compressed — exp(-0.25*5) * 0.7 ; not in DEFAULT_SEASONS
+    "2021-22": 0.37,  # exp(-0.25*4) ; was 0.15
+    "2022-23": 0.47,  # exp(-0.25*3) ; was 0.30
+    "2023-24": 0.61,  # exp(-0.25*2) ; was 0.50
+    "2024-25": 0.78,  # exp(-0.25*1) ; was 0.75
+    "2025-26": 1.00,
 }
-DEFAULT_SEASONS: List[str] = list(SEASON_ERA_WEIGHTS.keys())
+DEFAULT_SEASONS: List[str] = [
+    "2021-22", "2022-23", "2023-24", "2024-25", "2025-26",
+]
 
 _API_SLEEP        = 0.65
 _API_RETRY_MAX    = 3
@@ -570,14 +580,18 @@ def get_player_recent_games(player_id: int, before_date: str,
     """
     conn = get_conn(db_path)
     sc = "AND g.season = :season" if season_filter else ""
-    # Join team game totals so caller can compute USG% per game
+    # Join team game totals so caller can compute USG% per game.
+    # L6: also join a per-game total-pts subquery to derive final_margin
+    # (abs difference between the two teams' total pts).  Used by
+    # compute_availability_weights() for the blowout-proxy garbage-time filter.
     df = pd.read_sql_query(
         f"SELECT pgs.game_id,g.game_date,g.season,g.era_weight,"
         f" pgs.team_id,pgs.min,pgs.pts,pgs.reb,pgs.ast,pgs.fg3m,"
         f" pgs.stl,pgs.blk,pgs.tov,pgs.fgm,pgs.fga,pgs.fg3a,"
         f" pgs.ftm,pgs.fta,pgs.oreb,pgs.dreb,"
         f" pgs.plus_minus,pgs.ts_pct,pgs.starter_flag,"
-        f" tm.tm_fga,tm.tm_fta,tm.tm_tov,tm.tm_min"
+        f" tm.tm_fga,tm.tm_fta,tm.tm_tov,tm.tm_min,"
+        f" ABS(COALESCE(scr.s1,0) - COALESCE(scr.s2,0)) AS game_margin"
         f" FROM player_game_stats pgs"
         f" JOIN games g ON g.game_id=pgs.game_id"
         f" JOIN ("
@@ -586,6 +600,17 @@ def get_player_recent_games(player_id: int, before_date: str,
         f"          SUM(tov) AS tm_tov, SUM(min) AS tm_min"
         f"   FROM player_game_stats GROUP BY game_id,team_id"
         f" ) tm ON tm.game_id=pgs.game_id AND tm.team_id=pgs.team_id"
+        f" LEFT JOIN ("
+        f"   SELECT game_id,"
+        f"          MAX(CASE WHEN rn=1 THEN team_pts END) AS s1,"
+        f"          MAX(CASE WHEN rn=2 THEN team_pts END) AS s2"
+        f"   FROM ("
+        f"     SELECT game_id, team_id, SUM(pts) AS team_pts,"
+        f"            ROW_NUMBER() OVER (PARTITION BY game_id"
+        f"                               ORDER BY team_id) AS rn"
+        f"     FROM player_game_stats GROUP BY game_id,team_id"
+        f"   ) GROUP BY game_id"
+        f" ) scr ON scr.game_id=pgs.game_id"
         f" WHERE pgs.player_id=:pid AND g.game_date<:before"
         f" AND pgs.min>=:mm {sc}"
         f" ORDER BY g.game_date DESC LIMIT :n",
@@ -767,10 +792,43 @@ def get_team_avg_fga(team_id: int, before_date: str,
     return float(row[0]) if row and row[0] else 85.0  # league-avg fallback
 
 
+def get_player_career_avg_minutes(
+    player_id: int,
+    current_season: str,
+    db_path: Path = DB_PATH,
+    min_games: int = 10,
+) -> Optional[float]:
+    """Return the player's career average minutes per game, excluding the current season.
+
+    Uses all prior seasons in the DB where the player played >= min_games.
+    Returns None if no qualifying history exists (true first-year / data gap).
+    Used by the cold-start pipeline to replace the flat 16.0 MPG prior with an
+    empirical per-player prior when available (task #2, 2026-05-02).
+    """
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT AVG(pgs.min)
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE pgs.player_id = ?
+              AND g.season != ?
+              AND pgs.min >= 5
+            GROUP BY pgs.player_id
+            HAVING COUNT(*) >= ?
+            """,
+            (player_id, current_season, min_games),
+        ).fetchone()
+    finally:
+        conn.close()
+    return float(row[0]) if row else None
+
+
 def get_player_season_game_count(player_id: int, season: str,
                                   team_id: Optional[int] = None,
                                   db_path: Path = DB_PATH) -> int:
-    """Games played by player this season.  < 5 => cold-start pipeline."""
+    """Games played by player this season.  < 10 => cold-start pipeline."""
     conn = get_conn(db_path)
     tc = "AND pgs.team_id=?" if team_id else ""
     params: list = [player_id, season]
@@ -783,6 +841,135 @@ def get_player_season_game_count(player_id: int, season: str,
         params).fetchone()
     conn.close()
     return int(row[0]) if row else 0
+
+
+def get_player_trade_context(
+    player_id: int,
+    season: str,
+    current_team_id: int,
+    before_date: str,
+    db_path: Path = DB_PATH,
+) -> Optional[dict]:
+    """Detect if a player changed teams this season and return prior-team context.
+
+    Returns a dict if the player has < 7 games on the current team AND played
+    for a different team earlier this season:
+        {
+            "prev_team_id":     int,
+            "games_on_new_team": int,   # games played for current_team_id (min>=5)
+            "prev_team_df":     pd.DataFrame,  # recent games on prior team (n<=20)
+        }
+    Returns None if no trade is detected or if player has >= 7 new-team games
+    (blend window closed).
+    """
+    _BLEND_WINDOW = 6  # applies blend for games 1-6 on new team
+
+    conn = get_conn(db_path)
+
+    # Games on current team this season (qualifying minutes threshold: 5)
+    row_new = conn.execute(
+        "SELECT COUNT(*) FROM player_game_stats pgs"
+        " JOIN games g ON g.game_id=pgs.game_id"
+        " WHERE pgs.player_id=? AND g.season=? AND pgs.team_id=?"
+        " AND pgs.min>=5 AND g.game_date<?",
+        (player_id, season, current_team_id, before_date),
+    ).fetchone()
+    games_on_new_team = int(row_new[0]) if row_new else 0
+
+    if games_on_new_team > _BLEND_WINDOW or games_on_new_team == 0:
+        conn.close()
+        return None  # outside blend window or no games yet
+
+    # Find most recent prior team this season (different from current_team_id)
+    row_prev = conn.execute(
+        "SELECT pgs.team_id FROM player_game_stats pgs"
+        " JOIN games g ON g.game_id=pgs.game_id"
+        " WHERE pgs.player_id=? AND g.season=? AND pgs.team_id!=?"
+        " AND pgs.min>=5 AND g.game_date<?"
+        " ORDER BY g.game_date DESC LIMIT 1",
+        (player_id, season, current_team_id, before_date),
+    ).fetchone()
+
+    if row_prev is None:
+        conn.close()
+        return None  # no prior team this season
+
+    prev_team_id = int(row_prev[0])
+
+    # Fetch last 20 qualifying games on prior team (for rate estimation)
+    prev_df = pd.read_sql_query(
+        "SELECT pgs.*,g.game_date,g.era_weight"
+        " FROM player_game_stats pgs"
+        " JOIN games g ON g.game_id=pgs.game_id"
+        " WHERE pgs.player_id=? AND pgs.team_id=? AND pgs.min>=5"
+        " ORDER BY g.game_date DESC LIMIT 20",
+        conn,
+        params=(player_id, prev_team_id),
+    )
+    conn.close()
+
+    return {
+        "prev_team_id":      prev_team_id,
+        "games_on_new_team": games_on_new_team,
+        "prev_team_df":      prev_df,
+    }
+
+
+def get_team_typical_mpg(
+    team_id: int,
+    season: str,
+    before_date: str,
+    min_mpg_threshold: float = 12.0,
+    db_path: Path = DB_PATH,
+) -> Dict[int, float]:
+    """Return {player_id: avg_min} for players who averaged ≥ min_mpg_threshold
+    minutes for team_id in the given season before before_date.
+
+    Minimum 5 qualifying games (min >= 5) required to appear.
+    Used by L4 availability weighting to identify "key" teammates whose
+    absence inflates/deflates the target player's rate estimates.
+    """
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT pgs.player_id, AVG(pgs.min) AS avg_min"
+        " FROM player_game_stats pgs"
+        " JOIN games g ON g.game_id = pgs.game_id"
+        " WHERE pgs.team_id = ? AND g.season = ? AND g.game_date < ?"
+        " AND pgs.min >= 5"
+        " GROUP BY pgs.player_id"
+        " HAVING COUNT(*) >= 5 AND AVG(pgs.min) >= ?",
+        (team_id, season, before_date, min_mpg_threshold),
+    ).fetchall()
+    conn.close()
+    return {int(r[0]): float(r[1]) for r in rows}
+
+
+def get_team_game_participants(
+    team_id: int,
+    game_ids: List[str],
+    db_path: Path = DB_PATH,
+) -> Dict[str, set]:
+    """Return {game_id: set(player_ids)} for players who played ≥ 5 min
+    for team_id in each of the given game_ids.
+
+    Used by L4 availability weighting to check which key teammates were
+    present in each training game.
+    """
+    if not game_ids:
+        return {}
+    conn = get_conn(db_path)
+    placeholders = ",".join("?" * len(game_ids))
+    rows = conn.execute(
+        f"SELECT pgs.game_id, pgs.player_id FROM player_game_stats pgs"
+        f" WHERE pgs.team_id = ? AND pgs.game_id IN ({placeholders})"
+        f" AND pgs.min >= 5",
+        (team_id, *game_ids),
+    ).fetchall()
+    conn.close()
+    result: Dict[str, set] = {gid: set() for gid in game_ids}
+    for gid, pid in rows:
+        result[str(gid)].add(int(pid))
+    return result
 
 
 def get_team_pace(team_id: int, season: str,

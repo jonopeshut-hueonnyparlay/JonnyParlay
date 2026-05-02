@@ -42,6 +42,7 @@ if str(_HERE) not in sys.path:
 
 from projections_db import (
     DB_PATH, get_player_recent_games, get_player_season_game_count,
+    get_player_career_avg_minutes,
     get_team_pace, get_team_def_ratio, get_player_b2b_context,
     get_all_active_players, get_games_for_date, upsert_projection, get_conn,
     get_team_avg_fga, get_team_shooting_stats,
@@ -101,7 +102,9 @@ OT_MIN_CAP = 44.0
 # Skip teams below TEAM_MIN_FLOOR (incomplete roster / heavy DNP day).
 TEAM_MIN_TARGET = 240.0
 TEAM_MIN_FLOOR  = 180.0   # below this, roster is incomplete — do not scale
-MIN_GAMES_FOR_TIER = 5
+MIN_GAMES_FOR_TIER = 10   # raised from 5 (task #2, 2026-05-02): more games needed
+                          # before EWMA rates are stable; players with 5-9 games
+                          # now use career-history prior minutes instead of flat 16 MPG
 
 # L4 — Availability weighting constants (Research Brief 5, 2026-05-02).
 # "Key" teammate threshold: players averaging ≥ 12 MPG whose absence inflates
@@ -849,7 +852,14 @@ def _compute_days_rest_reduction(days_rest: int, role: str) -> float:
     return 1.0 - reduction  # return multiplicative factor
 
 
-def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None):
+def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None,
+                    minutes_prior_override=None):
+    """Project minutes for a player.
+
+    minutes_prior_override: when supplied (task #2 career-history prior), replaces
+        the flat ROLE_MINUTE_PRIOR for cold_start players.  Has no effect for other
+        roles (override is None for starter/rotation/etc).
+    """
     if injury_minutes_override is not None:
         return float(injury_minutes_override)
     if not df.empty:
@@ -860,9 +870,9 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None):
         ewma_min = float(min_series.ewm(span=EWMA_SPAN_MIN, min_periods=1).mean().iloc[-1])
         weight = min(len(clean) / 20.0, 1.0)
     else:
-        ewma_min = ROLE_MINUTE_PRIOR[role]
+        ewma_min = minutes_prior_override if minutes_prior_override is not None else ROLE_MINUTE_PRIOR[role]
         weight   = 0.0
-    prior    = ROLE_MINUTE_PRIOR[role]
+    prior    = minutes_prior_override if minutes_prior_override is not None else ROLE_MINUTE_PRIOR[role]
     proj_min = weight * ewma_min + (1 - weight) * prior
 
     # Days-rest reduction: continuous variable replaces binary B2B flag (Brief P3, Sec. 6b).
@@ -922,11 +932,18 @@ def project_player(
     )
 
     is_cold_start = games_on_team < MIN_GAMES_FOR_TIER
+    career_min_prior = None   # populated below for cold_start only
     if is_cold_start:
         role     = "cold_start"
         rates    = cold_start_rates(position)
         rates    = {k: v / 36.0 for k, v in rates.items()}
         df_clean = df
+        # Task #2: replace flat 16 MPG prior with player's career avg minutes
+        # from prior seasons when available (min 10 games of history).
+        # Falls back to ROLE_MINUTE_PRIOR["cold_start"]=16.0 if no history.
+        career_min_prior = get_player_career_avg_minutes(
+            player_id, current_season=season, db_path=db_path
+        )
     else:
         role = classify_role(df)
 
@@ -950,7 +967,8 @@ def project_player(
         rates    = compute_per_minute_rates(df_clean, avail_weights=avail_weights)
 
     proj_min = project_minutes(role, df_clean, b2b, spread=spread,
-                               injury_minutes_override=injury_minutes_override)
+                               injury_minutes_override=injury_minutes_override,
+                               minutes_prior_override=career_min_prior)
     if proj_min < 1.0:
         return None
 
