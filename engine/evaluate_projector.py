@@ -25,7 +25,7 @@ if str(_HERE) not in sys.path:
 from projections_db import (
     DB_PATH, get_conn, get_player_recent_games, get_team_avg_fga,
     get_team_pace, get_player_b2b_context, get_team_def_ratio,
-    get_team_shooting_stats,
+    get_team_shooting_stats, get_player_season_game_count,
 )
 from projections_db import get_team_tov_rate
 from nba_projector import (
@@ -36,6 +36,7 @@ from nba_projector import (
     _REB_POS_OREB_PRIOR, _REB_POS_DREB_PRIOR, REB_ALPHA,
     AST_ALPHA, LEAGUE_AVG_TOV_RATE,
     _STL_POS_PRIOR, _STL_PRIOR_N,
+    project_minutes, classify_role, _ROLE_MIN_MINUTES, MIN_GAMES_FOR_TIER,
 )
 
 log = logging.getLogger("evaluate")
@@ -55,6 +56,31 @@ STAT_COL = {
     "PTS": "pts", "REB": "reb", "AST": "ast",
     "3PM": "fg3m", "STL": "stl", "BLK": "blk",
 }
+
+
+def _get_proj_min(player_id: int, team_id: int, game_date: str,
+                  season: str, spread: float | None,
+                  db_path: Path) -> float:
+    """Return projected minutes using the same logic as project_player().
+
+    Used by P12 walk-forward eval to replace cheating actual-minutes inputs.
+    Falls back to role prior if history is insufficient.
+    """
+    df_raw = get_player_recent_games(player_id, game_date, n_games=30,
+                                     season_filter=season, db_path=db_path)
+    games_on_team = get_player_season_game_count(player_id, season, team_id, db_path)
+    b2b = get_player_b2b_context(player_id, game_date, db_path)
+
+    is_cold_start = games_on_team < MIN_GAMES_FOR_TIER
+    if is_cold_start or df_raw.empty:
+        role     = "cold_start"
+        df_clean = df_raw
+    else:
+        role    = classify_role(df_raw)
+        min_min = _ROLE_MIN_MINUTES[role]
+        df_clean = df_raw[df_raw["min"] >= min_min].copy()
+
+    return project_minutes(role, df_clean, b2b, spread=spread)
 
 
 def sample_games(season: str, n: int, min_min: float, db_path: Path,
@@ -269,32 +295,44 @@ def project_ast(player_id: int, team_id: int, opp_team_id: int,
 def project_stl(player_id: int, team_id: int, opp_team_id: int,
                 position: str, game_date: str, season: str,
                 proj_min: float, db_path, *, alpha: float = 1.0):
-    """Custom STL projection: Bayesian-shrunk per-min rate x opp TOV factor."""
-    import numpy as np
-    from projections_db import get_player_recent_games
+    """STL projection: per-possession rate (P5) x proj_poss x opp TOV factor (P6).
+
+    P5: compute_stl_blk_rates now takes team_pace and returns per-possession rates.
+    Projection: stl_rate * proj_poss * matchup_stl
+    """
     df = get_player_recent_games(player_id, game_date, n_games=30,
                                   season_filter=season, db_path=db_path)
     min_min = 8.0
     df = df[df["min"] >= min_min].copy() if not df.empty else df
-    pos_group   = _pos_to_group(position)
-    stl_rate, _ = compute_stl_blk_rates(df, pos_group)
-    opp_tov     = get_team_tov_rate(opp_team_id, season, db_path)
+    pos_group  = _pos_to_group(position)
+    team_pace  = get_team_pace(team_id, season, db_path=db_path)
+    opp_pace   = get_team_pace(opp_team_id, season, db_path=db_path)
+    game_pace  = (team_pace + opp_pace) / 2.0
+    proj_poss  = game_pace * proj_min / 48.0
+    stl_rate, _ = compute_stl_blk_rates(df, pos_group, team_pace)
+    opp_tov    = get_team_tov_rate(opp_team_id, season, db_path)
     opp_tov_fac = float(np.clip(opp_tov / LEAGUE_AVG_TOV_RATE, 0.80, 1.30))
-    return max(0.0, stl_rate * proj_min * opp_tov_fac)
+    return max(0.0, stl_rate * proj_poss * opp_tov_fac)
 
 
 def project_blk(player_id: int, team_id: int, opp_team_id: int,
                 position: str, game_date: str, season: str,
                 proj_min: float, db_path, *, alpha: float = 1.0):
-    """Custom BLK projection: Bayesian-shrunk per-min rate (positional prior)."""
-    from projections_db import get_player_recent_games
+    """BLK projection: per-possession rate (P5) x proj_poss.
+
+    P5: compute_stl_blk_rates now takes team_pace and returns per-possession rates.
+    """
     df = get_player_recent_games(player_id, game_date, n_games=30,
                                   season_filter=season, db_path=db_path)
     min_min = 8.0
     df = df[df["min"] >= min_min].copy() if not df.empty else df
-    pos_group   = _pos_to_group(position)
-    _, blk_rate = compute_stl_blk_rates(df, pos_group)
-    return max(0.0, blk_rate * proj_min)
+    pos_group  = _pos_to_group(position)
+    team_pace  = get_team_pace(team_id, season, db_path=db_path)
+    opp_pace   = get_team_pace(opp_team_id, season, db_path=db_path)
+    game_pace  = (team_pace + opp_pace) / 2.0
+    proj_poss  = game_pace * proj_min / 48.0
+    _, blk_rate = compute_stl_blk_rates(df, pos_group, team_pace)
+    return max(0.0, blk_rate * proj_poss)
 
 
 def project_reb(player_id: int, team_id: int, opp_team_id: int,
@@ -342,11 +380,18 @@ def project_reb(player_id: int, team_id: int, opp_team_id: int,
 
 def run_evaluation(season: str, n: int, stat: str, min_min: float,
                    db_path: Path, verbose: bool, seed: int | None = None,
-                   alpha: float | None = None) -> dict:
+                   alpha: float | None = None,
+                   use_actual_min: bool = False) -> dict:
+    """Evaluate projection accuracy against DB history.
 
+    P12: use_actual_min=False (default) uses projected minutes, giving a
+    realistic error surface.  Pass --use-actual-min to recover the old
+    rate-only MAE for direct comparison.
+    """
     log.info("Sampling %d player-games from %s (min>=%.0f) ...", n, season, min_min)
     sample = sample_games(season, n, min_min, db_path, seed=seed)
-    log.info("Got %d rows", len(sample))
+    log.info("Got %d rows  [minutes_mode=%s]", len(sample),
+             "actual" if use_actual_min else "projected")
 
     col = STAT_COL.get(stat.upper(), "pts")
     results = []
@@ -354,22 +399,30 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
 
     for i, row in sample.iterrows():
         try:
-            actual = float(row[col])
-            pid    = int(row["player_id"])
-            tid    = int(row["team_id"])
-            gdate  = row["game_date"]
-            szn    = row["season"]
-            pmin   = float(row["min"])
-            pos    = str(row.get("position", "") or "")
-            # opponent = the other team in the game; guard against NULL
+            actual     = float(row[col])
+            actual_min = float(row["min"])
+            pid        = int(row["player_id"])
+            tid        = int(row["team_id"])
+            gdate      = row["game_date"]
+            szn        = row["season"]
+            pos        = str(row.get("position", "") or "")
+
+            # opponent — guard against NULL
             home_raw = row["home_team_id"]
             away_raw = row["away_team_id"]
             if pd.isna(home_raw) or pd.isna(away_raw):
-                opp_tid = 0  # unknown — DvP will return 1.0 fallback
+                opp_tid = 0
             else:
                 home_tid = int(home_raw)
                 away_tid = int(away_raw)
                 opp_tid  = away_tid if tid == home_tid else home_tid
+
+            # P12: projected vs actual minutes
+            if use_actual_min:
+                pmin = actual_min
+            else:
+                pmin = _get_proj_min(pid, tid, gdate, szn, spread=None,
+                                     db_path=db_path)
 
             if stat.upper() == "PTS":
                 custom = project_pts(pid, tid, opp_tid, pos, gdate, szn, pmin,
@@ -399,19 +452,23 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                 continue
 
             results.append({
-                "player":   row["player_name"],
-                "date":     gdate,
-                "actual":   actual,
-                "custom":   custom,
-                "baseline": baseline,
-                "min":      pmin,
-                "custom_err":   custom - actual,
+                "player":      row["player_name"],
+                "date":        gdate,
+                "actual":      actual,
+                "custom":      custom,
+                "baseline":    baseline,
+                "actual_min":  actual_min,
+                "proj_min":    pmin,
+                "min_err":     pmin - actual_min,
+                "custom_err":  custom - actual,
                 "baseline_err": baseline - actual,
             })
 
             if verbose and (i % 20 == 0):
-                log.info("  %s  %s  actual=%.1f  custom=%.1f  base=%.1f",
-                         row["player_name"], gdate, actual, custom, baseline)
+                log.info("  %s  %s  actual=%.1f  custom=%.1f  base=%.1f  "
+                         "proj_min=%.1f actual_min=%.1f",
+                         row["player_name"], gdate, actual, custom, baseline,
+                         pmin, actual_min)
         except Exception as exc:
             log.warning("Row %d error: %s", i, exc)
             skipped += 1
@@ -431,34 +488,42 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
     custom_rmse = float(np.sqrt((df["custom_err"]**2).mean()))
     base_rmse   = float(np.sqrt((df["baseline_err"]**2).mean()))
     delta_mae   = custom_mae - base_mae
+    min_mae     = float(df["min_err"].abs().mean())
+    min_bias    = float(df["min_err"].mean())
 
     return {
-        "n_eval":       n_eval,
-        "skipped":      skipped,
-        "stat":         stat.upper(),
-        "season":       season,
-        "custom_mae":   custom_mae,
-        "baseline_mae": base_mae,
-        "custom_bias":  custom_bias,
+        "n_eval":        n_eval,
+        "skipped":       skipped,
+        "stat":          stat.upper(),
+        "season":        season,
+        "use_actual_min": use_actual_min,
+        "custom_mae":    custom_mae,
+        "baseline_mae":  base_mae,
+        "custom_bias":   custom_bias,
         "baseline_bias": base_bias,
-        "custom_rmse":  custom_rmse,
+        "custom_rmse":   custom_rmse,
         "baseline_rmse": base_rmse,
-        "delta_mae":    delta_mae,
-        "pct_delta":    delta_mae / base_mae * 100 if base_mae > 0 else 0,
+        "delta_mae":     delta_mae,
+        "pct_delta":     delta_mae / base_mae * 100 if base_mae > 0 else 0,
+        "min_mae":       min_mae,
+        "min_bias":      min_bias,
     }
 
 
 def run_alpha_grid_search(season: str, n: int, min_min: float,
-                          db_path: Path, seed: int | None = None) -> None:
+                          db_path: Path, seed: int | None = None,
+                          use_actual_min: bool = False) -> None:
     """Grid-search PTS_BLEND_ALPHA over [0.25, 0.70] to find MAE-optimal weight.
 
     Runs on the same sample (seed-fixed) so results are directly comparable.
     Bias correction is NOT applied during grid search so alpha absorbs it;
     re-fit BLEND_BIAS_CORRECTION against residuals AFTER locking alpha.
+    P12: use projected minutes by default (use_actual_min=False).
     """
     log.info("Alpha grid search: sampling %d games from %s ...", n, season)
     sample = sample_games(season, n, min_min, db_path, seed=seed)
-    log.info("Got %d rows", len(sample))
+    log.info("Got %d rows  [minutes_mode=%s]", len(sample),
+             "actual" if use_actual_min else "projected")
 
     # Pre-compute FGA-decomp components and baseline for every row
     comps_cache = []
@@ -469,7 +534,6 @@ def run_alpha_grid_search(season: str, n: int, min_min: float,
             tid  = int(row["team_id"])
             gdate = row["game_date"]
             szn   = row["season"]
-            pmin  = float(row["min"])
             pos   = str(row.get("position", "") or "")
             home_raw = row["home_team_id"]
             away_raw = row["away_team_id"]
@@ -479,6 +543,13 @@ def run_alpha_grid_search(season: str, n: int, min_min: float,
                 home_tid = int(home_raw)
                 away_tid = int(away_raw)
                 opp_tid  = away_tid if tid == home_tid else home_tid
+
+            # P12: use projected or actual minutes
+            if use_actual_min:
+                pmin = float(row["min"])
+            else:
+                pmin = _get_proj_min(pid, tid, gdate, szn, spread=None,
+                                     db_path=db_path)
 
             comps = _compute_pts_components(pid, tid, opp_tid, pos, gdate, szn, pmin, db_path)
             if comps is None:
@@ -541,6 +612,8 @@ def _main():
     parser.add_argument("--verbose",   action="store_true")
     parser.add_argument("--grid-search-alpha", action="store_true",
                         help="Grid-search optimal PTS blend alpha and print recommended constants")
+    parser.add_argument("--use-actual-min", action="store_true",
+                        help="Use actual minutes (old behaviour). Default: projected minutes (P12)")
     args = parser.parse_args()
 
     if args.grid_search_alpha:
@@ -550,6 +623,7 @@ def _main():
             min_min=args.min_games,
             db_path=Path(args.db),
             seed=args.seed,
+            use_actual_min=args.use_actual_min,
         )
         return
 
@@ -561,6 +635,7 @@ def _main():
         db_path=Path(args.db),
         verbose=args.verbose,
         seed=args.seed,
+        use_actual_min=args.use_actual_min,
     )
 
     if not out:
@@ -568,15 +643,19 @@ def _main():
 
     sign  = "+" if out["delta_mae"] < 0 else "-"
     arrow = "BETTER" if out["delta_mae"] < 0 else "WORSE"
+    min_label = "actual" if out["use_actual_min"] else "projected"
 
     print(f"""
 {'='*60}
 Evaluation: {out['stat']} | {out['season']} | n={out['n_eval']} (skipped {out['skipped']})
+minutes_mode: {min_label}
 {'='*60}
   Custom   MAE:  {out['custom_mae']:.3f}   RMSE={out['custom_rmse']:.3f}   bias={out['custom_bias']:+.3f}
   Baseline MAE:  {out['baseline_mae']:.3f}   RMSE={out['baseline_rmse']:.3f}   bias={out['baseline_bias']:+.3f}
 
   Delta (custom vs base): {out['delta_mae']:+.3f} ({out['pct_delta']:+.1f}%)  Custom {arrow} than per-min baseline
+
+  Minutes MAE:   {out['min_mae']:.3f}   bias={out['min_bias']:+.3f}
 {'='*60}
 """)
 
