@@ -938,4 +938,23 @@ def _main():
     parser.add_argument("--season", default=CURRENT_SEASON)
     parser.add_argument("--db",     default=DB_PATH)
     parser.add_argument("--no-persist", action="store_true")
-    parser.
+    parser.add_argument("--top",    type=int, default=20)
+    args = parser.parse_args()
+
+    results = run_projections(
+        game_date=args.date, season=args.season,
+        db_path=args.db, persist=not args.no_persist,
+    )
+    if not results:
+        print("No projections generated.")
+        return
+
+    df   = pd.DataFrame(results).sort_values("proj_pts", ascending=False)
+    cols = ["player_name", "role_tier", "proj_min", "proj_pts",
+            "proj_reb", "proj_ast", "proj_fg3m", "pace_factor",
+            "matchup_factor_pts", "injury_status"]
+    print(df[cols].head(args.top).to_string(index=False))
+    print(f"\nTotal: {len(df)} players projected.")
+
+if __name__ == "__main__":
+    _main()
