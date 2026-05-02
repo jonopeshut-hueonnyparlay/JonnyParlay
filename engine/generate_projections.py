@@ -15,6 +15,9 @@ Options:
     --season STR        NBA season string (default: 2025-26)
     --out PATH          Override CSV output path
     --run-picks         Pass the output CSV to run_picks.py after generation
+    --shadow            Like --run-picks but logs to pick_log_custom.csv and
+                        skips all Discord posts. Use for parallel validation
+                        alongside live SaberSim picks.
     --dry-run           Generate CSV but do not invoke run_picks.py
     --no-persist        Do not persist projections to SQLite DB
     --verbose           Extra logging
@@ -22,12 +25,19 @@ Options:
 The generated CSV lands in data/projections/DATE_nba_custom.csv by default.
 It is schema-compatible with SaberSim -- parse_csv() in run_picks.py reads it
 without modification.
+
+Shadow mode (--shadow):
+    Runs run_picks.py with JONNYPARLAY_PICK_LOG=data/pick_log_custom.csv and
+    --no-discord. Picks are logged to the custom log only -- the live
+    pick_log.csv and Discord are untouched. Use clv_report.py --custom to
+    compare CLV between custom and SaberSim picks.
 """
 from __future__ import annotations
 
 import argparse
 import datetime
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -211,6 +221,8 @@ def main() -> None:
                         help="Override CSV output path")
     parser.add_argument("--run-picks",  action="store_true",
                         help="Invoke run_picks.py with the output CSV after generation")
+    parser.add_argument("--shadow",     action="store_true",
+                        help="Like --run-picks but logs to pick_log_custom.csv, no Discord posts")
     parser.add_argument("--dry-run",    action="store_true",
                         help="Generate CSV but do not invoke run_picks.py")
     parser.add_argument("--no-persist", action="store_true",
@@ -235,13 +247,20 @@ def main() -> None:
 
     print(f"\nCustom projection CSV: {csv_path}")
 
-    if args.run_picks and not args.dry_run:
+    invoke = args.run_picks or args.shadow
+    if invoke and not args.dry_run:
         run_picks_script = PROJECT_ROOT / "run_picks.py"
         if not run_picks_script.exists():
             run_picks_script = _HERE / "run_picks.py"
         cmd = [sys.executable, str(run_picks_script), str(csv_path)]
+        env = dict(os.environ)
+        if args.shadow:
+            custom_log = DATA_DIR / "pick_log_custom.csv"
+            env["JONNYPARLAY_PICK_LOG"] = str(custom_log)
+            cmd.append("--no-discord")
+            log.info("Shadow mode: logging to %s, Discord suppressed", custom_log)
         log.info("Invoking run_picks.py: %s", " ".join(cmd))
-        result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+        result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=env)
         sys.exit(result.returncode)
 
 

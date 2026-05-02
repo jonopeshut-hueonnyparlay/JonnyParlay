@@ -95,7 +95,10 @@ def data_path(*parts: str) -> Path:
 
 # Canonical file paths used across the engine. Keeping these in one
 # place means a path rename is a one-liner instead of a sweeping sed.
-PICK_LOG_PATH: Path = DATA_DIR / "pick_log.csv"
+# JONNYPARLAY_PICK_LOG env var overrides the default path — used by
+# generate_projections.py --shadow to route custom-projection picks to
+# a separate log (pick_log_custom.csv) without touching the live log.
+PICK_LOG_PATH: Path = Path(os.environ["JONNYPARLAY_PICK_LOG"]) if "JONNYPARLAY_PICK_LOG" in os.environ else DATA_DIR / "pick_log.csv"
 PICK_LOG_MANUAL_PATH: Path = DATA_DIR / "pick_log_manual.csv"
 PICK_LOG_MLB_PATH: Path = DATA_DIR / "pick_log_mlb.csv"
 DISCORD_GUARD_FILE: Path = DATA_DIR / "discord_posted.json"
