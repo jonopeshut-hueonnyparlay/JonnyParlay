@@ -91,6 +91,16 @@ EWMA_SPAN_STAT = {
 }
 EWMA_SPAN_SHOOTING = 10  # shooting efficiency rates (FG%, FT%, FG3A rate, USG%) — stable
 EWMA_SPAN_MIN      = 6   # minutes — coach-reactive; was 5, brief says 6 optimal
+# Task #4 (Research Brief 6, 2026-05-02): cap raw minutes before EWMA so OT games
+# (player played 44+ min) don't inflate the minutes baseline for future games.
+# Regulation max is ~42 min; anything ≥ 44 is almost certainly OT.
+OT_MIN_CAP = 44.0
+# Task #5 (Research Brief 6, 2026-05-02): 240-minute team constraint.
+# After projecting all players, scale team totals so proj_min sums to ≤ 240.
+# Stats are proportional to minutes, so scale all proj_* keys together.
+# Skip teams below TEAM_MIN_FLOOR (incomplete roster / heavy DNP day).
+TEAM_MIN_TARGET = 240.0
+TEAM_MIN_FLOOR  = 180.0   # below this, roster is incomplete — do not scale
 MIN_GAMES_FOR_TIER = 5
 
 # L4 — Availability weighting constants (Research Brief 5, 2026-05-02).
@@ -188,6 +198,20 @@ PLAYOFF_MINUTES_SCALAR = {
     "sixth_man": 0.909,   # 23.3 → 21.2 actual (-9.1%)
     "rotation":  0.786,   # 18.5 → 14.5 actual (-21.4%)
     "spot":      0.902,   # 14.2 → 12.8 actual (-9.8%)
+}
+
+# 1b. REGULAR_SEASON_MINUTES_SCALAR (Research Brief 6, 2026-05-02):
+#     Derived from 23,995 player-game records (2024-25 regular season).
+#     fast_min_ratio.py: mean(act_min / proj_min) per role_tier using same
+#     EWMA logic as project_minutes().  Starter/sixth_man essentially unbiased;
+#     rotation undershoots by 5.8%; spot prior (6.0 MPG) severely low for
+#     players who actually get run.
+REGULAR_SEASON_MINUTES_SCALAR = {
+    "starter":    1.0,     # ratio 1.013 — negligible
+    "sixth_man":  1.0,     # ratio 1.008 — negligible
+    "rotation":   1.058,   # ratio 1.058 — +5.8% consistent underprojection
+    "spot":       1.672,   # ratio 1.672 — prior=6 MPG too low for players who play
+    "cold_start": 1.151,   # ratio 1.151 — prior=16 MPG slightly low
 }
 
 # 2. PLAYOFF_RATE_DEFLATORS (genuine per-stat rate changes, not minutes-driven):
@@ -830,7 +854,10 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None):
         return float(injury_minutes_override)
     if not df.empty:
         clean = df.sort_values("game_date")
-        ewma_min = float(clean["min"].ewm(span=EWMA_SPAN_MIN, min_periods=1).mean().iloc[-1])
+        # Task #4: cap raw minutes at OT_MIN_CAP before EWMA so OT games
+        # (player_min > 44) don't inflate the minutes baseline for future games.
+        min_series = clean["min"].clip(upper=OT_MIN_CAP)
+        ewma_min = float(min_series.ewm(span=EWMA_SPAN_MIN, min_periods=1).mean().iloc[-1])
         weight = min(len(clean) / 20.0, 1.0)
     else:
         ewma_min = ROLE_MINUTE_PRIOR[role]
@@ -930,6 +957,8 @@ def project_player(
     is_playoff  = season_type == "Playoffs"
     if is_playoff:
         proj_min = round(proj_min * PLAYOFF_MINUTES_SCALAR.get(role, 1.0), 2)
+    else:
+        proj_min = round(proj_min * REGULAR_SEASON_MINUTES_SCALAR.get(role, 1.0), 2)
     # Always use Regular Season pace data (reliable); playoff pace DB entries
     # are often missing, causing the fallback (99.5) to inflate projections.
     # Playoff adjustment is handled by PLAYOFF_DEFLATOR below instead.
@@ -1244,6 +1273,26 @@ def run_projections(
 
     if persist and conn is not None:
         conn.commit(); conn.close()
+
+    # Task #5: 240-minute team constraint — scale team proj_min totals to ≤ 240.
+    _SCALE_KEYS = ["proj_pts", "proj_reb", "proj_ast", "proj_fg3m",
+                   "proj_blk", "proj_stl", "proj_tov"]
+    from collections import defaultdict as _dd
+    _by_team = _dd(list)
+    for p in results:
+        _by_team[p.get("team_id")].append(p)
+    for tid, tprojs in _by_team.items():
+        total_min = sum(p.get("proj_min", 0.0) for p in tprojs)
+        if total_min < TEAM_MIN_FLOOR or total_min <= TEAM_MIN_TARGET:
+            continue
+        scale = TEAM_MIN_TARGET / total_min
+        for p in tprojs:
+            p["proj_min"] = round(p.get("proj_min", 0.0) * scale, 2)
+            for k in _SCALE_KEYS:
+                if k in p:
+                    p[k] = round(p[k] * scale, 2)
+        log.debug("Team %s: 240-min constraint scaled %d players "
+                  "(%.1f -> 240.0 min, factor=%.4f)", tid, len(tprojs), total_min, scale)
 
     log.info("Projections complete: %d players", len(results))
     return results

@@ -145,9 +145,14 @@ class TestSizeSgp:
         legs = [_leg(fair_prob=0.72, edge=0.040)] * 3
         assert sgp.size_sgp(legs, cohesion_score=0.60) == sgp.SGP_SIZE_PREMIUM
 
-    def test_premium_fails_low_wp(self):
-        legs = [_leg(fair_prob=0.68, edge=0.040)] * 3  # avg_wp < 0.70
-        assert sgp.size_sgp(legs, cohesion_score=0.60) == sgp.SGP_SIZE_DEFAULT
+    def test_premium_fails_low_copula_ev(self):
+        # Gate is copula_ev_margin >= 0.10 (not avg_wp).  Inject a copula value
+        # that puts margin at 0.05 (below threshold) to verify DEFAULT is returned.
+        legs = [_leg(fair_prob=0.68, edge=0.040)] * 3
+        parlay_impl = sgp._implied_prob(sgp._parlay_american(legs))
+        low_copula = parlay_impl + 0.05   # margin 0.05 < 0.10
+        assert sgp.size_sgp(legs, cohesion_score=0.60,
+                            _copula_joint=low_copula) == sgp.SGP_SIZE_DEFAULT
 
     def test_premium_fails_low_cohesion(self):
         legs = [_leg(fair_prob=0.72, edge=0.040)] * 3
