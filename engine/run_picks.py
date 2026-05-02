@@ -265,6 +265,17 @@ SIGMA = {
 POISSON_STATS = {"AST", "REB", "SOG", "REC", "K", "HITS"}
 POISSON_CUTOFF = 8.5
 
+# P16 — Negative binomial distribution for overdispersed count stats.
+# NB(mu, r): var = mu + mu²/r.  r calibrated from within-player conditional variance
+# (avg_var / avg_mu per player across 2024-25 DB), NOT population-level cross-player variance.
+#   3PM: avg(var/mu)=1.119 across n=418 player-seasons → r = mu²/(var-mu) = avg_mu²/(avg_mu*0.119)
+#        avg_mu=1.457  → r = 1.457/0.119 ≈ 12.3
+# STL/BLK not in any TIERS tier — included for completeness, no production impact yet.
+NB_STATS = {"3PM"}
+NB_R = {
+    "3PM": 12.3,   # within-player conditional r; calibrated 2024-25 DB
+}
+
 # MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
 # G11/G11b: max 1 prop per player within each correlated group
 PITCHER_STATS = {"K", "OUTS", "HA"}                 # All functions of IP — r ≈ 0.70+ between K/OUTS
@@ -489,6 +500,40 @@ def normal_cdf(x, mu, sigma):
         return 1.0 if x >= mu else 0.0
     return 0.5 * (1.0 + math.erf((x - mu) / (sigma * math.sqrt(2))))
 
+
+def negbinom_pmf(k, mu, r):
+    """Negative binomial PMF: P(X = k) with mean=mu, dispersion=r.
+
+    Parameterisation: p = r/(r+mu), n = r (number of successes).
+    P(X=k) = C(k+r-1, k) * p^r * (1-p)^k.
+    Uses log-space arithmetic to avoid overflow at large k.
+    """
+    if mu <= 0:
+        return 1.0 if k == 0 else 0.0
+    if r <= 0:
+        raise ValueError("negbinom_pmf: r must be > 0")
+    k = int(k)
+    if k < 0:
+        return 0.0
+    p = r / (r + mu)
+    # log PMF = lgamma(k+r) - lgamma(r) - lgamma(k+1) + r*log(p) + k*log(1-p)
+    log_pmf = (
+        math.lgamma(k + r) - math.lgamma(r) - math.lgamma(k + 1)
+        + r * math.log(p)
+        + k * math.log(1.0 - p)
+    )
+    return math.exp(log_pmf)
+
+
+def negbinom_cdf(k, mu, r):
+    """Negative binomial CDF: P(X <= k) with mean=mu, dispersion=r."""
+    if mu <= 0:
+        return 1.0
+    total = 0.0
+    for i in range(int(k) + 1):
+        total += negbinom_pmf(i, mu, r)
+    return min(total, 1.0)
+
 def implied_prob(odds):
     """American odds → implied probability."""
     if odds == 0:
@@ -527,6 +572,10 @@ def calc_prop_prob(proj, line, stat):
     Push at exactly the line is excluded (DK rules: push = refund),
     so redistribute: over_p and under_p should sum to ~1.0 after
     removing push mass.
+
+    P16: NB_STATS (3PM) use negative binomial CDF instead of Normal.
+    NB_R[stat] is the within-player conditional dispersion parameter r,
+    calibrated from per-player avg(var/mu) over the 2024-25 DB sample.
     """
     if stat in POISSON_STATS and line <= POISSON_CUTOFF:
         k = math.floor(line)
@@ -544,6 +593,24 @@ def calc_prop_prob(proj, line, stat):
         else:  # Half-integer line — no push possible
             under_p = poisson_cdf(k, proj)
             over_p = 1.0 - poisson_cdf(k, proj)
+    elif stat in NB_STATS:
+        # P16 — Negative binomial path for overdispersed count stats (3PM).
+        r = NB_R[stat]
+        k = math.floor(line)
+        if line == k:  # Integer line — push-adjusted
+            push = negbinom_pmf(k, proj, r)
+            strict_over = 1.0 - negbinom_cdf(k, proj, r)
+            strict_under = negbinom_cdf(k - 1, proj, r)
+            non_push = 1.0 - push
+            if non_push > 0:
+                over_p = strict_over / non_push
+                under_p = strict_under / non_push
+            else:
+                over_p = 0.5
+                under_p = 0.5
+        else:  # Half-integer line — no push possible
+            under_p = negbinom_cdf(k, proj, r)
+            over_p = 1.0 - negbinom_cdf(k, proj, r)
     else:
         s = SIGMA.get(stat)
         if s is None:  # L11: warn on unknown stat so calibration gaps surface early
