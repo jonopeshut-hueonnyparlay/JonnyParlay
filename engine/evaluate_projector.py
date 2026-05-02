@@ -39,6 +39,11 @@ from nba_projector import (
     project_minutes, classify_role, _ROLE_MIN_MINUTES, MIN_GAMES_FOR_TIER,
 )
 
+# P17 — archetype strata for stratified MAE breakdown.
+# Order determines print order in the report.
+ROLE_ORDER = ["starter", "sixth_man", "rotation", "spot", "cold_start"]
+POS_ORDER  = ["G", "F", "C"]
+
 log = logging.getLogger("evaluate")
 if not log.handlers:
     logging.basicConfig(
@@ -60,10 +65,10 @@ STAT_COL = {
 
 def _get_proj_min(player_id: int, team_id: int, game_date: str,
                   season: str, spread: float | None,
-                  db_path: Path) -> float:
-    """Return projected minutes using the same logic as project_player().
+                  db_path: Path) -> tuple[float, str]:
+    """Return (projected_minutes, role) using the same logic as project_player().
 
-    Used by P12 walk-forward eval to replace cheating actual-minutes inputs.
+    P17: also returns role so callers can stratify eval results by archetype.
     Falls back to role prior if history is insufficient.
     """
     df_raw = get_player_recent_games(player_id, game_date, n_games=30,
@@ -80,7 +85,7 @@ def _get_proj_min(player_id: int, team_id: int, game_date: str,
         min_min = _ROLE_MIN_MINUTES[role]
         df_clean = df_raw[df_raw["min"] >= min_min].copy()
 
-    return project_minutes(role, df_clean, b2b, spread=spread)
+    return project_minutes(role, df_clean, b2b, spread=spread), role
 
 
 def sample_games(season: str, n: int, min_min: float, db_path: Path,
@@ -417,12 +422,16 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                 away_tid = int(away_raw)
                 opp_tid  = away_tid if tid == home_tid else home_tid
 
-            # P12: projected vs actual minutes
+            # P12: projected vs actual minutes; P17: capture role for stratification
             if use_actual_min:
                 pmin = actual_min
+                role = classify_role(
+                    get_player_recent_games(pid, gdate, n_games=30,
+                                            season_filter=szn, db_path=db_path)
+                )
             else:
-                pmin = _get_proj_min(pid, tid, gdate, szn, spread=None,
-                                     db_path=db_path)
+                pmin, role = _get_proj_min(pid, tid, gdate, szn, spread=None,
+                                           db_path=db_path)
 
             if stat.upper() == "PTS":
                 custom = project_pts(pid, tid, opp_tid, pos, gdate, szn, pmin,
@@ -452,16 +461,18 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                 continue
 
             results.append({
-                "player":      row["player_name"],
-                "date":        gdate,
-                "actual":      actual,
-                "custom":      custom,
-                "baseline":    baseline,
-                "actual_min":  actual_min,
-                "proj_min":    pmin,
-                "min_err":     pmin - actual_min,
-                "custom_err":  custom - actual,
+                "player":       row["player_name"],
+                "date":         gdate,
+                "actual":       actual,
+                "custom":       custom,
+                "baseline":     baseline,
+                "actual_min":   actual_min,
+                "proj_min":     pmin,
+                "min_err":      pmin - actual_min,
+                "custom_err":   custom - actual,
                 "baseline_err": baseline - actual,
+                "role":         role,                      # P17
+                "pos_group":    _pos_to_group(pos),        # P17
             })
 
             if verbose and (i % 20 == 0):
@@ -491,6 +502,10 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
     min_mae     = float(df["min_err"].abs().mean())
     min_bias    = float(df["min_err"].mean())
 
+    # P17 — stratified MAE by role and position group
+    by_role = _stratify_mae(df, "role", ROLE_ORDER)
+    by_pos  = _stratify_mae(df, "pos_group", POS_ORDER)
+
     return {
         "n_eval":        n_eval,
         "skipped":       skipped,
@@ -507,7 +522,53 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
         "pct_delta":     delta_mae / base_mae * 100 if base_mae > 0 else 0,
         "min_mae":       min_mae,
         "min_bias":      min_bias,
+        "by_role":       by_role,   # P17: {role: {"n", "custom_mae", "baseline_mae", "delta_mae"}}
+        "by_pos":        by_pos,    # P17: {pos_group: {...}}
     }
+
+
+def _stratify_mae(df: pd.DataFrame, col: str, order: list[str]) -> dict:
+    """P17 — compute per-stratum MAE for custom and baseline projections.
+
+    Returns an ordered dict: {stratum: {"n", "custom_mae", "baseline_mae", "delta_mae"}}.
+    Strata with zero rows are omitted.
+    """
+    out = {}
+    for label in order:
+        sub = df[df[col] == label]
+        if sub.empty:
+            continue
+        c_mae = float(sub["custom_err"].abs().mean())
+        b_mae = float(sub["baseline_err"].abs().mean())
+        out[label] = {
+            "n":            len(sub),
+            "custom_mae":   c_mae,
+            "baseline_mae": b_mae,
+            "delta_mae":    c_mae - b_mae,
+        }
+    return out
+
+
+def _print_stratified(out: dict) -> None:
+    """P17 — print stratified MAE breakdown from run_evaluation() result dict."""
+    stat = out.get("stat", "?")
+    for dim, key, labels in [
+        ("Role",     "by_role", ROLE_ORDER),
+        ("Position", "by_pos",  POS_ORDER),
+    ]:
+        strata = out.get(key, {})
+        if not strata:
+            continue
+        print(f"\n  {dim} breakdown ({stat}):")
+        print(f"  {'Stratum':<12}  {'n':>5}  {'Custom MAE':>10}  {'Base MAE':>10}  {'Delta':>8}")
+        print(f"  {'-'*52}")
+        for label in labels:
+            s = strata.get(label)
+            if s is None:
+                continue
+            arrow = "▲" if s["delta_mae"] > 0 else "▼"
+            print(f"  {label:<12}  {s['n']:>5}  {s['custom_mae']:>10.3f}  "
+                  f"{s['baseline_mae']:>10.3f}  {s['delta_mae']:>+7.3f}{arrow}")
 
 
 def run_alpha_grid_search(season: str, n: int, min_min: float,
@@ -548,8 +609,8 @@ def run_alpha_grid_search(season: str, n: int, min_min: float,
             if use_actual_min:
                 pmin = float(row["min"])
             else:
-                pmin = _get_proj_min(pid, tid, gdate, szn, spread=None,
-                                     db_path=db_path)
+                pmin, _ = _get_proj_min(pid, tid, gdate, szn, spread=None,
+                                        db_path=db_path)  # role not needed in grid search
 
             comps = _compute_pts_components(pid, tid, opp_tid, pos, gdate, szn, pmin, db_path)
             if comps is None:
@@ -658,6 +719,7 @@ minutes_mode: {min_label}
   Minutes MAE:   {out['min_mae']:.3f}   bias={out['min_bias']:+.3f}
 {'='*60}
 """)
+    _print_stratified(out)  # P17 — archetype stratification
 
 
 if __name__ == "__main__":
