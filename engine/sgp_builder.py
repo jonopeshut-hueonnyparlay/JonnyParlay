@@ -61,10 +61,17 @@ SIGMA = {
     "PTS": {"mult": 0.35, "min": 4.5},
     "AST": {"mult": 0.45, "min": 1.3},
     "REB": {"mult": 0.58, "min": 2.5},
-    "3PM": {"mult": 0.55, "min": 0.8},
+    # "3PM" intentionally absent — P16 routes 3PM through NB_STATS/NB_R. Do NOT add to SIGMA.
 }
 POISSON_STATS = {"AST", "REB"}
 POISSON_CUTOFF = 8.5
+
+# P16 (M1, May 1 2026): Negative Binomial for overdispersed count stats (3PM).
+# Mirrors NB_STATS / NB_R in run_picks.py — keep in sync.
+NB_STATS = {"3PM"}
+NB_R = {
+    "3PM": 12.3,   # within-player conditional r; calibrated 2024-25 DB
+}
 
 
 # -- Correlation rules -----------------------------------------------------
@@ -159,6 +166,27 @@ def _normal_cdf(x, mu, sigma):
         return 1.0 if x >= mu else 0.0
     return 0.5 * (1.0 + math.erf((x - mu) / (sigma * math.sqrt(2))))
 
+def _negbinom_pmf(k, mu, r):
+    """Negative binomial PMF with mean=mu, dispersion=r. Mirrors run_picks.py."""
+    if mu <= 0:
+        return 1.0 if k == 0 else 0.0
+    k = int(k)
+    if k < 0:
+        return 0.0
+    p = r / (r + mu)
+    log_pmf = (
+        math.lgamma(k + r) - math.lgamma(r) - math.lgamma(k + 1)
+        + r * math.log(p)
+        + k * math.log(1.0 - p)
+    )
+    return math.exp(log_pmf)
+
+def _negbinom_cdf(k, mu, r):
+    """Negative binomial CDF: P(X <= k). Mirrors run_picks.py."""
+    if mu <= 0:
+        return 1.0
+    return min(sum(_negbinom_pmf(i, mu, r) for i in range(int(k) + 1)), 1.0)
+
 def _implied_prob(odds):
     if odds == 0:
         return 0.0
@@ -179,6 +207,23 @@ def _fair_prob(proj, line, stat, direction):
                 over_p, under_p = 0.5, 0.5
         else:
             under_p = _poisson_cdf(k, proj)
+            over_p = 1.0 - under_p
+    elif stat in NB_STATS:
+        # P16 (M1) — Negative binomial for overdispersed count stats (3PM).
+        r = NB_R[stat]
+        k = math.floor(line)
+        if line == k:  # integer line — push-adjusted
+            push = _negbinom_pmf(k, proj, r)
+            strict_over = 1.0 - _negbinom_cdf(k, proj, r)
+            strict_under = _negbinom_cdf(k - 1, proj, r)
+            non_push = 1.0 - push
+            if non_push > 0:
+                over_p = strict_over / non_push
+                under_p = strict_under / non_push
+            else:
+                over_p, under_p = 0.5, 0.5
+        else:  # half-integer line — no push
+            under_p = _negbinom_cdf(k, proj, r)
             over_p = 1.0 - under_p
     else:
         s = SIGMA.get(stat, {"mult": 0.40, "min": 2.0})
