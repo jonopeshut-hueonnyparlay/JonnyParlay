@@ -5091,6 +5091,7 @@ def main():
     parser.add_argument("--parlays-only", action="store_true", help="Only output Longshot + Alt Spread parlays")
     parser.add_argument("--alt-parlay", action="store_true", help="Only output Alt Spread parlay (skips props, minimal API calls)")
     parser.add_argument("--no-cache", action="store_true", help="Skip odds cache, force fresh API calls")
+    parser.add_argument("--force-card", action="store_true", help="Force premium card post even if card was already posted today (fresh run, dedup prevents double-logging)")
     parser.add_argument("--force", action="store_true", help="Skip game start-time filter (test with already-started games)")
     parser.add_argument("--no-discord", action="store_true", help="Skip all Discord posts (dry run for Discord only)")
     parser.add_argument("--test",       action="store_true", help="Suppress @everyone ping on all Discord posts (safe preview)")
@@ -5455,6 +5456,9 @@ def main():
     # weren't present in the earlier run — dedup in log_picks prevents duplicates.
     today_str_log = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     _card_was_already_up = _card_already_posted_today(today_str_log)
+    if getattr(args, "force_card", False) and _card_was_already_up:
+        print("  [Discord] --force-card: overriding card guard — will repost premium card with fresh picks.")
+        _card_was_already_up = False
     if not args.no_save and not _card_was_already_up:
         log_picks(premium + killshots, args.mode, premium_picks=premium)
     elif not args.no_save and killshots:

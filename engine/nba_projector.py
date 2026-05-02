@@ -201,17 +201,17 @@ PLAYOFF_MINUTES_SCALAR = {
 }
 
 # 1b. REGULAR_SEASON_MINUTES_SCALAR (Research Brief 6, 2026-05-02):
-#     Derived from 23,995 player-game records (2024-25 regular season).
-#     fast_min_ratio.py: mean(act_min / proj_min) per role_tier using same
-#     EWMA logic as project_minutes().  Starter/sixth_man essentially unbiased;
-#     rotation undershoots by 5.8%; spot prior (6.0 MPG) severely low for
-#     players who actually get run.
+#     v1 derived from 23,995 player-game records (2024-25 regular season).
+#     v2 updated 2026-05-02 from 30-date 2025-26 retrospective backtest
+#     (4653 player-games).  new_scalar = old_scalar * residual_ratio.
+#     cold_start deferred -- pending task #2 reclassification (5->10 game
+#     threshold) which changes the distribution before re-fitting.
 REGULAR_SEASON_MINUTES_SCALAR = {
-    "starter":    1.0,     # ratio 1.013 — negligible
-    "sixth_man":  1.0,     # ratio 1.008 — negligible
-    "rotation":   1.058,   # ratio 1.058 — +5.8% consistent underprojection
-    "spot":       1.672,   # ratio 1.672 — prior=6 MPG too low for players who play
-    "cold_start": 1.151,   # ratio 1.151 — prior=16 MPG slightly low
+    "starter":    1.056,   # v2: residual ratio 1.0557 (+5.6% underprojection)
+    "sixth_man":  1.019,   # v2: residual ratio 1.0189 (+1.9%)
+    "rotation":   1.035,   # v2: residual ratio 0.9784 (1.058 was overcorrecting)
+    "spot":       1.700,   # v2: residual ratio 1.0170 -- prior still slightly low
+    "cold_start": 1.151,   # deferred -- refit after task #2 threshold change
 }
 
 # 2. PLAYOFF_RATE_DEFLATORS (genuine per-stat rate changes, not minutes-driven):

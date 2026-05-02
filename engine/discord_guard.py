@@ -142,7 +142,7 @@ def _load_unlocked() -> dict:
             return json.load(f)
     except FileNotFoundError:
         return {}
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         # File exists but is corrupted -- attempt raw-byte recovery.
         try:
             raw = GUARD_FILE.read_bytes()

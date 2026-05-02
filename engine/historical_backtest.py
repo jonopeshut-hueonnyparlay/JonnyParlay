@@ -330,6 +330,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed",    type=int, default=42)
     parser.add_argument("--season",  default="2024-25")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--db",      default=None)
     args = parser.parse_args()
 
     run_historical_backtest(
@@ -337,5 +338,6 @@ if __name__ == "__main__":
         seed=args.seed,
         season=args.season,
         verbose=args.verbose,
+        db_path=Path(args.db) if args.db else DB_PATH,
     )
  
