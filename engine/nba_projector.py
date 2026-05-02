@@ -11,12 +11,23 @@ PTS formula (2P%/3P% decomposition with Bayesian padding):
     fg2_pct: Bayesian-padded to 300 FGA (stabilises fast)
     fg3_pct: Bayesian-padded to 750 FGA (stabilises slow)
 
-REB/AST/STL/BLK/TOV: per-possession rates x proj_poss x matchup_factor
-    proj_poss = game_pace * proj_min / 48  (pace embedded — no separate pace_factor)
-    PTS/FG3M still use FGA-decomp path where pace_factor scales team_proj_fga.
+Per-stat pace elasticity (Q8.4, Research Brief 5, 2026-05-02):
+    PTS  pace_factor = base_pf^0.90  (FGA-decomp path)
+    3PM  pace_fg3m   = base_pf^0.78  (separate from PTS)
+    REB  pace_reb    = base_pf^0.25  (weak pace sensitivity)
+    AST  proj_poss   = game_pace^0.50 * LEAGUE_AVG^0.50 * min/48
+    STL/BLK proj_poss= game_pace^0.30 * LEAGUE_AVG^0.70 * min/48
+    TOV  proj_poss   = game_pace * min/48  (linear — TOV is directly possession-limited)
 
 Role tiers: starter / sixth_man / rotation / spot / cold_start
-EWMA span=10 for all rolling rates. Cold-start (<5 games on team) -> archetype prior.
+Per-stat EWMA spans (Brief 5): PTS=15, REB=12, AST=13, FG3M=10, STL/BLK=8, TOV=10, MIN=6.
+Cold-start (<5 games on team) -> archetype prior.
+Trade blending (Q8.7, 2026-05-02): games 1-3 on new team → 60% prior-team rates;
+    games 4-6 → 40% prior-team rates.  Applied as final overlay over all stats.
+Training-quality weights (L4+L6, 2026-05-02): per-game weight = vacancy_w * blowout_w.
+    L4 vacancy: down-weight games where key teammates (≥12 MPG) were absent.
+    L6 blowout proxy: down-weight games with final margin ≥ 15 (asymmetric:
+    bench inflated, starters deflated in garbage time).
 """
 from __future__ import annotations
 import datetime, logging, math, sys
@@ -35,6 +46,8 @@ from projections_db import (
     get_all_active_players, get_games_for_date, upsert_projection, get_conn,
     get_team_avg_fga, get_team_shooting_stats,
     get_team_tov_rate, get_team_rim_attempt_rate,
+    get_player_trade_context,
+    get_team_typical_mpg, get_team_game_participants,
 )
 
 log = logging.getLogger("nba_projector")
@@ -48,18 +61,73 @@ LEAGUE_AVG_TOTAL  = 222.0
 # Playoffs run slower / lower-scoring — separate baselines
 LEAGUE_AVG_PACE_PO  = 96.5
 LEAGUE_AVG_TOTAL_PO = 210.0
-EWMA_SPAN         = 10   # shooting/per-min rates — longer span for stability
-EWMA_SPAN_MIN     = 5    # minutes projection — shorter span; more responsive to role changes
+
+# Per-stat pace elasticity exponents — Research Brief 5, Q8.4, 2026-05-02.
+# Exponent < 1 dampens the pace effect on that stat relative to linear scaling.
+# PTS/3PM via FGA-decomp: moderate sensitivity (0.90/0.78).
+# REB: weak pace sensitivity — possessions change but rebound opportunities
+#   per possession are nearly constant; human rebound rates are minutes-limited.
+# AST: moderate -- pass volume scales with pace but playmaking roles don't.
+# STL/BLK: low -- defensive actions are largely independent of tempo.
+PACE_ELASTICITY = {
+    "pts":  0.90,
+    "fg3m": 0.78,
+    "reb":  0.25,
+    "ast":  0.50,
+    "stl":  0.30,
+    "blk":  0.30,
+}
+# Per-stat EWMA spans — Research Brief 5, 2026-05-02.
+# Stable high-volume stats (PTS, REB) need longer spans; high-variance low-frequency
+# events (BLK, STL) react faster. Minutes react to coach decisions — shortest span.
+EWMA_SPAN_STAT = {
+    "pts":  15,   # stable — slow decay
+    "reb":  12,   # moderate
+    "ast":  13,   # moderate (dedicated compute_ast_rate has position-conditional spans)
+    "fg3m": 10,   # hot/cold streaks real; keep moderate
+    "stl":   8,   # high variance, event-driven
+    "blk":   8,   # high variance, event-driven
+    "tov":  10,   # moderate
+}
+EWMA_SPAN_SHOOTING = 10  # shooting efficiency rates (FG%, FT%, FG3A rate, USG%) — stable
+EWMA_SPAN_MIN      = 6   # minutes — coach-reactive; was 5, brief says 6 optimal
 MIN_GAMES_FOR_TIER = 5
+
+# L4 — Availability weighting constants (Research Brief 5, 2026-05-02).
+# "Key" teammate threshold: players averaging ≥ 12 MPG whose absence inflates
+# the target player's usage/rate (vacancy games).  Weight floor prevents any
+# game from being zeroed out entirely.
+_AVAIL_KEY_MPG_THRESHOLD = 12.0   # teammates ≥ this MPG are "key" to lineup
+MIN_AVAILABILITY_WEIGHT  = 0.30   # floor weight for heavily vacated games
+
+# L6 — Garbage-time blowout proxy (Research Brief 5, 2026-05-02).
+# Without PBP data, approximate CtG garbage-time standard with final-margin proxy.
+# Bench players (role=spot/rotation) are most contaminated; starters are depressed
+# in blowouts (pulled early).  Asymmetric weights applied on top of L4 weights.
+_BLOWOUT_MARGIN_HEAVY  = 25   # ≥ this = heavy blowout (Q4 garbage time near-certain)
+_BLOWOUT_MARGIN_LIGHT  = 15   # ≥ this = light blowout (some garbage time likely)
+# Down-weight multipliers per role tier.  "bench" = spot/rotation; starters
+# have their own deflation (pulled early → stats below normal in close-out min).
+_BLOWOUT_WEIGHT_BENCH_HEAVY  = 0.55   # bench game with margin ≥ 25 (inflated stats)
+_BLOWOUT_WEIGHT_BENCH_LIGHT  = 0.75   # bench game with margin 15-24
+_BLOWOUT_WEIGHT_STAR_HEAVY   = 0.75   # starter game with margin ≥ 25 (deflated late)
+_BLOWOUT_WEIGHT_STAR_LIGHT   = 0.90   # starter game with margin 15-24
+_BLOWOUT_MIN_VALID_GAMES     = 12     # require ≥ this many non-blowout games to apply filter
 
 USG_ROLE_PRIOR = {
     "starter": 24.0, "sixth_man": 20.0, "rotation": 16.0,
     "spot": 13.0,    "cold_start": 20.0,
 }
 
+# Empirical post-trade first-5-game averages (Research Brief 5 §8.5, n=352 trades 2021-25).
+# cold_start is a catch-all for <5 games on team.  Q8.7 trade blending overrides
+# projections for games 1-6 on new team using prior-team per-minute rates.
 ROLE_MINUTE_PRIOR = {
-    "starter": 32.0, "sixth_man": 24.0, "rotation": 19.0,
-    "spot": 14.0, "cold_start": 15.0,
+    "starter":    28.0,  # empirical 26-32 MPG; was 32.0
+    "sixth_man":  24.0,  # unchanged
+    "rotation":   16.0,  # empirical 14-18 MPG; was 19.0
+    "spot":        6.0,  # empirical 4-8 MPG bench; was 14.0
+    "cold_start": 16.0,  # unknown role → rotation-level prior; was 15.0
 }
 
 _ROLE_MIN_MINUTES = {
@@ -107,18 +175,30 @@ CURRENT_SEASON = "2025-26"
 # Re-calibrate against new season data when running evaluate_projector.py.
 DK_STD_COEFF = 0.35
 
-# P18 — Per-stat playoff deflators (2026-05-01).
-# Empirically derived from matched player-season sample (n=424) across
-# 2023-24, 2024-25, 2025-26 playoffs vs regular season (min>=10).
-# Flat 0.92 over-deflected REB/BLK and under-deflected AST/FG3M.
-PLAYOFF_DEFLATORS = {
-    "pts":  0.9027,
-    "reb":  0.9602,
+# P18-v4 — Playoff calibration (2026-05-02).
+# Two-component design replacing the blunt per-stat PLAYOFF_DEFLATORS (P18-v1):
+#
+# 1. PLAYOFF_MINUTES_SCALAR (role-conditional minutes correction):
+#    Derived from 459 matched projection-vs-actual rows (Apr 18–29 2026 playoffs).
+#    Starters play more minutes in close playoff games; rotation/bench fewer as
+#    coaches tighten to 8-9 man rotations.
+#    Methodology: scalar = mean(actual_min) / mean(proj_min) per role_tier.
+PLAYOFF_MINUTES_SCALAR = {
+    "starter":   1.068,   # 31.6 → 33.8 actual (+6.8%)
+    "sixth_man": 0.909,   # 23.3 → 21.2 actual (-9.1%)
+    "rotation":  0.786,   # 18.5 → 14.5 actual (-21.4%)
+    "spot":      0.902,   # 14.2 → 12.8 actual (-9.8%)
+}
+
+# 2. PLAYOFF_RATE_DEFLATORS (genuine per-stat rate changes, not minutes-driven):
+#    AST: isolation-heavy playoff offense → fewer motion-offense assists.
+#    FG3M: tighter perimeter defense → fewer open 3-point attempts per minute.
+#    PTS, REB, STL, BLK, TOV: effect is primarily minutes-driven; no extra deflation.
+#    Calibrated empirically (n=43 graded props Apr-May 2026) — P18-v4 yields
+#    MAE=3.436 bias=-0.108 vs P18-v1 MAE=3.413 bias=-0.620 and SaberSim 3.254.
+PLAYOFF_RATE_DEFLATORS = {
     "ast":  0.8255,
     "fg3m": 0.8780,
-    "stl":  0.8987,
-    "blk":  0.9831,
-    "tov":  0.9485,
 }
 
 # P11 — Home/away adjustment factors (2026-05-01).
@@ -157,8 +237,8 @@ BLEND_BIAS_CORRECTION = 0.0    # no additive correction — fix root causes stru
 # Denominator: (tm_fga - tm_fgm + 0.44*tm_fta) * min/48 — matches compute_reb_rates().
 _REB_POS_OREB_PRIOR = {"G": 0.02043, "F": 0.03247, "C": 0.07048}  # OREB per team miss/48
 _REB_POS_DREB_PRIOR = {"G": 0.08086, "F": 0.10569, "C": 0.17162}  # DREB per opp miss/48
-_REB_PRIOR_N_OREB   = 20   # shrinkage weight ≈ 20-game sample
-_REB_PRIOR_N_DREB   = 28   # stabilises slower — stronger shrinkage
+_REB_PRIOR_N_OREB   = 15   # Research Brief 5: REB k=12-15; was 20
+_REB_PRIOR_N_DREB   = 15   # Research Brief 5: REB k=12-15; was 28 (overshrunken)
 REB_ALPHA           = 0.45  # weight on decomposed path (lean baseline until rates stabilise)
 
 # AST decomposition constants (Brief P3, Sec. 3 — 2026-05-01)
@@ -171,7 +251,7 @@ _AST_EWMA_SPAN = {"G": 10, "F": 6, "C": 5}
 # guards, so the midpoint (0.110) massively overstates the actual DB average (0.073).
 # Empirical: G=0.073, F=0.050, C=0.045. Re-calibrate annually from DB.
 _AST_POS_PRIOR = {"G": 0.073, "F": 0.050, "C": 0.045}  # AST per team possession
-_AST_PRIOR_N   = {"G":  22,  "F":  32,    "C":  35}    # shrinkage weight (games equivalent)
+_AST_PRIOR_N   = {"G":  12,  "F":  14,    "C":  14}    # Research Brief 5: AST k=10-12; was 22/32/35
 AST_ALPHA      = 0.40   # lean toward baseline until rates stabilise over longer sample
 FG3M_BLEND_ALPHA = 0.50  # weight on FGA-decomp path for 3PM; re-evaluate after grid search
 
@@ -184,7 +264,7 @@ FG3M_BLEND_ALPHA = 0.50  # weight on FGA-decomp path for 3PM; re-evaluate after 
 # P15 (2026-05-01): re-calibrated from 2024-25 DB (min>=10, Regular Season).
 # Denominator: team_pace * min / 48 — matches compute_stl_blk_rates().
 _STL_POS_PRIOR = {"G": 0.01830, "F": 0.01664, "C": 0.01405}  # STL per possession
-_STL_PRIOR_N   = 25  # shrinkage weight — STL is noisy, strong prior needed
+_STL_PRIOR_N   = 5   # Research Brief 5: STL k=4-6; was 25 (severely overshrunken)
 
 # BLK priors: centers split into non-blockers (C_low) and rim protectors (C_high).
 # Classification still uses career BLK/min vs _BLK_CENTER_SPLIT_THRESHOLD (per-minute
@@ -199,15 +279,15 @@ _BLK_POS_PRIOR = {
     "C_high": 0.02415,  # rim protectors
 }
 _BLK_PRIOR_N = {
-    "G":     30,   # strong shrinkage — BLK noisy for non-centers
-    "F":     30,
-    "C_low": 20,   # near-zero rate is stable; lighter shrinkage sufficient
-    "C_high": 25,  # rim-protection varies by matchup; moderate shrinkage
+    "G":      5,   # Research Brief 5: BLK k=4-6; was 30
+    "F":      5,   # was 30
+    "C_low":  6,   # near-zero rate — slightly more shrinkage; was 20
+    "C_high": 5,   # rim protectors converge quickly; was 25
 }
 
 # TOV per-possession priors — derived from per-36 archetypes / LEAGUE_AVG_PACE * 48.
 _TOV_POS_PRIOR = {"G": 0.0335, "F": 0.0241, "C": 0.0268}
-_TOV_PRIOR_N   = 20  # moderate shrinkage; TOV rate is relatively stable
+_TOV_PRIOR_N   = 15  # Research Brief 5 guidance; was 20
 
 LEAGUE_AVG_TOV_RATE        = 0.136  # turnovers per possession, league-wide (2024-25 calibrated)
 LEAGUE_AVG_RIM_ATTEMPT_RATE = 56.0   # non-3pt FGA per game, league-wide (2024-25 calibrated)
@@ -239,25 +319,166 @@ def classify_role(df):
     if avg_min >= 5:  return "spot"
     return "cold_start"
 
-def compute_per_minute_rates(df):
+def _weighted_ewm_mean(
+    series: pd.Series, weights: pd.Series, span: int
+) -> float:
+    """Combine per-sample availability weights with EWMA recency decay.
+
+    Standard pandas EWMA gives more weight to recent observations via exponential
+    decay.  This function multiplies that decay by per-game availability weights
+    (values in [MIN_AVAILABILITY_WEIGHT, 1.0]) so vacancy games are suppressed
+    without being excluded entirely.
+
+    Formula:
+        combined_w[i] = recency_decay[i] * avail_w[i]
+        result = Σ(series[i] * combined_w[i]) / Σ(combined_w[i])
+
+    where recency_decay is oldest→newest: (1-α)^(n-1-i), α = 2/(span+1).
+    """
+    if series.empty:
+        return 0.0
+    n     = len(series)
+    alpha = 2.0 / (span + 1.0)
+    # recency weights: index 0 = oldest game, index n-1 = most recent
+    recency = np.array([(1.0 - alpha) ** (n - 1 - i) for i in range(n)],
+                       dtype=np.float64)
+    aw      = weights.reindex(series.index, fill_value=1.0).clip(
+                  lower=MIN_AVAILABILITY_WEIGHT).values.astype(np.float64)
+    combined = recency * aw
+    total_w  = combined.sum()
+    if total_w < 1e-9:
+        return float(series.mean())
+    vals = series.fillna(0.0).values.astype(np.float64)
+    return float((vals * combined).sum() / total_w)
+
+
+def _blowout_weight(margin: float, player_min: float) -> float:
+    """L6 — per-game blowout proxy weight.
+
+    Applies the asymmetric CtG-style garbage-time discount using final margin
+    as a proxy (full PBP not available).  Stars get a light deflation discount
+    (pulled early → fewer late-game stats); bench players get a heavier discount
+    (inflated stats from garbage-time minutes).
+
+    player_min is the player's actual minutes in that game; < 22 = bench context.
+    """
+    is_bench = player_min < 22.0
+    if margin >= _BLOWOUT_MARGIN_HEAVY:
+        return _BLOWOUT_WEIGHT_BENCH_HEAVY if is_bench else _BLOWOUT_WEIGHT_STAR_HEAVY
+    if margin >= _BLOWOUT_MARGIN_LIGHT:
+        return _BLOWOUT_WEIGHT_BENCH_LIGHT if is_bench else _BLOWOUT_WEIGHT_STAR_LIGHT
+    return 1.0
+
+
+def compute_availability_weights(
+    df: pd.DataFrame,
+    player_id: int,
+    team_id: int,
+    season: str,
+    game_date: str,
+    db_path,
+) -> pd.Series:
+    """Compute per-game training-quality weights (L4 + L6 combined).
+
+    L4 — Vacancy weighting: down-weight games where key teammates (≥ 12 MPG)
+    were absent, inflating/deflating the target player's role context.
+
+    L6 — Blowout proxy: down-weight games with large final margins, which
+    contain garbage time that inflates bench rates or deflates starter rates.
+    Applied asymmetrically (bench more suppressed than starters).
+
+    L6 filter applies only when ≥ _BLOWOUT_MIN_VALID_GAMES non-blowout games
+    exist in df; otherwise it is skipped to avoid starving the sample.
+
+    Combined weight per game = L4_weight * L6_weight, floored at
+    MIN_AVAILABILITY_WEIGHT.
+
+    Returns pd.Series indexed to df.index.  Falls back to all-1.0 on any error.
+    """
+    try:
+        # --- L4 component ---
+        typical_mpg = get_team_typical_mpg(
+            team_id, season, game_date,
+            min_mpg_threshold=_AVAIL_KEY_MPG_THRESHOLD, db_path=db_path,
+        )
+        typical_mpg.pop(player_id, None)  # exclude self
+
+        key_baseline = sum(typical_mpg.values()) if typical_mpg else 0.0
+
+        game_ids = df["game_id"].astype(str).tolist()
+        participants = (
+            get_team_game_participants(team_id, game_ids, db_path)
+            if typical_mpg else {}
+        )
+
+        # --- L6 component: decide whether to apply blowout filter ---
+        has_margin = "game_margin" in df.columns and df["game_margin"].notna().any()
+        if has_margin:
+            margins = df["game_margin"].fillna(0.0)
+            n_nonblowout = int((margins < _BLOWOUT_MARGIN_LIGHT).sum())
+            apply_blowout = n_nonblowout >= _BLOWOUT_MIN_VALID_GAMES
+        else:
+            apply_blowout = False
+
+        weights_list = []
+        for _, row in df.iterrows():
+            # L4
+            if typical_mpg:
+                gid     = str(row["game_id"])
+                present = participants.get(gid, set())
+                absent_mpg = sum(
+                    mpg for pid, mpg in typical_mpg.items()
+                    if pid not in present
+                )
+                w_l4 = max(MIN_AVAILABILITY_WEIGHT,
+                           1.0 - absent_mpg / max(key_baseline, 1.0))
+            else:
+                w_l4 = 1.0
+
+            # L6
+            if apply_blowout:
+                margin = float(row.get("game_margin", 0.0) or 0.0)
+                w_l6   = _blowout_weight(margin, float(row.get("min", 0.0) or 0.0))
+            else:
+                w_l6 = 1.0
+
+            weights_list.append(max(MIN_AVAILABILITY_WEIGHT, w_l4 * w_l6))
+
+        return pd.Series(weights_list, index=df.index, dtype=np.float64)
+
+    except Exception as exc:
+        log.debug("compute_availability_weights: fallback to 1.0 — %s", exc)
+        return pd.Series(1.0, index=df.index)
+
+
+def compute_per_minute_rates(df, avail_weights: Optional[pd.Series] = None):
     if df.empty: return {s: 0.0 for s in PROJ_STATS}
     d = df.sort_values("game_date").copy()
     if d.empty: return {s: 0.0 for s in PROJ_STATS}
+    # L4: combine era_weight with availability weights when provided.
+    if avail_weights is not None:
+        aw = avail_weights.reindex(d.index, fill_value=1.0).clip(
+                 lower=MIN_AVAILABILITY_WEIGHT)
+        combined_era = d["era_weight"] * aw
+    else:
+        combined_era = d["era_weight"]
     rates = {}
     for stat in PROJ_STATS:
         if stat not in d.columns:
             rates[stat] = 0.0; continue
         per_min  = d[stat] / d["min"]
-        weighted = per_min * d["era_weight"]
-        ewma_w   = weighted.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1]
-        ewma_e   = d["era_weight"].ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1]
+        weighted = per_min * combined_era
+        span     = EWMA_SPAN_STAT.get(stat, 10)
+        ewma_w   = weighted.ewm(span=span, min_periods=1).mean().iloc[-1]
+        ewma_e   = combined_era.ewm(span=span, min_periods=1).mean().iloc[-1]
         rates[stat] = float(ewma_w / max(ewma_e, 1e-6))
     return rates
 
 def compute_reb_rates(df_clean: pd.DataFrame,
                       avail_oreb_per_game: float,
                       avail_dreb_per_game: float,
-                      pos_group: str) -> tuple[float, float]:
+                      pos_group: str,
+                      avail_weights: Optional[pd.Series] = None) -> tuple[float, float]:
     """Bayesian-shrunk OREB and DREB rates per available rebound.
 
     avail_oreb_per_game: team_FGA/g * (1 - team_FG%) — OREB pool (own misses).
@@ -286,8 +507,15 @@ def compute_reb_rates(df_clean: pd.DataFrame,
     oreb_raw = (d["oreb"].fillna(0) / avail_oreb_g).replace([np.inf, -np.inf], np.nan).fillna(oreb_prior)
     dreb_raw = (d["dreb"].fillna(0) / avail_dreb_g).replace([np.inf, -np.inf], np.nan).fillna(dreb_prior)
 
-    oreb_ewma = float(oreb_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
-    dreb_ewma = float(dreb_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    # L4: use availability-weighted EWMA when weights are provided.
+    _span_reb = EWMA_SPAN_STAT["reb"]
+    if avail_weights is not None:
+        aw = avail_weights.reindex(d.index, fill_value=1.0)
+        oreb_ewma = _weighted_ewm_mean(oreb_raw, aw, _span_reb)
+        dreb_ewma = _weighted_ewm_mean(dreb_raw, aw, _span_reb)
+    else:
+        oreb_ewma = float(oreb_raw.ewm(span=_span_reb, min_periods=1).mean().iloc[-1])
+        dreb_ewma = float(dreb_raw.ewm(span=_span_reb, min_periods=1).mean().iloc[-1])
 
     # Bayesian shrinkage: (observed_n * ewma + prior_n * prior) / (observed_n + prior_n)
     oreb_rate = (n_games * oreb_ewma + _REB_PRIOR_N_OREB * oreb_prior) / (n_games + _REB_PRIOR_N_OREB)
@@ -297,7 +525,8 @@ def compute_reb_rates(df_clean: pd.DataFrame,
 
 def compute_ast_rate(df_clean: pd.DataFrame,
                      team_pace: float,
-                     pos_group: str) -> float:
+                     pos_group: str,
+                     avail_weights: Optional[pd.Series] = None) -> float:
     """Bayesian-shrunk AST rate per team possession (Brief P3, Sec. 3).
 
     Rate formula per game i:
@@ -325,7 +554,13 @@ def compute_ast_rate(df_clean: pd.DataFrame,
         d["ast"].fillna(0) / poss_per_game
     ).replace([np.inf, -np.inf], np.nan).fillna(prior)
 
-    ast_ewma = float(ast_raw.ewm(span=span, min_periods=1).mean().iloc[-1])
+    # L4: availability-weighted EWMA — AST is most sensitive to teammate vacancies
+    # (e.g. primary ball-handler out inflates backup AST rates).
+    if avail_weights is not None:
+        aw = avail_weights.reindex(d.index, fill_value=1.0)
+        ast_ewma = _weighted_ewm_mean(ast_raw, aw, span)
+    else:
+        ast_ewma = float(ast_raw.ewm(span=span, min_periods=1).mean().iloc[-1])
 
     # Bayesian shrinkage to positional prior
     ast_rate = (n_games * ast_ewma + prior_n * prior) / (n_games + prior_n)
@@ -334,7 +569,8 @@ def compute_ast_rate(df_clean: pd.DataFrame,
 
 def compute_stl_blk_rates(df_clean: pd.DataFrame,
                            pos_group: str,
-                           team_pace: float) -> tuple[float, float]:
+                           team_pace: float,
+                           avail_weights: Optional[pd.Series] = None) -> tuple[float, float]:
     """Bayesian-shrunk per-POSSESSION STL and BLK rates.
 
     P5 (2026-05-01): training basis changed from per-minute to per-possession.
@@ -369,7 +605,7 @@ def compute_stl_blk_rates(df_clean: pd.DataFrame,
         blk_key = pos_group   # G or F — lookup unchanged
 
     blk_prior   = _BLK_POS_PRIOR.get(blk_key, 0.017)
-    blk_prior_n = _BLK_PRIOR_N.get(blk_key, 30)
+    blk_prior_n = _BLK_PRIOR_N.get(blk_key, 5)
 
     if df_clean.empty or "stl" not in df_clean.columns:
         return stl_prior, blk_prior
@@ -389,8 +625,15 @@ def compute_stl_blk_rates(df_clean: pd.DataFrame,
         [np.inf, -np.inf], np.nan
     ).fillna(blk_prior)
 
-    stl_ewma = float(stl_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
-    blk_ewma = float(blk_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    # L4: availability-weighted EWMA for STL/BLK.
+    _span_stl, _span_blk = EWMA_SPAN_STAT["stl"], EWMA_SPAN_STAT["blk"]
+    if avail_weights is not None:
+        aw = avail_weights.reindex(d.index, fill_value=1.0)
+        stl_ewma = _weighted_ewm_mean(stl_raw, aw, _span_stl)
+        blk_ewma = _weighted_ewm_mean(blk_raw, aw, _span_blk)
+    else:
+        stl_ewma = float(stl_raw.ewm(span=_span_stl, min_periods=1).mean().iloc[-1])
+        blk_ewma = float(blk_raw.ewm(span=_span_blk, min_periods=1).mean().iloc[-1])
 
     # Bayesian shrinkage — BLK uses the resolved prior and N for this player's archetype
     stl_rate = (n_games * stl_ewma + _STL_PRIOR_N * stl_prior) / (n_games + _STL_PRIOR_N)
@@ -400,7 +643,8 @@ def compute_stl_blk_rates(df_clean: pd.DataFrame,
 
 def compute_tov_rate(df_clean: pd.DataFrame,
                      team_pace: float,
-                     pos_group: str) -> float:
+                     pos_group: str,
+                     avail_weights: Optional[pd.Series] = None) -> float:
     """Bayesian-shrunk per-POSSESSION TOV rate.
 
     P5 (2026-05-01): replaces the generic per-minute rate from
@@ -424,7 +668,13 @@ def compute_tov_rate(df_clean: pd.DataFrame,
         [np.inf, -np.inf], np.nan
     ).fillna(prior)
 
-    tov_ewma = float(tov_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    # L4: availability-weighted EWMA for TOV.
+    _span_tov = EWMA_SPAN_STAT["tov"]
+    if avail_weights is not None:
+        aw = avail_weights.reindex(d.index, fill_value=1.0)
+        tov_ewma = _weighted_ewm_mean(tov_raw, aw, _span_tov)
+    else:
+        tov_ewma = float(tov_raw.ewm(span=_span_tov, min_periods=1).mean().iloc[-1])
     tov_rate = (n_games * tov_ewma + prior_n * prior) / (n_games + prior_n)
     return float(tov_rate)
 
@@ -507,7 +757,7 @@ def compute_shooting_rates(df) -> dict:
     else:
         fg3a_series = np.full(len(d), LG_FG3A_RATE, dtype=float)
     fg3a_vals  = pd.Series(fg3a_series).ffill().fillna(LG_FG3A_RATE)
-    fg3a_rate  = float(fg3a_vals.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    fg3a_rate  = float(fg3a_vals.ewm(span=EWMA_SPAN_SHOOTING, min_periods=1).mean().iloc[-1])
     fg3a_rate  = float(np.clip(fg3a_rate, 0.0, 0.85))
 
     # ------------------------------------------------------------------ #
@@ -516,7 +766,7 @@ def compute_shooting_rates(df) -> dict:
     mask_fta  = d["fta"] > 0
     ft_series = np.where(mask_fta, d["ftm"] / d["fta"], np.nan)
     ft_vals   = pd.Series(ft_series).ffill().fillna(LG_FT_PCT)
-    ft_pct    = float(ft_vals.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    ft_pct    = float(ft_vals.ewm(span=EWMA_SPAN_SHOOTING, min_periods=1).mean().iloc[-1])
     ft_pct    = float(np.clip(ft_pct, 0.40, 1.00))
 
     # ------------------------------------------------------------------ #
@@ -524,7 +774,7 @@ def compute_shooting_rates(df) -> dict:
     # ------------------------------------------------------------------ #
     ratio_series  = np.where(mask_fga, d["fta"] / d["fga"], np.nan)
     ratio_vals    = pd.Series(ratio_series).ffill().fillna(LG_FTA_FGA)
-    fta_fga_ratio = float(ratio_vals.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    fta_fga_ratio = float(ratio_vals.ewm(span=EWMA_SPAN_SHOOTING, min_periods=1).mean().iloc[-1])
     fta_fga_ratio = float(np.clip(fta_fga_ratio, 0.0, 1.20))
 
     # ------------------------------------------------------------------ #
@@ -540,7 +790,7 @@ def compute_shooting_rates(df) -> dict:
             np.nan,
         )
         usg_vals = pd.Series(usg_raw).ffill().fillna(20.0)
-        usg_pct  = float(usg_vals.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+        usg_pct  = float(usg_vals.ewm(span=EWMA_SPAN_SHOOTING, min_periods=1).mean().iloc[-1])
     else:
         usg_pct = 20.0
     usg_pct = float(np.clip(usg_pct, 5.0, 45.0))
@@ -632,6 +882,17 @@ def project_player(
                                             season_filter=season, db_path=db_path)
     games_on_team = get_player_season_game_count(player_id, season, team_id, db_path)
     b2b           = get_player_b2b_context(player_id, game_date, db_path)
+    # Q8.7 — cold-start trade archetype blending.  Detect if player changed teams
+    # this season and is within the 6-game blend window.  Returns None when outside
+    # blend window or no trade detected.
+    trade_ctx = get_player_trade_context(player_id, season, team_id, game_date, db_path)
+
+    # L4 — availability weighting: down-weight games where key teammates were
+    # absent (vacancy games inflate rates for backups, deflate for stars sharing load).
+    # Computed early so it can be passed to all rate functions below.
+    avail_weights = compute_availability_weights(
+        df, player_id, team_id, season, game_date, db_path
+    )
 
     is_cold_start = games_on_team < MIN_GAMES_FOR_TIER
     if is_cold_start:
@@ -647,7 +908,7 @@ def project_player(
         if injury_minutes_override is not None and not df.empty:
             ewma_baseline = float(
                 df.sort_values("game_date")["min"]
-                  .ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1]
+                  .ewm(span=EWMA_SPAN_MIN, min_periods=1).mean().iloc[-1]
             )
             override_delta = injury_minutes_override - ewma_baseline
             if override_delta >= 6.0 and role == "spot":
@@ -659,7 +920,7 @@ def project_player(
 
         min_min  = _ROLE_MIN_MINUTES[role]
         df_clean = df[df["min"] >= min_min].copy()
-        rates    = compute_per_minute_rates(df_clean)
+        rates    = compute_per_minute_rates(df_clean, avail_weights=avail_weights)
 
     proj_min = project_minutes(role, df_clean, b2b, spread=spread,
                                injury_minutes_override=injury_minutes_override)
@@ -667,15 +928,34 @@ def project_player(
         return None
 
     is_playoff  = season_type == "Playoffs"
+    if is_playoff:
+        proj_min = round(proj_min * PLAYOFF_MINUTES_SCALAR.get(role, 1.0), 2)
     # Always use Regular Season pace data (reliable); playoff pace DB entries
     # are often missing, causing the fallback (99.5) to inflate projections.
     # Playoff adjustment is handled by PLAYOFF_DEFLATOR below instead.
     team_pace   = get_team_pace(team_id,     season, "Regular Season", db_path)
     opp_pace    = get_team_pace(opp_team_id, season, "Regular Season", db_path)
     game_pace   = (team_pace + opp_pace) / 2.0
-    pace_factor = game_pace / LEAGUE_AVG_PACE
+    _base_pf    = game_pace / LEAGUE_AVG_PACE
     if implied_total is not None and implied_total > 0:
-        pace_factor = implied_total / LEAGUE_AVG_TOTAL
+        _base_pf = implied_total / LEAGUE_AVG_TOTAL
+
+    # Per-stat pace factors using non-linear elasticity (Q8.4, Research Brief 5).
+    # Formula: pace_X = base_pf^e * LEAGUE_AVG^(1-e) preserves absolute value at
+    # league-average pace regardless of exponent.  Deviations are dampened by e.
+    _e_pts  = PACE_ELASTICITY["pts"]
+    _e_fg3m = PACE_ELASTICITY["fg3m"]
+    _e_reb  = PACE_ELASTICITY["reb"]
+    _e_ast  = PACE_ELASTICITY["ast"]
+    _e_stl  = PACE_ELASTICITY["stl"]
+    pace_factor     = _base_pf ** _e_pts   # PTS FGA-decomp path
+    pace_fg3m       = _base_pf ** _e_fg3m  # 3PM FGA-decomp path (separate)
+    pace_reb        = _base_pf ** _e_reb   # REB availability scalar
+    # AST/STL/BLK use proj_poss = game_pace^e * LEAGUE_AVG^(1-e) * min/48
+    _proj_poss_ast  = (game_pace ** _e_ast  * LEAGUE_AVG_PACE ** (1.0 - _e_ast)
+                       * 1.0)              # multiplied by proj_min/48 below
+    _proj_poss_stl  = (game_pace ** _e_stl  * LEAGUE_AVG_PACE ** (1.0 - _e_stl)
+                       * 1.0)              # multiplied by proj_min/48 below
 
     pg = _pos_group(position)
     matchup_pts = float(np.clip(
@@ -758,12 +1038,15 @@ def project_player(
     projections["pts"] = max(0.0, round(proj_pts_blended, 2))
 
     # 3PM — extracted from FGA decomposition (Sec. 4a, Brief 3).
-    # proj_3pa and fg3_pct are already computed above in the PTS path.
+    # Q8.4: Uses separate pace_fg3m (^0.78) rather than pace_factor (^0.90).
+    # Rationale: 3PM rate is partially shot-selection (pace-insensitive) and
+    # partially volume (pace-sensitive) — empirical elasticity is lower than PTS.
     # DvP: matchup_fg3m uses the opponent's actual 3PM-allowed ratio from
     # team_def_splits — decoupled from PTS DvP (P3, 2026-05-01).
-    # PTS defense and 3PM defense are empirically distinct: a team can be stingy
-    # inside (low PTS DvP) while leaking threes (high fg3m DvP), or vice versa.
-    proj_fg3m_fga  = player_proj_3pa * fg3_pct * matchup_fg3m
+    team_proj_fga_3pm   = team_avg_fga * pace_fg3m
+    player_proj_fga_3pm = (usg_pct / 100.0) * team_proj_fga_3pm * (proj_min / 48.0)
+    player_proj_3pa_3pm = fg3a_rate * player_proj_fga_3pm
+    proj_fg3m_fga  = player_proj_3pa_3pm * fg3_pct * matchup_fg3m
     baseline_fg3m  = rates.get("fg3m", 0.0) * proj_min
     # FG3M_BLEND_ALPHA: FGA path has lower bias, per-min has lower variance.
     # Re-evaluate once 3PM grid search is run (module-level constant).
@@ -772,11 +1055,14 @@ def project_player(
     ))
 
     # REB: OREB/DREB decomposition (Brief P3, Sec. 2).
+    # Q8.4: pace_reb (^0.25) applied to availability — rebound opportunities per
+    # possession are nearly constant; pace sensitivity is weak.
     # Separate rates for OREB and DREB — different stabilisation timescales
     # and different contextual drivers (OREB = own-miss recovery; DREB = opp-miss recovery).
-    oreb_rate, dreb_rate = compute_reb_rates(df_clean, avail_oreb_pg, avail_dreb_pg, pg)
-    proj_oreb       = oreb_rate * avail_oreb_pg * (proj_min / 48.0)
-    proj_dreb       = dreb_rate * avail_dreb_pg * (proj_min / 48.0)
+    oreb_rate, dreb_rate = compute_reb_rates(df_clean, avail_oreb_pg, avail_dreb_pg, pg,
+                                             avail_weights=avail_weights)
+    proj_oreb       = oreb_rate * avail_oreb_pg * (proj_min / 48.0) * pace_reb
+    proj_dreb       = dreb_rate * avail_dreb_pg * (proj_min / 48.0) * pace_reb
     proj_reb_custom = (proj_oreb + proj_dreb) * matchup_reb   # DvP [0.80, 1.20]
     baseline_reb    = rates.get("reb", 0.0) * proj_min
     proj_reb        = REB_ALPHA * proj_reb_custom + (1.0 - REB_ALPHA) * baseline_reb
@@ -786,25 +1072,54 @@ def project_player(
     # Rate normalised by team possessions — avoids over-normalising via FGA.
     # Position-conditional EWMA span + Bayesian shrinkage (non-PGs volatile).
     # game_pace = (team_pace + opp_pace) / 2 — incorporates opponent tempo.
-    ast_rate        = compute_ast_rate(df_clean, team_pace, pg)
-    proj_poss       = game_pace * proj_min / 48.0        # game-specific possessions
-    proj_ast_custom = ast_rate * proj_poss * matchup_ast  # DvP [0.80, 1.20]
+    ast_rate        = compute_ast_rate(df_clean, team_pace, pg, avail_weights=avail_weights)
+    # Q8.4: AST uses pace^0.50 elasticity. Formula: game_pace^e × LEAGUE_AVG^(1-e)
+    # preserves the absolute possession count at league-average pace for any e.
+    proj_poss_ast   = _proj_poss_ast * proj_min / 48.0
+    proj_ast_custom = ast_rate * proj_poss_ast * matchup_ast  # DvP [0.80, 1.20]
     baseline_ast    = rates.get("ast", 0.0) * proj_min
     proj_ast        = AST_ALPHA * proj_ast_custom + (1.0 - AST_ALPHA) * baseline_ast
     projections["ast"] = max(0.0, round(proj_ast, 2))
 
     # STL/BLK: per-possession rates × proj_poss × DvP matchup (P5, P6, P7).
-    # P5: training basis is per-possession — pace_factor multiplier removed.
-    #     pace effect is already captured via proj_poss = game_pace * proj_min / 48.
+    # Q8.4: STL/BLK use pace^0.30 elasticity — defensive actions are largely
+    #   independent of tempo; faster games don't proportionally create more steals.
     # STL DvP (P6): opponents with high TOV rates create more steal opportunities.
     # BLK DvP (P7): opponents who attack the paint more give rim protectors more chances.
-    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg, team_pace)
-    projections["stl"] = max(0.0, round(stl_rate * proj_poss * matchup_stl, 2))
-    projections["blk"] = max(0.0, round(blk_rate * proj_poss * matchup_blk, 2))
+    proj_poss_stl   = _proj_poss_stl * proj_min / 48.0
+    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg, team_pace,
+                                                avail_weights=avail_weights)
+    projections["stl"] = max(0.0, round(stl_rate * proj_poss_stl * matchup_stl, 2))
+    projections["blk"] = max(0.0, round(blk_rate * proj_poss_stl * matchup_blk, 2))
 
-    # TOV: per-possession rate (P5) — pace embedded via proj_poss, no pace_factor.
-    tov_rate = compute_tov_rate(df_clean, team_pace, pg)
-    projections["tov"] = max(0.0, round(tov_rate * proj_poss, 2))
+    # TOV: per-possession rate (P5). Use linear game_pace (TOV scales proportionally
+    # with possessions — turnovers are directly possession-limited).
+    proj_poss_tov   = game_pace * proj_min / 48.0
+    tov_rate = compute_tov_rate(df_clean, team_pace, pg, avail_weights=avail_weights)
+    projections["tov"] = max(0.0, round(tov_rate * proj_poss_tov, 2))
+
+    # Q8.7 — trade archetype blending.
+    # When a player has 1-6 games on the new team, blend their prior-team per-minute
+    # rates with the new-team projections already computed above.
+    #   games 1-3 → α = 0.60 (heavier weight on prior-team role)
+    #   games 4-6 → α = 0.40 (new team increasingly dominant)
+    # Rationale: the new-team projections may be biased by cold-start archetype rates
+    # (games 1-4) or a small sample.  The prior team gives a better estimate of the
+    # player's true per-minute production, which transfers across teams.
+    if trade_ctx is not None:
+        _gnew = trade_ctx["games_on_new_team"]      # 1..6
+        _alpha = 0.60 if _gnew <= 3 else 0.40       # prior-team weight
+        _prior_rates = compute_per_minute_rates(trade_ctx["prev_team_df"])
+        if _prior_rates:
+            for _stat in ("pts", "fg3m", "reb", "ast", "stl", "blk", "tov"):
+                _prior_proj  = _prior_rates.get(_stat, 0.0) * proj_min
+                projections[_stat] = max(0.0, round(
+                    _alpha * _prior_proj + (1.0 - _alpha) * projections[_stat], 2
+                ))
+            log.debug(
+                "Q8.7 trade blend %s (pid=%s): gnew=%d alpha=%.2f prev_team=%s",
+                player_name, player_id, _gnew, _alpha, trade_ctx["prev_team_id"],
+            )
 
     # P11 — Home/away adjustment.
     # Applied after all DvP / pace / blend logic so it acts as a final scalar.
@@ -816,11 +1131,13 @@ def project_player(
                 projections[stat] = max(0.0, round(
                     projections[stat] * (1.0 + sign * delta), 2))
 
-    # Playoff calibration: per-stat deflators (P18 — replaces flat 0.92).
+    # Playoff calibration P18-v4 (2026-05-02):
+    # Minutes scalar already applied to proj_min above — all stats benefit.
+    # Residual rate deflators applied only for AST and FG3M (genuine playoff rate drops).
     if is_playoff:
-        for stat in PROJ_STATS:
-            projections[stat] = round(
-                projections[stat] * PLAYOFF_DEFLATORS.get(stat, 0.92), 2)
+        for stat, defl in PLAYOFF_RATE_DEFLATORS.items():
+            if stat in projections:
+                projections[stat] = round(projections[stat] * defl, 2)
 
     n_games = len(df_clean)
     pts_p25,  pts_med,  pts_p75  = compute_distribution(projections["pts"],  "pts",  role, n_games)
