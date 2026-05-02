@@ -1053,4 +1053,68 @@ def _main() -> None:
     )
     parser.add_argument(
         "--seasons", nargs="+",
-        default=["2021-22", "2022-23", "2023-24", "2
+        default=["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"],
+        help="Seasons to pull, e.g. 2024-25 2025-26"
+    )
+    parser.add_argument(
+        "--season-types", nargs="+",
+        default=["Regular Season"],
+        dest="season_types",
+        help="Season types: 'Regular Season' 'Playoffs'"
+    )
+    parser.add_argument(
+        "--reset", action="store_true",
+        help="Drop and recreate all tables before pulling"
+    )
+    parser.add_argument(
+        "--compute-splits", action="store_true",
+        dest="compute_splits",
+        help="Recompute team_def_splits from existing player_game_stats"
+    )
+    parser.add_argument(
+        "--status", action="store_true",
+        help="Print DB status and exit"
+    )
+    parser.add_argument(
+        "--verify", action="store_true",
+        help="Run sanity checks and exit"
+    )
+    parser.add_argument(
+        "--db", default=DB_PATH,
+        help=f"Path to SQLite DB (default: {DB_PATH})"
+    )
+    args = parser.parse_args()
+
+    if args.status:
+        print_status(args.db)
+        return
+
+    if args.verify:
+        ok = verify(args.db)
+        raise SystemExit(0 if ok else 1)
+
+    if args.compute_splits:
+        conn = get_conn(args.db)
+        seasons = args.seasons
+        print(f"Computing defensive splits for seasons: {seasons}")
+        compute_defensive_splits(conn, seasons)
+        conn.close()
+        print("Done.")
+        return
+
+    if args.pull:
+        pull_all(
+            seasons=args.seasons,
+            reset=args.reset,
+            season_types=args.season_types,
+            db_path=args.db,
+        )
+        print_status(args.db)
+        return
+
+    # Default: just show status
+    print_status(args.db)
+
+
+if __name__ == "__main__":
+    _main()
