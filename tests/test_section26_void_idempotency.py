@@ -85,7 +85,7 @@ def test_ungraded_filter_uses_inverse_of_terminal_results():
     ``result == ""`` check. That way a new grader state (e.g. "PENDING") can't
     silently slip through.
     """
-    src = (HERE / "engine" / "grade_picks.py").read_text(encoding="utf-8")
+    src = (HERE.parent / "engine" / "grade_picks.py").read_text(encoding="utf-8")
     # The single ungraded-building loop should be using the helper now.
     assert "if not _is_terminal_result(row.get(\"result\")):" in src, (
         "ungraded filter must use _is_terminal_result(row.get('result')) — "
@@ -106,7 +106,7 @@ def test_ungraded_filter_uses_inverse_of_terminal_results():
 def test_defensive_guard_refuses_to_overwrite_terminal_row():
     """Source-level contract: even if the ungraded filter is bypassed, the
     grade-write loop must refuse to clobber an already-terminal row."""
-    src = (HERE / "engine" / "grade_picks.py").read_text(encoding="utf-8")
+    src = (HERE.parent / "engine" / "grade_picks.py").read_text(encoding="utf-8")
     # Guard checks the existing row's result BEFORE writing.
     assert "existing = rows[idx].get(\"result\")" in src, (
         "M-23 defensive guard missing — grade-write loop doesn't read the "

@@ -258,7 +258,7 @@ def test_pick_score_bucket_old_thresholds_are_gone():
     old copy ever gets resurrected by a bad rebase, the report will go
     silent (every real pick -> "12+").
     """
-    src = (HERE / "engine" / "analyze_picks.py").read_text(encoding="utf-8")
+    src = (HERE.parent / "engine" / "analyze_picks.py").read_text(encoding="utf-8")
     # Pull just the function body.
     m = re.search(
         r"def pick_score_bucket\(ps\):.*?(?=\n(?:def |class |\Z))",

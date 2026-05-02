@@ -212,7 +212,7 @@ def test_post_nrfi_bonus_routes_mlb_to_shadow_log(tmp_path, monkeypatch):
     # in sys.argv-style imports is awkward — easier to monkeypatch after import.
     # Reload post_nrfi_bonus with patched paths.
     # We emulate execution by importing with the constants replaced.
-    spec_path = Path(__file__).resolve().parent / "post_nrfi_bonus.py"
+    spec_path = Path(__file__).resolve().parent.parent / "post_nrfi_bonus.py"
     src = spec_path.read_text(encoding="utf-8")
     # Rewrite the DATA_DIR assignment to our tmp dir. Crude but keeps the
     # test hermetic without adding a CLI param to a one-shot script.

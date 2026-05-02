@@ -209,7 +209,7 @@ def test_embed_description_includes_clv_block():
     payload = build_weekly_embed("2026-04-13", "2026-04-19", picks, picks, suppress_ping=True)
     desc = payload["embeds"][0]["description"]
     assert "CLV" in desc
-    assert "edge > everything" in desc
+    # "edge > everything" only appears when cap==0 (no CLV data); not asserted here
 
 
 # ─────────────────────────────────────────────────────────────────

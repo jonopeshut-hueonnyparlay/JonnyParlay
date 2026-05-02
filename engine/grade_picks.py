@@ -1229,7 +1229,7 @@ def daily_stats(picks):
 # Manual picks discontinued.
 COUNTED_RUN_TYPES = {"primary", "bonus"}
 PROP_RUN_TYPES    = {"primary", "bonus"}          # model props — used for W-L record / week / month
-PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # kept for grading only — not shown in recaps
+PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # shown in recap for entertainment — not counted in W-L
 
 def get_graded_primary(all_rows):
     """Return graded picks (primary + bonus + manual) grouped by date."""
@@ -1338,7 +1338,8 @@ def _recap_pick_line(p) -> str:
     # Parlay / Daily Lay
     if stat in ("PARLAY", "DAILY_LAY") or p.get("run_type") == "daily_lay":
         game = p.get("game", p.get("player", ""))
-        return f"{emoji} {game}{book} | {pl_tag}"
+        odds_str = f" {odds_}" if odds_ else ""
+        return f"{emoji} {game}{book}{odds_str} | {pl_tag}"
 
     if stat in GAME_LINE_STATS:
         team  = p.get("player", p.get("team", ""))
@@ -1379,12 +1380,13 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     _tier = lambda p: p.get("tier", "")
 
     # ── Day splits ────────────────────────────────────────────────────────────
-    reg_props = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
-    ks_picks  = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
-    # Parlays excluded from tracking — graded in pick_log but not shown in recap.
+    reg_props    = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) != "KILLSHOT"]
+    ks_picks     = [p for p in day_picks if _rt(p) in PROP_RUN_TYPES and _tier(p) == "KILLSHOT"]
+    parlay_picks = [p for p in day_picks if _rt(p) in PARLAY_RUN_TYPES]
+    # Parlays shown in recap for entertainment — NOT counted in W-L record.
 
-    # Combined record (props + KILLSHOT) for the header line
-    w, l, pu, pl, roi = daily_stats(reg_props + ks_picks)
+    # Daily header: W-L and P&L include parlays; week/month totals stay props-only
+    w, l, pu, pl, roi = daily_stats(reg_props + ks_picks + parlay_picks)
     pl_str   = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
     win_pct  = f"{round(w / (w + l) * 100)}%" if (w + l) > 0 else "—"
     record   = f"**{w}-{l} ({win_pct}){'  · %dP' % pu if pu else ''} | {pl_str}**"
@@ -1427,6 +1429,23 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     if ks_picks:
         pick_lines.append("\n**⚡ KILLSHOT**")
         for p in ks_picks:
+            pick_lines.append(_recap_pick_line(p))
+
+    daily_lay_picks = [p for p in parlay_picks if _rt(p) == "daily_lay"]
+    sgp_picks       = [p for p in parlay_picks if _rt(p) == "sgp"]
+    longshot_picks  = [p for p in parlay_picks if _rt(p) == "longshot"]
+
+    if daily_lay_picks:
+        pick_lines.append("\n**Daily Lay**")
+        for p in daily_lay_picks:
+            pick_lines.append(_recap_pick_line(p))
+    if sgp_picks:
+        pick_lines.append("\n**SGP**")
+        for p in sgp_picks:
+            pick_lines.append(_recap_pick_line(p))
+    if longshot_picks:
+        pick_lines.append("\n**Longshot**")
+        for p in longshot_picks:
             pick_lines.append(_recap_pick_line(p))
 
     # ── Week breakdown (props / KILLSHOT / parlays separately) ───────────────

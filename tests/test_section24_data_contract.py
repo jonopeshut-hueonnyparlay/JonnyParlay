@@ -304,7 +304,7 @@ def test_pick_log_schema_exports_new_helpers():
 def test_run_picks_imports_normalizers():
     """Grep run_picks.py to confirm it actually uses the new normalizers
     at its write sites — the whole point is no bypass paths remain."""
-    rp = HERE / "engine" / "run_picks.py"
+    rp = HERE.parent / "engine" / "run_picks.py"
     src = rp.read_text(encoding="utf-8")
     for name in ["normalize_is_home", "normalize_size", "normalize_proj",
                  "normalize_edge", "write_schema_sidecar"]:
@@ -317,7 +317,7 @@ def test_run_picks_imports_normalizers():
 def test_run_picks_write_sites_use_normalize_size():
     """Look for the bare ``{p.get('size', 0):.2f}`` pattern in run_picks —
     that was the old inline formatter, now replaced by normalize_size."""
-    rp = HERE / "engine" / "run_picks.py"
+    rp = HERE.parent / "engine" / "run_picks.py"
     src = rp.read_text(encoding="utf-8")
     # The pattern must be GONE from writer rows. It's OK if it remains in
     # an isolated utility, but no writerow([...]) should still use it.

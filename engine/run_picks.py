@@ -251,7 +251,7 @@ SIGMA = {
     "SOG": {"mult": 0.55, "min": 1.2},
     "REC": {"mult": 0.50, "min": 1.2},
     "PTS": {"mult": 0.35, "min": 4.5},
-    "3PM": {"mult": 0.55, "min": 0.8},
+    # "3PM" not here — P16 routes 3PM through NB_STATS/NB_R (Negative Binomial). Do NOT add to SIGMA.
     # MLB — RECALIBRATED to match real-world variance (2024 season data)
     "K":    {"mult": 0.45, "min": 1.5},   # Pitcher Ks — Poisson is a good fit
     "OUTS": {"mult": 0.22, "min": 3.0},   # Pitcher outs — was overestimating variance (conservative)
@@ -285,8 +285,8 @@ MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 # P9 — Platt scaling calibration for prop win_prob (2026-05-01).
 # Fitted from 76 settled primary/bonus props (NBA + NHL) via Nelder-Mead NLL.
 # Basis: over_p (not directional win_prob). Applied after calc_prop_prob:
-#   cal_over_p = sigmoid(PLATT_A * over_p + PLATT_B)
-#   under_p    = 1 - cal_over_p          # preserves complementarity
+#   note: cal_over_p <- sigmoid(PLATT_A * over_p + PLATT_B)
+#   note: under_p <- 1 - cal_over_p  (preserves complementarity)
 # Result: model mean win_prob 0.696 → calibrated 0.579 = actual 0.579.
 # Brier score improvement: 6.0%.
 # Re-fit at 300+ picks (P19: isotonic regression). Source: calibrate_platt.py.

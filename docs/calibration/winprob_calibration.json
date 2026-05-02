@@ -1,0 +1,92 @@
+{
+  "generated_at": "2026-05-01T23:58:25Z",
+  "n_picks": 76,
+  "run_types": [
+    "primary",
+    "bonus"
+  ],
+  "overall_win_rate": 0.5789,
+  "overall_mean_pred": 0.6957,
+  "systematic_bias_raw": 0.1168,
+  "platt_slope_a": -1.0826,
+  "platt_intercept_b": 1.0718,
+  "brier_score_raw": 0.2593,
+  "brier_score_calibrated": 0.2437,
+  "brier_improvement_pct": 6.0,
+  "reliability_diagram": {
+    "bin_edges": [
+      0.0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0
+    ],
+    "raw_mean_pred": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      0.5849,
+      0.6771,
+      0.7204,
+      null,
+      null
+    ],
+    "raw_mean_actual": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      0.6667,
+      0.5882,
+      0.5641,
+      null,
+      null
+    ],
+    "cal_mean_pred": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      0.6079,
+      0.5839,
+      0.5724,
+      null,
+      null
+    ],
+    "cal_mean_actual": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      0.6667,
+      0.5882,
+      0.5641,
+      null,
+      null
+    ],
+    "counts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      3,
+      34,
+      39,
+      0,
+      0
+    ]
+  },
+  "interpretation": "  WARNING: Platt slope a=-1.08 is negative -- slope estimate is unreliable. This indicates the win_prob values are too narrowly clustered for Platt to fit a meaningful slope (selection filter truncates the distribution). Do NOT apply the Platt slope correction at this sample size. Use the bias correction only (see below).\n  Systematic bias: model over-predicts by 11.7%. Actionable: shift all win_prob values by -0.1168 as a flat correction until slope becomes estimable. Partial explanation: selection filter (only posting picks above a win_prob threshold) is expected to create upward truncation bias.\n  Brier score 0.2593 >= 0.23 target. With n=76 and a narrow win_prob range, this may reflect small-sample variance. Re-evaluate at n=300 with a wider win_prob spread.\n  n=76: Platt scaling is appropriate at this sample size but slope is unreliable with a truncated distribution. Upgrade to isotonic regression at n>=300. Track Brier score monthly; flag if it drifts >10pct month-over-month."
+}

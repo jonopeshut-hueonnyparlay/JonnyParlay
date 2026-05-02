@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE = REPO_ROOT / "engine"
 
 # Make engine/ importable for the duration of the test module.
@@ -357,20 +357,5 @@ def test_run_picks_has_no_commented_out_code():
 
 # ── Root mirror sync contract (same pattern as prior sections) ───────────────
 
-@pytest.mark.parametrize(
-    "filename",
-    ["paths.py", "pick_labels.py", "clv_report.py", "grade_picks.py",
-     "weekly_recap.py", "analyze_picks.py"],
-)
-def test_root_mirror_matches_engine(filename):
-    """Every touched file has a byte-identical sibling at the repo root.
-    The engine ships from root on Windows (historical layout) and from
-    engine/ under test; a drift between the two has caused real bugs
-    in prior audit sections."""
-    engine_path = ENGINE / filename
-    root_path = REPO_ROOT / filename
-    assert engine_path.is_file(), f"{engine_path} missing"
-    assert root_path.is_file(), f"{root_path} missing (sync engine/ → root)"
-    assert engine_path.read_bytes() == root_path.read_bytes(), (
-        f"{filename}: engine and root copies are out of sync"
-    )
+# L16 (Apr 30 2026): root files are runpy shims — intentionally differ from engine/.
+# test_tail_guard.py guards shim validity. Byte-identical sync removed (H1/H2, May 1 2026).

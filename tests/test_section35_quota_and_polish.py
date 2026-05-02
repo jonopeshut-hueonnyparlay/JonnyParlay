@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 CAPTURE_CLV = REPO_ROOT / "engine" / "capture_clv.py"
 CAPTURE_CLV_ROOT = REPO_ROOT / "capture_clv.py"
 WEEKLY_RECAP = REPO_ROOT / "engine" / "weekly_recap.py"
@@ -177,11 +177,12 @@ def test_next_utc_quota_reset_lands_on_utc_midnight():
 
 
 def test_capture_clv_root_mirror_matches_engine():
-    """Sync contract — root mirror must match after engine edits."""
-    assert CAPTURE_CLV.read_bytes() == CAPTURE_CLV_ROOT.read_bytes(), (
-        "engine/capture_clv.py and ./capture_clv.py have diverged — "
-        "run `cp engine/capture_clv.py capture_clv.py`"
-    )
+    # L16 (Apr 30 2026): capture_clv.py root file is a runpy shim.
+    # test_tail_guard.py guards shim validity. (H1/H2, May 1 2026)
+    root = CAPTURE_CLV_ROOT
+    if root.exists():
+        src = root.read_text(encoding="utf-8", errors="replace")
+        assert "runpy.run_module" in src, "root capture_clv.py must be a runpy shim (L16)"
 
 
 # ── L-5: preflight.bat actively enforces Python >= 3.10 ─────────────────────
@@ -277,10 +278,12 @@ def test_compute_pl_returns_full_precision():
 
 
 def test_weekly_recap_root_mirror_matches_engine():
-    assert WEEKLY_RECAP.read_bytes() == WEEKLY_RECAP_ROOT.read_bytes(), (
-        "engine/weekly_recap.py and ./weekly_recap.py have diverged — "
-        "run `cp engine/weekly_recap.py weekly_recap.py`"
-    )
+    # L16 (Apr 30 2026): weekly_recap.py root file is a runpy shim.
+    # test_tail_guard.py guards shim validity. (H1/H2, May 1 2026)
+    root = WEEKLY_RECAP_ROOT
+    if root.exists():
+        src = root.read_text(encoding="utf-8", errors="replace")
+        assert "runpy.run_module" in src, "root weekly_recap.py must be a runpy shim (L16)"
 
 
 # ── L-9: post_nrfi_bonus.py team column holds a single team ─────────────────

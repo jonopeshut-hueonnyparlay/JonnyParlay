@@ -60,7 +60,13 @@ def recover_over_p(df: pd.DataFrame) -> np.ndarray:
 
 
 def fit_platt(over_p: np.ndarray, y: np.ndarray) -> tuple[float, float]:
-    """Fit a=slope, b=intercept via negative log-likelihood (Nelder-Mead)."""
+    """DEPRECATED — use _fit_nll_exact() instead (L9).
+
+    This function approximates the bet direction via ``over_p > 0.5``,
+    which is less accurate than using the actual direction flag.
+    main() already calls _fit_nll_exact() correctly.
+    Kept for reference; do not use in new code.
+    """
     def nll(params: list[float]) -> float:
         a, b = params
         logit = np.clip(a * over_p + b, -30.0, 30.0)

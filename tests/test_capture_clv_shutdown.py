@@ -124,7 +124,7 @@ def test_subprocess_sigterm_releases_lock():
 
     from filelock import FileLock, Timeout as FileLockTimeout
 
-    repo = Path(__file__).resolve().parent
+    repo = Path(__file__).resolve().parent.parent
 
     # Use a sandboxed lockfile so we never collide with a real host-side
     # daemon's lock (capture_clv.py honours JONNYPARLAY_DAEMON_LOCK).

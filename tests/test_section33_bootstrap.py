@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 GO_PS1 = REPO_ROOT / "go.ps1"
 PREFLIGHT_BAT = REPO_ROOT / "preflight.bat"
 
@@ -254,34 +254,13 @@ def test_go_ps1_sabersim_timeout_prompts_before_exit(go_src: str):
 
 # ── Sanity: other sections' contracts are still intact ──────────────────────
 
-def test_go_ps1_sync_pairs_still_lists_all_mirrored_files(go_src: str):
-    """Regression guard for Section H-12 — don't let Section 33 accidentally
-    drop any sync pairs (the comment block + the syncPairs list go together)."""
-    must_have = [
-        "run_picks.py",
-        "grade_picks.py",
-        "capture_clv.py",
-        "analyze_picks.py",
-        "results_graphic.py",
-        "weekly_recap.py",
-        "morning_preview.py",
-        "pick_log_schema.py",
-        "name_utils.py",
-    ]
-    # Match the outer array: `$syncPairs = @( ... )` where the inner tuples
-    # are `@("a","b")`. A non-greedy `.+?` would stop at the first inner `)`.
-    # Anchor the close paren to the start of its own line.
-    m = re.search(
-        r"\$syncPairs\s*=\s*@\(\s*(.*?)^\)",
-        go_src,
-        re.DOTALL | re.MULTILINE,
+def test_go_ps1_no_sync_pairs_s33(go_src: str):
+    """H1 (May 1 2026): syncPairs loop removed — root files are L16 runpy shims
+    that never drift, so the hash-compare copy loop is gone entirely.
+    Complementary to test_section23 checks."""
+    assert "$syncPairs = @(" not in go_src, (
+        "go.ps1 must not contain $syncPairs array after H1 fix (L16 shim architecture)"
     )
-    assert m, "$syncPairs list not found in go.ps1"
-    block = m.group(1)
-    for fname in must_have:
-        assert fname in block, f"$syncPairs dropped {fname!r}"
-
-
 def test_preflight_bat_still_checks_filelock_requests_pillow(preflight_src: str):
     """Regression guard — our step-5 insertion must not have broken the
     earlier dep checks."""

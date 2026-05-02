@@ -35,6 +35,10 @@ Pillow
 #
 # EWMA + DataFrame transforms over historical game logs.
 pandas
+# Numerical computing — used by calibrate_winprob.py, calibrate_platt.py,
+# nba_projector.py. Required for Platt scaling + projection math (L2).
+numpy>=1.24
+scipy>=1.10
 # Historical player / team stats source (NBA). One call per season.
 nba_api
 # Daily NBA injury report PDF parser (used by engine/injury_parser.py).

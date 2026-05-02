@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE = REPO_ROOT / "engine"
 BRAND = ENGINE / "brand.py"
 BRAND_ROOT = REPO_ROOT / "brand.py"
@@ -43,9 +43,7 @@ sys.path.insert(0, str(ENGINE))
 
 def test_brand_module_exists():
     assert BRAND.exists(), "engine/brand.py must exist (audit L-7)"
-    assert BRAND_ROOT.exists(), (
-        "root brand.py mirror must exist — run `cp engine/brand.py brand.py`"
-    )
+    # brand.py is a library module — no root copy needed (imported by engine/ only)
 
 
 def test_brand_module_exports_tagline():
@@ -86,7 +84,9 @@ def test_brand_module_has_no_side_effects():
 
 
 def test_brand_root_mirror_matches_engine():
-    assert BRAND.read_bytes() == BRAND_ROOT.read_bytes()
+    # brand.py has no root copy — it is a library module, not a root entry point.
+    # L16: only entry-point shims live at root. (H1/H2, May 1 2026)
+    assert not Path(str(BRAND_ROOT)).exists() or         Path(str(BRAND_ROOT)).read_text(encoding="utf-8").startswith('"""'),         "root brand.py exists but is not a valid module — remove it"
 
 
 # ── L-7: every caller imports BRAND_TAGLINE and drops the literal ───────────
@@ -258,18 +258,5 @@ def test_fmt_clock_et_returns_english_ampm_ignoring_locale():
 
 # ── Sync contract ───────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize(
-    "engine_name",
-    ["run_picks.py", "grade_picks.py", "weekly_recap.py", "morning_preview.py",
-     "results_graphic.py", "brand.py"],
-)
-def test_engine_root_mirror_matches(engine_name: str):
-    """Any file edited in this section must have its root mirror in sync."""
-    engine_file = ENGINE / engine_name
-    root_file = REPO_ROOT / engine_name
-    if not root_file.exists():
-        pytest.skip(f"no root mirror for {engine_name}")
-    assert engine_file.read_bytes() == root_file.read_bytes(), (
-        f"{engine_name} engine↔root drift — run "
-        f"`cp engine/{engine_name} {engine_name}`"
-    )
+# L16 (Apr 30 2026): root files are runpy shims — intentionally differ from engine/.
+# test_tail_guard.py guards shim validity. Byte-identical sync removed (H1/H2, May 1 2026).

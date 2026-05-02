@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE_DIR = REPO_ROOT / "engine"
 
 if str(ENGINE_DIR) not in sys.path:
@@ -375,25 +375,10 @@ def test_wrapper_has_no_inline_reader(fname, fn):
 
 # ── Root-mirror sync contract ────────────────────────────────────────────────
 
-_SYNCED_FILES = [
-    "pick_log_io.py",
-    "analyze_picks.py",
-    "clv_report.py",
-    "morning_preview.py",
-    "weekly_recap.py",
-    "results_graphic.py",
-]
-
-
-@pytest.mark.parametrize("fname", _SYNCED_FILES)
-def test_root_mirror_is_byte_identical(fname):
-    src = ENGINE_DIR / fname
-    mirror = REPO_ROOT / fname
-    assert src.is_file(), f"engine/{fname} missing"
-    assert mirror.is_file(), (
-        f"root mirror {fname} missing — sync engine/{fname} → root after edits"
-    )
-    assert src.read_bytes() == mirror.read_bytes(), (
-        f"engine/{fname} and root/{fname} diverged — re-sync after edits "
-        f"(engine is source of truth)"
-    )
+# L16 (Apr 30 2026): files that had root mirrors now use 5-line runpy shims.
+# test_tail_guard.py guards shim validity; byte-identical sync is no longer required.
+# _SYNCED_FILES and test_root_mirror_is_byte_identical removed (H1/H2, May 1 2026).
+#
+# pick_log_io.py is a library module — no root copy ever needed.
+# analyze_picks.py, clv_report.py, morning_preview.py, weekly_recap.py,
+# results_graphic.py are all L16 runpy shims.

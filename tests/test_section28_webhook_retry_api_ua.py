@@ -250,7 +250,7 @@ def test_jonnyparlay_ua_is_identifiable():
 # new helpers (no bare ``float(r.json().get("retry_after", …))``).
 # ─────────────────────────────────────────────────────────────────
 
-_ENGINE = HERE / "engine"
+_ENGINE = HERE.parent / "engine"
 
 @pytest.mark.parametrize("fname", [
     "grade_picks.py",

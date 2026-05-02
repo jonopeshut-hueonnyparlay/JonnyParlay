@@ -172,54 +172,53 @@ def test_h7_banner_printed_on_weekly_failure(monkeypatch, capsys):
 
 
 # ─────────────────────────────────────────────────────────────────
-# H-12 — go.ps1 syncPairs must cover all root-mirrored modules
+# L16 / H1 — go.ps1 must NOT contain a $syncPairs copy loop
 # ─────────────────────────────────────────────────────────────────
-
-REQUIRED_SYNC_PAIRS = [
-    "run_picks.py",
-    "grade_picks.py",
-    "capture_clv.py",
-    "analyze_picks.py",      # H-12 — the module that went missing
-    "results_graphic.py",
-    "weekly_recap.py",
-    "morning_preview.py",
-    "pick_log_schema.py",
-    "name_utils.py",
-]
+# L16 (Apr 30 2026): root entry-point files are 5-line runpy shims.
+# H1  (May  1 2026): the old $syncPairs loop was removed from go.ps1
+# because it overwrote shims with engine source on every run, silently
+# reverting the L16 architecture. These tests enforce the correct
+# post-L16 state: no copy loop, and the L16 comment present.
 
 
-def test_go_ps1_contains_all_sync_pairs():
-    """go.ps1 is the operator's only path to flag a stale root mirror.
-    If analyze_picks.py (or anything else on the list) falls out of the
-    syncPairs array, the hash check gets bypassed and the root file drifts.
+def test_go_ps1_no_sync_pairs_array():
+    """go.ps1 must NOT contain the $syncPairs array (H1 fix, May 1 2026).
+    Root files are permanent shims — they never drift by design, so the
+    copy-loop is both unnecessary and actively harmful.
     """
-    go_ps1 = HERE / "go.ps1"
+    go_ps1 = HERE.parent / "go.ps1"
     assert go_ps1.exists(), "go.ps1 missing from repo root"
     text = go_ps1.read_text(encoding="utf-8", errors="replace")
+    assert "$syncPairs = @(" not in text, (
+        "go.ps1 still contains the $syncPairs array. "
+        "This loop overwrites L16 root shims with engine source on every run. "
+        "Remove it (see H1 in docs/audits/AUDIT_2026-05-01.md)."
+    )
 
-    for mod in REQUIRED_SYNC_PAIRS:
-        assert f'"{mod}"' in text, (
-            f"H-12: go.ps1 syncPairs is missing {mod!r}. Without the pair, "
-            f"go.ps1 can't detect drift between engine/{mod} and {mod}."
-        )
 
-
-def test_go_ps1_sync_pairs_point_to_engine_subdir():
-    """Sanity check — each sync entry pairs a root filename with the
-    engine/ path. Prevents typos that would silently no-op."""
-    go_ps1 = HERE / "go.ps1"
+def test_go_ps1_no_copy_item_sync_loop():
+    """go.ps1 must NOT contain a Copy-Item call that copies engine/ files
+    over root shims. Belt-and-suspenders check beyond the array assertion."""
+    go_ps1 = HERE.parent / "go.ps1"
     text = go_ps1.read_text(encoding="utf-8", errors="replace")
+    # The old loop contained: Copy-Item $eng $root -Force
+    # We should not see any Copy-Item that references engine\ paths
+    import re
+    sync_copy = re.search(r"Copy-Item\s+\$eng\s+\$root", text)
+    assert sync_copy is None, (
+        "go.ps1 still contains 'Copy-Item $eng $root' — the L16 shim "
+        "overwrite loop is present. Remove it (H1 fix)."
+    )
 
-    for mod in REQUIRED_SYNC_PAIRS:
-        # Require the "engine\<module>" form to appear alongside the root name.
-        # go.ps1 uses backslashes (Windows) — match either separator to stay tolerant.
-        engine_back  = f'engine\\{mod}'
-        engine_fwd   = f'engine/{mod}'
-        assert engine_back in text or engine_fwd in text, (
-            f"H-12: go.ps1 lists {mod!r} but no paired 'engine\\{mod}' path. "
-            "The hash-check loop compares against engine/<module>, so a "
-            "missing engine path turns the check into a no-op."
-        )
+
+def test_go_ps1_l16_comment_present():
+    """go.ps1 must document why no sync loop exists (L16 shim architecture)."""
+    go_ps1 = HERE.parent / "go.ps1"
+    text = go_ps1.read_text(encoding="utf-8", errors="replace")
+    assert "L16" in text, (
+        "go.ps1 should contain a comment referencing L16 (the shim architecture "
+        "decision) so future maintainers understand why there is no sync loop."
+    )
 
 
 # ─────────────────────────────────────────────────────────────────

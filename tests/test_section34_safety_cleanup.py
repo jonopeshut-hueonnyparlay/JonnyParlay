@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
-TEST_CONTEXT = REPO_ROOT / "test_context.py"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_CONTEXT = REPO_ROOT / "tests" / "test_context.py"
 PREFLIGHT_BAT = REPO_ROOT / "preflight.bat"
 MORNING_PREVIEW = REPO_ROOT / "engine" / "morning_preview.py"
 MORNING_PREVIEW_ROOT = REPO_ROOT / "morning_preview.py"
@@ -153,7 +153,7 @@ def test_claude_md_still_mentions_run_picks_as_source_of_truth():
     truth' directive that tells future Claudes to sync to root after edits."""
     src = CLAUDE_MD.read_text(encoding="utf-8")
     assert "source of truth" in src.lower()
-    assert "sync to root" in src.lower()
+    assert "no sync step needed" in src.lower()  # L16: shims eliminate drift
 
 
 # ── L-13: preflight stale-lock cleanup covers all three locks ───────────────
@@ -239,14 +239,13 @@ def test_morning_preview_uses_skip_ascii_marker():
 
 
 def test_root_morning_preview_mirrors_engine_copy():
-    """Sync contract: after edits to engine/morning_preview.py the root
-    mirror must match. Any drift here gets auto-synced by go.ps1 on next
-    run, but we want the tests to catch it first so CI stays green."""
+    """L16 (Apr 30 2026): root morning_preview.py is a 5-line runpy shim —
+    it intentionally differs from engine/morning_preview.py.
+    test_tail_guard.py::test_root_shim_delegates_via_runpy guards shim validity.
+    The old byte-identical assertion is removed (H1/H2, May 1 2026)."""
     if not MORNING_PREVIEW_ROOT.exists():
-        pytest.skip("root morning_preview.py mirror not present in this checkout")
-    engine_hash = MORNING_PREVIEW.read_bytes()
-    root_hash = MORNING_PREVIEW_ROOT.read_bytes()
-    assert engine_hash == root_hash, (
-        "engine/morning_preview.py and ./morning_preview.py have diverged — "
-        "run `cp engine/morning_preview.py morning_preview.py`"
+        pytest.skip("root morning_preview.py not present in this checkout")
+    src = MORNING_PREVIEW_ROOT.read_text(encoding="utf-8", errors="replace")
+    assert "runpy.run_module" in src, (
+        "root morning_preview.py must be a runpy shim (L16)"
     )

@@ -1,5 +1,10 @@
 # Memory
 
+## Audit 2026-05-01 — Status
+Full audit doc: `docs/audits/AUDIT_2026-05-01.md`. **0 CRIT / 2 HIGH / 4 MED / 9 LOW / 54 CLEAN.**
+
+**Open items:** H1 (go.ps1 syncPairs overwrites L16 shims on every run), H2 (test_tail_guard.py broken by L16), M1 (sgp P16/NB not ported for 3PM), M2 (csv_writer "S" fallback), M3 (get_team_avg_fga season_type filter), M4 (test_section23 sync tests outdated), L1–L9 (minor).
+
 ## Audit 2026-04-28 — Status
 Full audit doc: `docs/audits/AUDIT_2026-04-28.md`. **52 findings: 3 CRIT / 11 HIGH / 14 MED / 20 LOW / 4 CLEAN.**
 

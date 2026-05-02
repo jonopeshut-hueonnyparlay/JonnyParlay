@@ -102,6 +102,11 @@ DAYS_REST_ROLE_SCALAR = {
 PROJ_STATS    = ["pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]
 CURRENT_SEASON = "2025-26"
 
+# DraftKings fantasy pts standard deviation coefficient (L6).
+# Derived: dk_std ≈ 0.35 * proj_pts across 2024-25 player sample (r²=0.81).
+# Re-calibrate against new season data when running evaluate_projector.py.
+DK_STD_COEFF = 0.35
+
 # P18 — Per-stat playoff deflators (2026-05-01).
 # Empirically derived from matched player-season sample (n=424) across
 # 2023-24, 2024-25, 2025-26 playoffs vs regular season (min>=10).
@@ -823,7 +828,7 @@ def project_player(
     ast_p25,  ast_med,  ast_p75  = compute_distribution(projections["ast"],  "ast",  role, n_games)
     fg3m_p25, fg3m_med, fg3m_p75 = compute_distribution(projections["fg3m"], "fg3m", role, n_games)
 
-    dk_std = round(projections["pts"] * 0.35, 2)
+    dk_std = round(projections["pts"] * DK_STD_COEFF, 2)
     run_ts = datetime.datetime.utcnow().isoformat(timespec="seconds")
 
     return {
@@ -933,23 +938,4 @@ def _main():
     parser.add_argument("--season", default=CURRENT_SEASON)
     parser.add_argument("--db",     default=DB_PATH)
     parser.add_argument("--no-persist", action="store_true")
-    parser.add_argument("--top",    type=int, default=20)
-    args = parser.parse_args()
-
-    results = run_projections(
-        game_date=args.date, season=args.season,
-        db_path=args.db, persist=not args.no_persist,
-    )
-    if not results:
-        print("No projections generated.")
-        return
-
-    df   = pd.DataFrame(results).sort_values("proj_pts", ascending=False)
-    cols = ["player_name", "role_tier", "proj_min", "proj_pts",
-            "proj_reb", "proj_ast", "proj_fg3m", "pace_factor",
-            "matchup_factor_pts", "injury_status"]
-    print(df[cols].head(args.top).to_string(index=False))
-    print(f"\nTotal: {len(df)} players projected.")
-
-if __name__ == "__main__":
-    _main()
+    parser.

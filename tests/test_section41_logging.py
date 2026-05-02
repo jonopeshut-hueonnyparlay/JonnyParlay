@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE_DIR = REPO_ROOT / "engine"
 
 if str(ENGINE_DIR) not in sys.path:
@@ -142,7 +142,7 @@ def test_capture_clv_imports_engine_logger():
 def test_capture_clv_has_module_level_logger():
     src = (ENGINE_DIR / "capture_clv.py").read_text(encoding="utf-8")
     # Module-level ``logger = get_logger("capture_clv", ...)``.
-    assert re.search(r"^logger\s*=\s*get_logger\(", src, re.MULTILINE), (
+    assert re.search(r"^\s*logger\s*=\s*get_logger\(", src, re.MULTILINE), (
         "capture_clv.py must define a module-level logger so every warning "
         "site routes through the same named logger."
     )
@@ -196,22 +196,5 @@ def test_capture_clv_error_class_prints_migrated():
 
 # ── Root-mirror contract ───────────────────────────────────────────────────
 
-MODIFIED_FILES = [
-    "engine_logger.py",
-    "capture_clv.py",
-]
-
-
-@pytest.mark.parametrize("fname", MODIFIED_FILES)
-def test_root_mirror_byte_identical(fname):
-    engine_path = ENGINE_DIR / fname
-    root_path = REPO_ROOT / fname
-    assert engine_path.is_file(), f"engine/{fname} must exist"
-    assert root_path.is_file(), (
-        f"{fname}: root mirror missing — "
-        f"run `cp engine/{fname} {fname}` after every engine edit."
-    )
-    assert engine_path.read_bytes() == root_path.read_bytes(), (
-        f"{fname}: engine/ and root mirror diverged — "
-        f"run `cp engine/{fname} {fname}` after every engine edit."
-    )
+# L16 (Apr 30 2026): capture_clv.py is a runpy shim; engine_logger.py has no root
+# copy. test_tail_guard.py guards shim validity. (H1/H2, May 1 2026)

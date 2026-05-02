@@ -6,7 +6,7 @@ Locks the v2 spec:
       pick_score >= 90
       win_prob >= 0.65
       odds in [-200, +110]
-      stat in {PTS, REB, AST, SOG, 3PM}
+      stat in {PTS, AST, SOG, 3PM}  # REB dropped (L9)
   - Sizing:
       3u default
       4u iff win_prob >= 0.70 AND edge >= 0.06
@@ -74,7 +74,7 @@ def test_gate_passes_on_clean_T1():
 
 
 def test_gate_passes_all_allowed_stats():
-    for stat in ("PTS", "REB", "AST", "SOG", "3PM"):
+    for stat in ("PTS", "AST", "SOG", "3PM"):
         ok, reason = _passes_killshot_v2_gate(_pick(stat=stat))
         assert ok, f"stat={stat} should pass; got reason={reason}"
 
@@ -329,7 +329,7 @@ def test_constants_are_sane():
     assert KILLSHOT_WIN_PROB_FLOOR == 0.65
     assert KILLSHOT_ODDS_MIN == -200
     assert KILLSHOT_ODDS_MAX == 110
-    assert KILLSHOT_STAT_ALLOW == frozenset({"PTS", "REB", "AST", "SOG", "3PM"})
+    assert KILLSHOT_STAT_ALLOW == frozenset({"PTS", "AST", "SOG", "3PM"})
     assert KILLSHOT_SIZE_BASE == 3.0
     assert KILLSHOT_SIZE_BUMP == 4.0
     assert KILLSHOT_BUMP_WIN_PROB == 0.70

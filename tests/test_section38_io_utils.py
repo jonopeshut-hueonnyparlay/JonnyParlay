@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE_DIR = REPO_ROOT / "engine"
 
 # Make ``engine/`` importable the same way the launchers do.
@@ -242,26 +242,5 @@ def test_save_checkpoint_uses_helper(tmp_path, monkeypatch):
 
 # ── Root-mirror sync contract ────────────────────────────────────────────────
 
-_SYNCED_FILES = [
-    "io_utils.py",
-    "discord_guard.py",
-    "capture_clv.py",
-    "grade_picks.py",
-    "morning_preview.py",
-    "weekly_recap.py",
-    "run_picks.py",
-]
-
-
-@pytest.mark.parametrize("fname", _SYNCED_FILES)
-def test_root_mirror_is_byte_identical(fname):
-    src = ENGINE_DIR / fname
-    mirror = REPO_ROOT / fname
-    assert src.is_file(), f"engine/{fname} missing"
-    assert mirror.is_file(), (
-        f"root mirror {fname} missing — sync engine/{fname} → root after edits"
-    )
-    assert src.read_bytes() == mirror.read_bytes(), (
-        f"engine/{fname} and root/{fname} diverged — re-sync after edits "
-        f"(engine is source of truth)"
-    )
+# L16 (Apr 30 2026): root files are runpy shims — intentionally differ from engine/.
+# test_tail_guard.py guards shim validity. Byte-identical sync removed (H1/H2, May 1 2026).

@@ -690,10 +690,62 @@ def get_team_tov_rate(team_id: int, season: str,
     return float(max(0.05, min(0.30, tov_per_game / pace)))
 
 
+def get_team_rim_attempt_rate(team_id: int, season: str,
+                              db_path: Path = DB_PATH) -> float:
+    """Season-average opponent non-3pt FGA per game (proxy for rim/paint attempts).
+
+    rim_attempt_rate = (team.fga - team.fg3a) / n_games
+
+    Used as the BLK opportunity multiplier: teams that attack the paint more
+    create more shot-blocking chances for rim protectors.
+
+    Proxy rationale: true "restricted area" attempt data is not available in
+    player_game_stats; (fga - fg3a) includes mid-range as well as rim attempts
+    but is a stable proxy for drive-frequency across teams.
+
+    Falls back to league average (56.0) if insufficient data.
+    League avg calibrated from 2024-25 NBA averages:
+        ~85 FGA/game, ~29 3PA/game => ~56 non-3pt FGA/game.
+    """
+    _LEAGUE_AVG = 56.0  # non-3pt FGA per game, 2024-25 league average
+    conn = get_conn(db_path)
+    df = pd.read_sql_query(
+        """
+        SELECT
+            SUM(pgs.fga  - pgs.fg3a)    AS total_non3_fga,
+            COUNT(DISTINCT pgs.game_id) AS n_games
+        FROM player_game_stats pgs
+        JOIN games g ON g.game_id = pgs.game_id
+        WHERE pgs.team_id   = :team_id
+          AND g.season       = :season
+          AND g.season_type  = 'Regular Season'
+        """,
+        conn,
+        params={"team_id": team_id, "season": season},
+    )
+    conn.close()
+    if df.empty:
+        return _LEAGUE_AVG
+    row = df.iloc[0]
+    n = int(row["n_games"] or 0)
+    if n < 5:
+        return _LEAGUE_AVG
+    non3_fga_per_game = float(row["total_non3_fga"] or 0) / n
+    # Sanity clip: no team averages below 35 or above 80 non-3pt FGA/game
+    return float(max(35.0, min(80.0, non3_fga_per_game)))
+
+
 def get_team_avg_fga(team_id: int, before_date: str,
                      season: str, n_games: int = 20,
+                     season_type: str = "Regular Season",
                      db_path: Path = DB_PATH) -> float:
-    """Team average FGA per game over last n_games (for FGA decomposition)."""
+    """Team average FGA per game over last n_games (for FGA decomposition).
+
+    M3 (May 1 2026): added season_type filter (default "Regular Season") and
+    ORDER BY + LIMIT so only the most-recent n_games contribute, not stale
+    early-season data.  Playoff games have different pace/shot-selection and
+    must not contaminate regular-season averages.
+    """
     conn = get_conn(db_path)
     row = conn.execute(
         """
@@ -702,13 +754,14 @@ def get_team_avg_fga(team_id: int, before_date: str,
             FROM player_game_stats pgs
             JOIN games g ON g.game_id = pgs.game_id
             WHERE pgs.team_id = ? AND g.season = ?
+              AND g.season_type = ?
               AND g.game_date < ?
             GROUP BY pgs.game_id
             ORDER BY g.game_date DESC
             LIMIT ?
         )
         """,
-        (team_id, season, before_date, n_games)
+        (team_id, season, season_type, before_date, n_games)
     ).fetchone()
     conn.close()
     return float(row[0]) if row and row[0] else 85.0  # league-avg fallback
@@ -1000,68 +1053,4 @@ def _main() -> None:
     )
     parser.add_argument(
         "--seasons", nargs="+",
-        default=["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"],
-        help="Seasons to pull, e.g. 2024-25 2025-26"
-    )
-    parser.add_argument(
-        "--season-types", nargs="+",
-        default=["Regular Season"],
-        dest="season_types",
-        help="Season types: 'Regular Season' 'Playoffs'"
-    )
-    parser.add_argument(
-        "--reset", action="store_true",
-        help="Drop and recreate all tables before pulling"
-    )
-    parser.add_argument(
-        "--compute-splits", action="store_true",
-        dest="compute_splits",
-        help="Recompute team_def_splits from existing player_game_stats"
-    )
-    parser.add_argument(
-        "--status", action="store_true",
-        help="Print DB status and exit"
-    )
-    parser.add_argument(
-        "--verify", action="store_true",
-        help="Run sanity checks and exit"
-    )
-    parser.add_argument(
-        "--db", default=DB_PATH,
-        help=f"Path to SQLite DB (default: {DB_PATH})"
-    )
-    args = parser.parse_args()
-
-    if args.status:
-        print_status(args.db)
-        return
-
-    if args.verify:
-        ok = verify(args.db)
-        raise SystemExit(0 if ok else 1)
-
-    if args.compute_splits:
-        conn = get_conn(args.db)
-        seasons = args.seasons
-        print(f"Computing defensive splits for seasons: {seasons}")
-        compute_defensive_splits(conn, seasons)
-        conn.close()
-        print("Done.")
-        return
-
-    if args.pull:
-        pull_all(
-            seasons=args.seasons,
-            reset=args.reset,
-            season_types=args.season_types,
-            db_path=args.db,
-        )
-        print_status(args.db)
-        return
-
-    # Default: just show status
-    print_status(args.db)
-
-
-if __name__ == "__main__":
-    _main()
+        default=["2021-22", "2022-23", "2023-24", "2

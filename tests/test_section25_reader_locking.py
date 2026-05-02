@@ -57,7 +57,7 @@ import pick_log_io  # noqa: E402
 
 def _read_src(relpath: str) -> str:
     """Slurp a source file relative to the repo root."""
-    return (HERE / relpath).read_text(encoding="utf-8")
+    return (HERE.parent / relpath).read_text(encoding="utf-8")
 
 
 def _write_canonical_log(path: Path, rows: list[dict]) -> None:
@@ -180,7 +180,7 @@ def test_m15_capture_clv_write_path_still_holds_lock():
 # M-19 — post_nrfi_bonus.py write is lock-held + sidecar-refreshed
 # ─────────────────────────────────────────────────────────────────
 
-POST_NRFI_PATH = HERE / "post_nrfi_bonus.py"
+POST_NRFI_PATH = HERE.parent / "post_nrfi_bonus.py"
 
 
 def test_m19_post_nrfi_holds_pick_log_lock():

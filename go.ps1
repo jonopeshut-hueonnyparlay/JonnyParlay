@@ -150,38 +150,10 @@ if (-not $allOk) {
     Read-Host "Press Enter to exit"; exit 1
 }
 
-# Engine/root sync check
-# Audit H-12: analyze_picks.py was drifting silently (53-line diff) because
-# it wasn't in this list. Anything with a root mirror must be listed here so
-# preflight auto-syncs on every run. Also adding results_graphic.py,
-# weekly_recap.py, morning_preview.py, pick_log_schema.py, name_utils.py —
-# all of these are imported by run_picks.py / grade_picks.py and have root
-# mirrors for CI + Cowork discovery.
-$syncPairs = @(
-    @("run_picks.py",        "engine\run_picks.py"),
-    @("grade_picks.py",      "engine\grade_picks.py"),
-    @("capture_clv.py",      "engine\capture_clv.py"),
-    @("analyze_picks.py",    "engine\analyze_picks.py"),
-    @("results_graphic.py",  "engine\results_graphic.py"),
-    @("weekly_recap.py",     "engine\weekly_recap.py"),
-    @("morning_preview.py",  "engine\morning_preview.py"),
-    @("pick_log_schema.py",  "engine\pick_log_schema.py"),
-    @("name_utils.py",       "engine\name_utils.py")
-)
-foreach ($pair in $syncPairs) {
-    $root = $pair[0]; $eng = $pair[1]
-    if ((Test-Path $root) -and (Test-Path $eng)) {
-        $rootHash = (Get-FileHash $root).Hash
-        $engHash  = (Get-FileHash $eng).Hash
-        if ($rootHash -ne $engHash) {
-            Write-Warn "$root differs from $eng"
-            if (-not $DryRun) {
-                Copy-Item $eng $root -Force
-                Write-Ok "Synced $eng -> $root"
-            }
-        }
-    }
-}
+# L16 (Apr 30 2026): root entry-point files are 5-line runpy shims -- no sync
+# needed. The old $syncPairs copy loop was removed (H1, May 1 2026) because it
+# overwrote shims with engine source on every run, silently reverting the shim
+# architecture. Engine source lives in engine/ only; root files never drift.
 
 # ===========================================================
 # 4. CLV daemon task

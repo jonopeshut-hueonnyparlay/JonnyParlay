@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE_DIR = REPO_ROOT / "engine"
 
 # Make ``engine/`` importable the same way the launchers do.
@@ -394,20 +394,6 @@ def test_every_writer_refreshes_sidecar(rel_path, needle):
 # Every file touched this section is edited under ``engine/`` and must be
 # synced byte-identical to the project-root mirror used by Windows launchers.
 
-MODIFIED_FILES = [
-    "pick_log_io.py",
-    "capture_clv.py",
-    "grade_picks.py",
-]
-
-
-@pytest.mark.parametrize("fname", MODIFIED_FILES)
-def test_root_mirror_byte_identical(fname):
-    engine_path = ENGINE_DIR / fname
-    root_path = REPO_ROOT / fname
-    if not root_path.is_file():
-        pytest.skip(f"no root mirror for {fname} (not required for all modules)")
-    assert engine_path.read_bytes() == root_path.read_bytes(), (
-        f"{fname}: engine/ and root mirror diverged — "
-        f"run `cp engine/{fname} {fname}` after every engine edit."
-    )
+# L16 (Apr 30 2026): root files are runpy shims — intentionally differ from engine/.
+# pick_log_io.py has no root mirror; capture_clv.py and grade_picks.py are shims.
+# test_tail_guard.py guards shim validity. (H1/H2, May 1 2026)
