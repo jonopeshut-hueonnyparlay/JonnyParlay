@@ -271,6 +271,17 @@ PITCHER_STATS = {"K", "OUTS", "HA"}                 # All functions of IP — r 
 BATTER_CORR_STATS = {"HITS", "TB", "HRR"}           # HITS is component of TB and HRR — r ≈ 0.70+
 MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 
+# P9 — Platt scaling calibration for prop win_prob (2026-05-01).
+# Fitted from 76 settled primary/bonus props (NBA + NHL) via Nelder-Mead NLL.
+# Basis: over_p (not directional win_prob). Applied after calc_prop_prob:
+#   cal_over_p = sigmoid(PLATT_A * over_p + PLATT_B)
+#   under_p    = 1 - cal_over_p          # preserves complementarity
+# Result: model mean win_prob 0.696 → calibrated 0.579 = actual 0.579.
+# Brier score improvement: 6.0%.
+# Re-fit at 300+ picks (P19: isotonic regression). Source: calibrate_platt.py.
+PLATT_A = 1.4988   # slope
+PLATT_B = -0.8102  # intercept
+
 GAME_SIGMA = {
     # "ml" sigma is separate from "spread" sigma — used only for moneyline win probability.
     # NHL puck-line spread sigma (1.5 goals) inflates ML win probs to 80%+ when used for
@@ -497,6 +508,18 @@ def no_vig(imp1, imp2):
 def is_decimal_leak(odds):
     """Check if odds look like decimal format leaked through."""
     return 1.0 < odds < 3.0
+
+def _platt_calibrate_prop(over_p: float) -> float:
+    """Apply P9 Platt scaling to raw over_p from the distribution model.
+
+    Returns calibrated over_p = sigmoid(PLATT_A * over_p + PLATT_B).
+    Caller must set under_p = 1 - result to preserve complementarity.
+    Only applies to props (not game lines — separate calibration required).
+    """
+    raw = PLATT_A * over_p + PLATT_B
+    raw = max(-30.0, min(30.0, raw))   # numerical stability
+    return 1.0 / (1.0 + math.exp(-raw))
+
 
 def calc_prop_prob(proj, line, stat):
     """Calculate over/under probability for a player prop.
@@ -1757,6 +1780,11 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         # Calculate probabilities
         over_p, under_p = calc_prop_prob(proj, line, stat)
 
+        # P9: Platt calibration — compress overconfident win_probs toward actual hit rate.
+        # Calibrate over_p; derive under_p to preserve over+under=1.
+        over_p = _platt_calibrate_prop(over_p)
+        under_p = 1.0 - over_p
+
         # Calculate edges
         over_edge, under_edge, nv_over, nv_under = calc_edge(over_p, over_odds, under_odds)
 
@@ -2806,10 +2834,26 @@ def build_safest6_parlay(qualified):
     if len(safest) < 6:
         return None
     combined_prob = 1.0
+    combined_dec  = 1.0
+    book_counts: dict = {}
     for p in safest:
         combined_prob *= p["win_prob"]
-    parlay_odds = prob_to_american(combined_prob)
-    return {"legs": safest, "combined_prob": combined_prob, "parlay_odds": parlay_odds}
+        o = p.get("odds", -110)
+        if o > 0:
+            combined_dec *= 1.0 + o / 100.0
+        else:
+            combined_dec *= 1.0 + 100.0 / abs(o)
+        bk = _norm_book(p.get("book", ""))
+        if bk:
+            book_counts[bk] = book_counts.get(bk, 0) + 1
+    # Actual payout from book leg prices (not model fair value)
+    if combined_dec >= 2.0:
+        parlay_odds = int(round((combined_dec - 1.0) * 100.0))
+    else:
+        parlay_odds = int(round(-100.0 / (combined_dec - 1.0)))
+    # Modal book across legs — best guess for where to parlay
+    best_book = max(book_counts, key=book_counts.get) if book_counts else ""
+    return {"legs": safest, "combined_prob": combined_prob, "parlay_odds": parlay_odds, "book": best_book}
 
 def build_alt_spread_parlay(game_lines, team_proj_map, sport_sigmas, alt_spread_data=None, debug=False):
     """
@@ -3800,6 +3844,7 @@ def post_longshot(safest6_parlay, today, suppress_ping=False, save=True):
     now_et = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
     combined_prob = safest6_parlay.get("combined_prob", 0)
     parlay_odds   = fmt_odds(safest6_parlay.get("parlay_odds", 0))
+    book_display  = display_book(safest6_parlay.get("book", "")) or "N/A"
 
     leg_lines = [f"6-leg longshot — safest model picks\n"]
     for i, leg in enumerate(legs, 1):
@@ -3810,7 +3855,7 @@ def post_longshot(safest6_parlay, today, suppress_ping=False, save=True):
             f"{leg.get('stat','')} | {wp_pct}"
         )
     leg_lines.append(f"\n━━━━━━━━━━━━━━━━")
-    leg_lines.append(f"**{parlay_odds}** combined | **{LONGSHOT_SIZE:.2f}u** | {combined_prob*100:.1f}% model prob")
+    leg_lines.append(f"**{parlay_odds}** combined | **{LONGSHOT_SIZE:.2f}u** | {combined_prob*100:.1f}% model prob | 📍 {book_display}")
 
     payload = {
         "username": "PicksByJonny",
@@ -3868,7 +3913,7 @@ def _log_longshot(safest6_parlay, today_str, save=True):
         "win_prob":        f"{safest6_parlay.get('combined_prob', 0):.4f}",
         "edge":            "",
         "odds":            _normalize_odds(int(round(parlay_odds))) if parlay_odds else "",
-        "book":            "",
+        "book":            _norm_book(safest6_parlay.get("book", "")),
         "tier":            "LONGSHOT",
         "pick_score":      "",
         "size":            _normalize_size(LONGSHOT_SIZE),

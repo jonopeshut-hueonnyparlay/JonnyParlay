@@ -11,8 +11,9 @@ PTS formula (2P%/3P% decomposition with Bayesian padding):
     fg2_pct: Bayesian-padded to 300 FGA (stabilises fast)
     fg3_pct: Bayesian-padded to 750 FGA (stabilises slow)
 
-All other stats:
-    projected_stat = per_minute_rate x projected_minutes x matchup_factor x pace_factor
+REB/AST/STL/BLK/TOV: per-possession rates x proj_poss x matchup_factor
+    proj_poss = game_pace * proj_min / 48  (pace embedded — no separate pace_factor)
+    PTS/FG3M still use FGA-decomp path where pace_factor scales team_proj_fga.
 
 Role tiers: starter / sixth_man / rotation / spot / cold_start
 EWMA span=10 for all rolling rates. Cold-start (<5 games on team) -> archetype prior.
@@ -33,6 +34,7 @@ from projections_db import (
     get_team_pace, get_team_def_ratio, get_player_b2b_context,
     get_all_active_players, get_games_for_date, upsert_projection, get_conn,
     get_team_avg_fga, get_team_shooting_stats,
+    get_team_tov_rate, get_team_rim_attempt_rate,
 )
 
 log = logging.getLogger("nba_projector")
@@ -100,6 +102,25 @@ DAYS_REST_ROLE_SCALAR = {
 PROJ_STATS    = ["pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]
 CURRENT_SEASON = "2025-26"
 
+# P11 — Home/away adjustment factors (2026-05-01).
+# Derived from within-player regression on 602 players with >=5 home AND >=5 away
+# games in projections_db (70k+ player-game rows, min>=10 min).
+# Method: for each player, compute (home_avg - away_avg) / player_avg; then
+# average across players.  Half-delta applied symmetrically: HOME = 1 + delta,
+# AWAY = 1 - delta, so the projection round-trips correctly for a player whose
+# EWMA baseline averages home and away games roughly equally.
+# STL excluded — within-player delta is -1.59% (unexpected direction, marginal,
+# likely noise; no adjustment applied).
+# TOV is negative because home teams commit fewer turnovers.
+_HOME_AWAY_DELTA = {
+    "pts":  0.0052,   # +/- 1.04% full spread; home = +0.52%
+    "reb":  0.0058,   # +/- 1.17%
+    "ast":  0.0135,   # +/- 2.69%
+    "fg3m": 0.0131,   # +/- 2.62%
+    "blk":  0.0127,   # +/- 2.54%
+    "tov": -0.0063,   # +/- 1.26%  (home team fewer turnovers)
+}
+
 # PTS blend constants — re-fit annually via:
 #   python engine/evaluate_projector.py --grid-search-alpha --season 2025-26 --n 2000 --seed 42
 # Alpha: weight on FGA-decomp path (0.0=pure per-min, 1.0=pure FGA).
@@ -135,12 +156,37 @@ AST_ALPHA      = 0.40   # lean toward baseline until rates stabilise over longer
 FG3M_BLEND_ALPHA = 0.50  # weight on FGA-decomp path for 3PM; re-evaluate after grid search
 
 # STL/BLK Bayesian shrinkage priors (Brief P3, Sec. 5 — 2026-05-01).
-# Per-minute rates derived from DB: stl_per_min = stl_per36 / 36.
-_STL_POS_PRIOR = {"G": 0.0333, "F": 0.0250, "C": 0.0194}  # STL per minute
+# P5 (2026-05-01): STL/BLK/TOV priors restated in per-POSSESSION units.
+# Conversion: prior_per_poss = prior_per_min * (48 / LEAGUE_AVG_PACE) = prior_per_min * 0.4824
+# compute_stl_blk_rates() and compute_tov_rate() now normalise training data by
+# (team_pace * min / 48) — matching the per-possession basis used by compute_ast_rate().
+# Projection: rate_per_poss * proj_poss * matchup  (pace_factor multiplier removed).
+_STL_POS_PRIOR = {"G": 0.01606, "F": 0.01206, "C": 0.00936}  # STL per possession
 _STL_PRIOR_N   = 25  # shrinkage weight — STL is noisy, strong prior needed
-_BLK_POS_PRIOR = {"G": 0.0083, "F": 0.0167, "C": 0.0500}  # BLK per minute
-_BLK_PRIOR_N   = 30  # BLK extremely concentrated by position — heavy shrinkage
-LEAGUE_AVG_TOV_RATE = 0.136  # turnovers per possession, league-wide (2024-25 calibrated)
+
+# BLK priors: centers split into non-blockers (C_low) and rim protectors (C_high).
+# Classification still uses career BLK/min vs _BLK_CENTER_SPLIT_THRESHOLD (per-minute
+# threshold unchanged — classification is independent of the rate training basis).
+_BLK_CENTER_SPLIT_THRESHOLD = 0.030   # BLK/min cutoff for center classification (per-minute)
+_BLK_POS_PRIOR = {
+    "G":      0.00400,  # guards      — 0.0083/min * 0.4824
+    "F":      0.00806,  # forwards    — 0.0167/min * 0.4824
+    "C_low":  0.00965,  # non-blockers — 0.020/min * 0.4824
+    "C_high": 0.03618,  # rim protectors — 0.075/min * 0.4824
+}
+_BLK_PRIOR_N = {
+    "G":     30,   # strong shrinkage — BLK noisy for non-centers
+    "F":     30,
+    "C_low": 20,   # near-zero rate is stable; lighter shrinkage sufficient
+    "C_high": 25,  # rim-protection varies by matchup; moderate shrinkage
+}
+
+# TOV per-possession priors — derived from per-36 archetypes / LEAGUE_AVG_PACE * 48.
+_TOV_POS_PRIOR = {"G": 0.0335, "F": 0.0241, "C": 0.0268}
+_TOV_PRIOR_N   = 20  # moderate shrinkage; TOV rate is relatively stable
+
+LEAGUE_AVG_TOV_RATE        = 0.136  # turnovers per possession, league-wide (2024-25 calibrated)
+LEAGUE_AVG_RIM_ATTEMPT_RATE = 56.0   # non-3pt FGA per game, league-wide (2024-25 calibrated)
 
 _ARCHETYPE_PER36 = {
     "G": {"pts": 14.5, "reb": 3.2, "ast": 5.8, "fg3m": 1.8, "stl": 1.2, "blk": 0.3, "tov": 2.5},
@@ -263,41 +309,100 @@ def compute_ast_rate(df_clean: pd.DataFrame,
 
 
 def compute_stl_blk_rates(df_clean: pd.DataFrame,
-                           pos_group: str) -> tuple[float, float]:
-    """Bayesian-shrunk per-minute STL and BLK rates (Brief P3, Sec. 5).
+                           pos_group: str,
+                           team_pace: float) -> tuple[float, float]:
+    """Bayesian-shrunk per-POSSESSION STL and BLK rates.
 
-    EWMA (span=EWMA_SPAN) of stl/min and blk/min, then Bayesian shrinkage
-    to positional priors.  STL is noisy (CV~0.80) and BLK extremely so
-    (CV~0.85), so strong shrinkage is critical.
+    P5 (2026-05-01): training basis changed from per-minute to per-possession.
+    Historical rates are now normalised by (team_pace * min / 48) so that
+    pace variation across training games is removed before Bayesian shrinkage.
+    Priors restated in matching per-possession units.
 
-    Returns (stl_rate, blk_rate) in units of [events per minute].
+    STL: single Gaussian prior per position group.
+    BLK: centers classified into C_low / C_high via career BLK/min vs threshold.
+         Classification still uses per-minute career rate (threshold unchanged).
+         If df_clean < 5 games, falls back to C_low (conservative).
+
+    Returns (stl_rate, blk_rate) in units of [events per possession].
     """
     stl_prior = _STL_POS_PRIOR.get(pos_group, 0.025)
-    blk_prior = _BLK_POS_PRIOR.get(pos_group, 0.017)
+
+    # --- BLK prior resolution: classify centers before shrinkage ---
+    if pos_group == "C" and not df_clean.empty and "blk" in df_clean.columns:
+        mins_all  = df_clean["min"].clip(lower=1.0)
+        career_blk_per_min = float(
+            (df_clean["blk"].fillna(0) / mins_all)
+            .replace([np.inf, -np.inf], np.nan)
+            .mean()
+        )
+        # Require at least 5 games for a reliable classification; otherwise
+        # the mean is too noisy and we fall back to the C population midpoint.
+        if len(df_clean) >= 5 and not np.isnan(career_blk_per_min):
+            blk_key = "C_high" if career_blk_per_min >= _BLK_CENTER_SPLIT_THRESHOLD else "C_low"
+        else:
+            blk_key = "C_low"   # conservative fallback — under-projection is safer than over
+    else:
+        blk_key = pos_group   # G or F — lookup unchanged
+
+    blk_prior   = _BLK_POS_PRIOR.get(blk_key, 0.017)
+    blk_prior_n = _BLK_PRIOR_N.get(blk_key, 30)
 
     if df_clean.empty or "stl" not in df_clean.columns:
         return stl_prior, blk_prior
 
     d = df_clean.sort_values("game_date").copy()
     n_games = len(d)
-    mins = d["min"].clip(lower=1.0)
 
-    # Per-minute rates
-    stl_raw = (d["stl"].fillna(0) / mins).replace(
+    # Per-possession normalisation — removes pace variation across training games.
+    # poss_g[i] = estimated possessions played by this player in game i.
+    poss_g = (team_pace * d["min"] / 48.0).clip(lower=0.1)
+
+    stl_raw = (d["stl"].fillna(0) / poss_g).replace(
         [np.inf, -np.inf], np.nan
     ).fillna(stl_prior)
     blk_col = d.get("blk", pd.Series([0] * len(d), index=d.index))
-    blk_raw = (blk_col.fillna(0) / mins).replace(
+    blk_raw = (blk_col.fillna(0) / poss_g).replace(
         [np.inf, -np.inf], np.nan
     ).fillna(blk_prior)
 
     stl_ewma = float(stl_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
     blk_ewma = float(blk_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
 
-    # Bayesian shrinkage
+    # Bayesian shrinkage — BLK uses the resolved prior and N for this player's archetype
     stl_rate = (n_games * stl_ewma + _STL_PRIOR_N * stl_prior) / (n_games + _STL_PRIOR_N)
-    blk_rate = (n_games * blk_ewma + _BLK_PRIOR_N * blk_prior) / (n_games + _BLK_PRIOR_N)
+    blk_rate = (n_games * blk_ewma + blk_prior_n * blk_prior) / (n_games + blk_prior_n)
     return float(stl_rate), float(blk_rate)
+
+
+def compute_tov_rate(df_clean: pd.DataFrame,
+                     team_pace: float,
+                     pos_group: str) -> float:
+    """Bayesian-shrunk per-POSSESSION TOV rate.
+
+    P5 (2026-05-01): replaces the generic per-minute rate from
+    compute_per_minute_rates() for TOV.  Training basis is per-possession
+    (team_pace * min / 48), consistent with compute_ast_rate() and the
+    updated compute_stl_blk_rates().
+
+    Returns rate in units of [turnovers per possession].
+    """
+    prior   = _TOV_POS_PRIOR.get(pos_group, 0.028)
+    prior_n = _TOV_PRIOR_N
+
+    if df_clean.empty or "tov" not in df_clean.columns:
+        return prior
+
+    d = df_clean.sort_values("game_date").copy()
+    n_games = len(d)
+
+    poss_g = (team_pace * d["min"] / 48.0).clip(lower=0.1)
+    tov_raw = (d["tov"].fillna(0) / poss_g).replace(
+        [np.inf, -np.inf], np.nan
+    ).fillna(prior)
+
+    tov_ewma = float(tov_raw.ewm(span=EWMA_SPAN, min_periods=1).mean().iloc[-1])
+    tov_rate = (n_games * tov_ewma + prior_n * prior) / (n_games + prior_n)
+    return float(tov_rate)
 
 
 def compute_shooting_rates(df) -> dict:
@@ -477,7 +582,11 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None):
     return proj_min
 
 def compute_distribution(mean, stat, role, n_games):
-    _CV = {"pts": 0.35, "reb": 0.45, "ast": 0.50, "fg3m": 0.65, "stl": 0.80, "blk": 0.85, "tov": 0.55}
+    # Empirical game-level CVs (SD/mean). Calibrated 2026-05-01 against NBA player-game
+    # distributions. REB/AST/BLK were systematically underestimated — corrected here.
+    # BLK CV elevated to 1.00: high-variance count stat with overdispersion (CV > 1 is
+    # common for low-mean counts). Prior CVs caused edge calculations to be too optimistic.
+    _CV = {"pts": 0.35, "reb": 0.50, "ast": 0.55, "fg3m": 0.65, "stl": 0.80, "blk": 1.00, "tov": 0.55}
     cv          = _CV.get(stat, 0.50)
     uncertainty = 1.0 + max(0, (20 - n_games) / 40.0)
     std         = mean * cv * uncertainty
@@ -490,7 +599,7 @@ def project_player(
     game_id, game_date, season=CURRENT_SEASON,
     season_type="Regular Season",
     implied_total=None, spread=None, injury_status="",
-    injury_minutes_override=None, db_path=DB_PATH,
+    injury_minutes_override=None, is_home=None, db_path=DB_PATH,
 ):
     if injury_status in ("O", "OUT"):
         return None
@@ -551,9 +660,26 @@ def project_player(
         get_team_def_ratio(opp_team_id, pg, "reb", season, db_path), *MATCHUP_CLIP))
     matchup_ast = float(np.clip(
         get_team_def_ratio(opp_team_id, pg, "ast", season, db_path), *MATCHUP_CLIP))
+
+    # P3 — fg3m DvP: use opponent 3PM-allowed ratio instead of piggybacking PTS DvP.
+    # team_def_splits already computes fg3m ratios (fg3m is in _DEF_STATS).
+    # PTS DvP conflated 2P and 3P defense; a team can be stingy inside but leaky from 3.
+    matchup_fg3m = float(np.clip(
+        get_team_def_ratio(opp_team_id, pg, "fg3m", season, db_path), *MATCHUP_CLIP))
+
+    # P6 — STL DvP: opponents with high TOV rates create more steal opportunities.
+    # opp_tov_rate = opp team's TOV / possession. Normalised by league average.
+    opp_tov_rate  = get_team_tov_rate(opp_team_id, season, db_path)
+    matchup_stl   = float(np.clip(opp_tov_rate / LEAGUE_AVG_TOV_RATE, *MATCHUP_CLIP))
+
+    # P7 — BLK DvP: opponents who attack the paint more give rim protectors more chances.
+    # Proxy: opponent non-3pt FGA per game (fga - fg3a). Normalised by league average.
+    opp_rim_rate  = get_team_rim_attempt_rate(opp_team_id, season, db_path)
+    matchup_blk   = float(np.clip(opp_rim_rate / LEAGUE_AVG_RIM_ATTEMPT_RATE, *MATCHUP_CLIP))
+
     matchup_factors = {
         "pts": matchup_pts, "reb": matchup_reb, "ast": matchup_ast,
-        "fg3m": matchup_pts, "stl": 1.0, "blk": 1.0, "tov": 1.0,
+        "fg3m": matchup_fg3m, "stl": matchup_stl, "blk": matchup_blk, "tov": 1.0,
     }
 
     # --- Team shooting stats for REB decomposition ---
@@ -609,9 +735,11 @@ def project_player(
 
     # 3PM — extracted from FGA decomposition (Sec. 4a, Brief 3).
     # proj_3pa and fg3_pct are already computed above in the PTS path.
-    # DvP: matchup_pts already incorporates opponent 3P-allowed (team_def_splits
-    # captures per-position-group pts allowed which includes 3PM contribution).
-    proj_fg3m_fga  = player_proj_3pa * fg3_pct * matchup_pts
+    # DvP: matchup_fg3m uses the opponent's actual 3PM-allowed ratio from
+    # team_def_splits — decoupled from PTS DvP (P3, 2026-05-01).
+    # PTS defense and 3PM defense are empirically distinct: a team can be stingy
+    # inside (low PTS DvP) while leaking threes (high fg3m DvP), or vice versa.
+    proj_fg3m_fga  = player_proj_3pa * fg3_pct * matchup_fg3m
     baseline_fg3m  = rates.get("fg3m", 0.0) * proj_min
     # FG3M_BLEND_ALPHA: FGA path has lower bias, per-min has lower variance.
     # Re-evaluate once 3PM grid search is run (module-level constant).
@@ -641,15 +769,28 @@ def project_player(
     proj_ast        = AST_ALPHA * proj_ast_custom + (1.0 - AST_ALPHA) * baseline_ast
     projections["ast"] = max(0.0, round(proj_ast, 2))
 
-    # STL/BLK: Bayesian-shrunk per-minute rates (Brief P3, Sec. 5).
-    # Uses compute_stl_blk_rates for positional priors + shrinkage.
-    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg)
-    projections["stl"] = max(0.0, round(stl_rate * proj_min * pace_factor, 2))
-    projections["blk"] = max(0.0, round(blk_rate * proj_min * pace_factor, 2))
+    # STL/BLK: per-possession rates × proj_poss × DvP matchup (P5, P6, P7).
+    # P5: training basis is per-possession — pace_factor multiplier removed.
+    #     pace effect is already captured via proj_poss = game_pace * proj_min / 48.
+    # STL DvP (P6): opponents with high TOV rates create more steal opportunities.
+    # BLK DvP (P7): opponents who attack the paint more give rim protectors more chances.
+    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg, team_pace)
+    projections["stl"] = max(0.0, round(stl_rate * proj_poss * matchup_stl, 2))
+    projections["blk"] = max(0.0, round(blk_rate * proj_poss * matchup_blk, 2))
 
-    # TOV: per-minute rate (no decomposition model yet).
-    tov_rate = rates.get("tov", 0.0)
-    projections["tov"] = max(0.0, round(tov_rate * proj_min * pace_factor, 2))
+    # TOV: per-possession rate (P5) — pace embedded via proj_poss, no pace_factor.
+    tov_rate = compute_tov_rate(df_clean, team_pace, pg)
+    projections["tov"] = max(0.0, round(tov_rate * proj_poss, 2))
+
+    # P11 — Home/away adjustment.
+    # Applied after all DvP / pace / blend logic so it acts as a final scalar.
+    # is_home=None means venue unknown (e.g. neutral site or missing data) — skip.
+    if is_home is not None:
+        sign = 1.0 if is_home else -1.0
+        for stat, delta in _HOME_AWAY_DELTA.items():
+            if stat in projections:
+                projections[stat] = max(0.0, round(
+                    projections[stat] * (1.0 + sign * delta), 2))
 
     # Playoff calibration: regular-season per-minute rates over-project in
     # playoffs due to tighter defense and shorter rotations.
@@ -685,6 +826,7 @@ def project_player(
         "matchup_factor_pts": round(matchup_pts, 4),
         "matchup_factor_reb": round(matchup_reb, 4),
         "matchup_factor_ast": round(matchup_ast, 4),
+        "is_home": is_home,
         "source": "custom_v1",
         "dk_std": dk_std,
     }
@@ -709,6 +851,7 @@ def run_projections(
     game_spread     = {}
     game_season_type = {}
     team_to_game    = {}
+    home_team_ids   = set()   # P11 — track which team_ids are the home side
 
     for _, g in games.iterrows():
         gid = str(g["game_id"])
@@ -716,6 +859,7 @@ def run_projections(
         at  = int(g["away_team_id"])
         team_to_game[ht] = (gid, at)
         team_to_game[at] = (gid, ht)
+        home_team_ids.add(ht)
         if gid in implied_totals: game_implied[gid] = implied_totals[gid]
         if gid in spreads:        game_spread[gid]  = spreads[gid]
         game_season_type[gid] = g.get("season_type", "Regular Season") or "Regular Season"
@@ -745,6 +889,7 @@ def run_projections(
                 spread=game_spread.get(game_id),
                 injury_status=status,
                 injury_minutes_override=injury_minutes_overrides.get(pid),
+                is_home=(team_id in home_team_ids),
                 db_path=db_path,
             )
         except Exception as exc:
@@ -790,4 +935,3 @@ def _main():
 
 if __name__ == "__main__":
     _main()
-
