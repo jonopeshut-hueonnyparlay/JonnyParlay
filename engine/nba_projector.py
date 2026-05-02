@@ -102,6 +102,20 @@ DAYS_REST_ROLE_SCALAR = {
 PROJ_STATS    = ["pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]
 CURRENT_SEASON = "2025-26"
 
+# P18 — Per-stat playoff deflators (2026-05-01).
+# Empirically derived from matched player-season sample (n=424) across
+# 2023-24, 2024-25, 2025-26 playoffs vs regular season (min>=10).
+# Flat 0.92 over-deflected REB/BLK and under-deflected AST/FG3M.
+PLAYOFF_DEFLATORS = {
+    "pts":  0.9027,
+    "reb":  0.9602,
+    "ast":  0.8255,
+    "fg3m": 0.8780,
+    "stl":  0.8987,
+    "blk":  0.9831,
+    "tov":  0.9485,
+}
+
 # P11 — Home/away adjustment factors (2026-05-01).
 # Derived from within-player regression on 602 players with >=5 home AND >=5 away
 # games in projections_db (70k+ player-game rows, min>=10 min).
@@ -797,12 +811,11 @@ def project_player(
                 projections[stat] = max(0.0, round(
                     projections[stat] * (1.0 + sign * delta), 2))
 
-    # Playoff calibration: regular-season per-minute rates over-project in
-    # playoffs due to tighter defense and shorter rotations.
+    # Playoff calibration: per-stat deflators (P18 — replaces flat 0.92).
     if is_playoff:
-        PLAYOFF_DEFLATOR = 0.92
         for stat in PROJ_STATS:
-            projections[stat] = round(projections[stat] * PLAYOFF_DEFLATOR, 2)
+            projections[stat] = round(
+                projections[stat] * PLAYOFF_DEFLATORS.get(stat, 0.92), 2)
 
     n_games = len(df_clean)
     pts_p25,  pts_med,  pts_p75  = compute_distribution(projections["pts"],  "pts",  role, n_games)
