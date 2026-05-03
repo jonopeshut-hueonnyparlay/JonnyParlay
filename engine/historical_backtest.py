@@ -230,7 +230,7 @@ def run_historical_backtest(
                     proj_f   = float(proj_val)
                     err_raw  = proj_f - actual_f
                     errors_raw.append(err_raw)
-                    errors_by_stat[stat_name].append((err_raw, is_cold, role))
+                    errors_by_stat[stat_name].append((err_raw, is_cold, role, proj_f))
 
                     # Rate-adjusted: what would player have produced at their
                     # per-minute rate in OUR projected minutes?
@@ -261,9 +261,9 @@ def run_historical_backtest(
         print(f"  {role:15s}: {cnt}")
 
     # Overall MAE
-    all_raw_errors = [e for errs in errors_by_stat.values() for (e, _, _) in errs]
-    cold_raw = [e for errs in errors_by_stat.values() for (e, ic, _) in errs if ic]
-    known_raw = [e for errs in errors_by_stat.values() for (e, ic, _) in errs if not ic]
+    all_raw_errors = [e for errs in errors_by_stat.values() for (e, _, _, _) in errs]
+    cold_raw = [e for errs in errors_by_stat.values() for (e, ic, _, _) in errs if ic]
+    known_raw = [e for errs in errors_by_stat.values() for (e, ic, _, _) in errs if not ic]
 
     print(f"\nOverall MAE (raw):             {_mae(all_raw_errors):.3f}  (n={len(all_raw_errors)})")
     print(f"Overall MAE (rate-adj):        {_mae(errors_adj):.3f}  (n={len(errors_adj)})")
@@ -273,14 +273,21 @@ def run_historical_backtest(
     print(f"Cold-start MAE:                {_mae(cold_raw):.3f}  (n={len(cold_raw)})")
 
     print("\nPer-stat breakdown (raw errors):")
-    print(f"  {'Stat':6s}  {'MAE':>7s}  {'Bias':>7s}  {'RMSE':>7s}  {'n':>5s}  {'n_cold':>6s}  {'cold_MAE':>8s}")
+    print(f"  {'Stat':6s}  {'MAE':>7s}  {'Bias':>7s}  {'RMSE':>7s}  {'MeanProj':>9s}  {'Scalar':>7s}  {'n':>5s}  {'n_cold':>6s}  {'cold_MAE':>8s}")
     for stat_name, _, _ in STAT_KEYS:
         errs  = errors_by_stat[stat_name]
         if not errs:
             continue
-        all_e  = [e for e, _, _ in errs]
-        cold_e = [e for e, ic, _ in errs if ic]
-        print(f"  {stat_name:6s}  {_mae(all_e):7.3f}  {_bias(all_e):+7.3f}  {_rmse(all_e):7.3f}"
+        all_e    = [e for e, _, _, _ in errs]
+        cold_e   = [e for e, ic, _, _ in errs if ic]
+        projs    = [p for _, _, _, p in errs]
+        mean_p   = sum(projs) / len(projs) if projs else 0.0
+        bias_val = _bias(all_e)
+        # Suggested scalar to eliminate current bias: scalar = 1 - bias/mean_proj
+        # (bias = proj - actual, so actual = proj - bias; to hit actual: proj * scalar = actual)
+        scalar   = (mean_p - bias_val) / mean_p if mean_p > 0 else 1.0
+        print(f"  {stat_name:6s}  {_mae(all_e):7.3f}  {bias_val:+7.3f}  {_rmse(all_e):7.3f}"
+              f"  {mean_p:9.3f}  {scalar:7.4f}"
               f"  {len(all_e):5d}  {len(cold_e):6d}  {_mae(cold_e) if cold_e else float('nan'):8.3f}")
 
     # ---------------------------------------------------------------------------
