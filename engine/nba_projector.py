@@ -214,7 +214,7 @@ REGULAR_SEASON_MINUTES_SCALAR = {
     "sixth_man":  1.019,   # v2: residual ratio 1.0189 (+1.9%)
     "rotation":   1.035,   # v2: residual ratio 0.9784 (1.058 was overcorrecting)
     "spot":       1.700,   # v2: residual ratio 1.0170 -- prior still slightly low
-    "cold_start": 1.151,   # deferred -- refit after task #2 threshold change
+    "cold_start": 0.940,   # v2 refit: 1.151 * residual_ratio(0.8168) after threshold->10
 }
 
 # 2. PLAYOFF_RATE_DEFLATORS (genuine per-stat rate changes, not minutes-driven):
