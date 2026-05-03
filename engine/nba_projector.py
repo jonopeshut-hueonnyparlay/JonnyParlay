@@ -217,6 +217,24 @@ REGULAR_SEASON_MINUTES_SCALAR = {
     "cold_start": 0.940,   # v2 refit: 1.151 * residual_ratio(0.8168) after threshold->10
 }
 
+# 1c. REGULAR_SEASON_STAT_SCALAR (task #3, 2026-05-02):
+#     Residual per-stat bias correction after minutes model is fully calibrated.
+#     Derived from 30-date 2025-26 backtest (4653 player-games).
+#     scalar = (mean_proj - bias) / mean_proj  i.e. 1 - bias/mean_proj.
+#     PTS is already essentially unbiased (scalar 0.9979 -> 1.000).
+#     STL is negligible (1.005 -> 1.000).  All others applied.
+#     Applied after pace/matchup/playoff adjustments, before distribution.
+#     Not applied during playoffs (covered by PLAYOFF_RATE_DEFLATORS).
+REGULAR_SEASON_STAT_SCALAR = {
+    "pts":  1.000,   # bias +0.024 on mean 11.646 -- negligible, no correction
+    "ast":  1.013,   # bias -0.033 on mean  2.664
+    "reb":  1.031,   # bias -0.131 on mean  4.222
+    "fg3m": 1.019,   # bias -0.025 on mean  1.316
+    "blk":  1.064,   # bias -0.028 on mean  0.442 -- large relative, small absolute
+    "stl":  1.000,   # bias -0.004 on mean  0.842 -- negligible, no correction
+    "tov":  1.000,   # not tracked in backtest -- no correction
+}
+
 # 2. PLAYOFF_RATE_DEFLATORS (genuine per-stat rate changes, not minutes-driven):
 #    AST: isolation-heavy playoff offense → fewer motion-offense assists.
 #    FG3M: tighter perimeter defense → fewer open 3-point attempts per minute.
@@ -1185,6 +1203,12 @@ def project_player(
         for stat, defl in PLAYOFF_RATE_DEFLATORS.items():
             if stat in projections:
                 projections[stat] = round(projections[stat] * defl, 2)
+    else:
+        # Task #3: apply residual per-stat bias corrections (regular season only).
+        # Calibrated from 30-date 2025-26 backtest after minutes model fully fitted.
+        for stat, scalar in REGULAR_SEASON_STAT_SCALAR.items():
+            if scalar != 1.0 and stat in projections:
+                projections[stat] = round(projections[stat] * scalar, 2)
 
     n_games = len(df_clean)
     pts_p25,  pts_med,  pts_p75  = compute_distribution(projections["pts"],  "pts",  role, n_games)
