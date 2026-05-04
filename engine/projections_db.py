@@ -1117,88 +1117,146 @@ def get_player_b2b_context(player_id: int, game_date,
 
 
 def get_all_active_players(before_date: str, min_recent_games: int = 3,
+                            season: Optional[str] = None,
                             db_path: Path = DB_PATH) -> pd.DataFrame:
-    """Players with recent history — projection candidate pool."""
+    """Players with recent history — projection candidate pool.
+
+    ``season`` (e.g. "2025-26"): when provided, the ``min_recent_games``
+    threshold is enforced against that season only.  This prevents waived /
+    two-way / G-League players whose team_id is still listed as a playoff
+    team from inflating the pool.  Without this filter the team total
+    constraint (constrain_team_totals) divides the Vegas total over far too
+    many players and crushes every individual projection.
+    """
     conn = get_conn(db_path)
+    sc = "AND g.season = :season" if season else ""
     df = pd.read_sql_query(
         "SELECT p.player_id,p.name,p.name_key,p.position,p.team_id"
         " FROM players p"
         " WHERE (SELECT COUNT(*) FROM player_game_stats pgs"
         "        JOIN games g ON g.game_id=pgs.game_id"
         "        WHERE pgs.player_id=p.player_id"
-        "        AND g.game_date<:before AND pgs.min>=5) >= :mg",
-        conn, params={"before": before_date, "mg": min_recent_games})
+        f"        AND g.game_date<:before AND pgs.min>=5 {sc}) >= :mg",
+        conn, params={"before": before_date, "mg": min_recent_games,
+                      "season": season or ""})
     conn.close()
     return df
 
 
 def seed_scheduled_games(
     game_date: str,
-    season: str = CURRENT_SEASON,
+    season: str = "2025-26",
     db_path: Path = DB_PATH,
 ) -> int:
-    """Seed today's scheduled games from ScoreboardV2 before games are played.
+    """Seed today's scheduled games from The Odds API before games are played.
 
-    Inserts upcoming games into the games table using ON CONFLICT DO NOTHING so
-    completed games already in the DB are never overwritten.  Returns the number
-    of games newly inserted.
+    Uses the Odds API (same key as run_picks.py) because the NBA Stats API
+    (ScoreboardV2) does not reliably return upcoming playoff games.  Inserts
+    into the games table with ON CONFLICT DO NOTHING so completed games already
+    in the DB are never overwritten.  Returns the number of games newly inserted.
 
-    Called at the start of generate_projections.py run() so the projector can
-    build projections before tip-off (not just after games complete).
+    Game IDs are synthetic but stable: "SCHED{YYYYMMDD}{home_tid}{away_tid}".
+    Once real game logs are pulled after tip-off the completed-game rows replace
+    these seeds (different game_id key, but fetch_nba_implied_totals matches by
+    (home_tid, away_tid) so implied totals still resolve correctly).
 
-    Falls back gracefully if the NBA API is unreachable or returns no data.
+    Falls back gracefully if the Odds API is unavailable.
     """
     try:
-        from nba_api.stats.endpoints import ScoreboardV2
+        import os as _os
+        try:
+            import sys as _sys
+            _here = Path(__file__).resolve().parent
+            if str(_here) not in _sys.path:
+                _sys.path.insert(0, str(_here))
+            from secrets_config import ODDS_API_KEY
+        except Exception:
+            ODDS_API_KEY = _os.environ.get("ODDS_API_KEY", "")
+        if not ODDS_API_KEY:
+            log.warning("seed_scheduled_games: no ODDS_API_KEY — skipping")
+            return 0
+
+        import requests as _req
     except ImportError:
-        log.warning("seed_scheduled_games: nba_api not available — skipping")
+        log.warning("seed_scheduled_games: requests not available — skipping")
         return 0
 
+    # Pull NBA events from Odds API (no specific market needed — just the event list)
     try:
-        sb = ScoreboardV2(game_date=game_date, timeout=10)
-        games_df = sb.game_header.get_data_frame()
+        resp = _req.get(
+            "https://api.the-odds-api.com/v4/sports/basketball_nba/events",
+            params={"apiKey": ODDS_API_KEY, "dateFormat": "iso"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            log.warning("seed_scheduled_games: Odds API returned %s", resp.status_code)
+            return 0
+        events = resp.json()
     except Exception as exc:
-        log.warning("seed_scheduled_games: API call failed for %s — %s", game_date, exc)
+        log.warning("seed_scheduled_games: Odds API request failed — %s", exc)
         return 0
 
-    if games_df is None or games_df.empty:
-        log.info("seed_scheduled_games: no games returned for %s", game_date)
+    if not events:
+        log.info("seed_scheduled_games: no NBA events returned from Odds API")
         return 0
 
-    # Determine season_type from game_id prefix: 002=Regular, 004=Playoffs, 001=Preseason
-    def _season_type_from_id(gid: str) -> str:
-        gid = str(gid)
-        if len(gid) >= 3:
-            prefix = gid[2]  # NBA game_id: 10-digit, char index 2 = type
-            if prefix == "4":
-                return "Playoffs"
-            if prefix == "2":
-                return "Regular Season"
-        return "Regular Season"
+    # Filter to game_date (Odds API returns ISO timestamps in UTC)
+    import datetime as _dt
+    target = game_date[:10]  # "YYYY-MM-DD"
+    # Accept events whose commence_time date (ET) matches target.
+    # Odds API timestamps are UTC; NBA games are typically 7-10 PM ET so
+    # the UTC date may be target+1 for late games. Accept ±1 day window and
+    # filter by the Eastern-time date of the event.
+    from zoneinfo import ZoneInfo as _ZI
+    _et = _ZI("America/New_York")
 
+    def _et_date(iso: str) -> str:
+        try:
+            dt = _dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return dt.astimezone(_et).strftime("%Y-%m-%d")
+        except Exception:
+            return iso[:10]
+
+    today_events = [ev for ev in events if _et_date(ev.get("commence_time", "")) == target]
+    if not today_events:
+        log.info("seed_scheduled_games: no NBA events on %s from Odds API", target)
+        return 0
+
+    # Build name -> team_id map from DB
     conn = get_conn(db_path)
-    # Ensure teams table is populated (safe no-op if already seeded)
     try:
-        _seed_teams(conn)
-    except Exception:
-        pass  # teams already exist
+        name_to_tid: Dict[str, int] = {
+            r["name"]: r["team_id"]
+            for r in conn.execute("SELECT team_id, name FROM teams").fetchall()
+        }
+    except Exception as exc:
+        log.warning("seed_scheduled_games: DB teams lookup failed — %s", exc)
+        conn.close()
+        return 0
+
+    # Determine season_type — playoffs if any current game is a playoff game
+    # (heuristic: if season string ends in second year of season, check month)
+    _month = _dt.date.fromisoformat(target).month
+    season_type = "Playoffs" if _month >= 4 else "Regular Season"
 
     inserted = 0
     try:
-        for _, row in games_df.iterrows():
-            gid        = str(row.get("GAME_ID", "")).strip()
-            home_tid   = _safe_int(row.get("HOME_TEAM_ID"))
-            away_tid   = _safe_int(row.get("VISITOR_TEAM_ID"))
-            gdate      = str(row.get("GAME_DATE_EST", game_date))[:10]
-            if not gid or home_tid is None or away_tid is None:
+        for ev in today_events:
+            home_name = ev.get("home_team", "")
+            away_name = ev.get("away_team", "")
+            home_tid  = name_to_tid.get(home_name)
+            away_tid  = name_to_tid.get(away_name)
+            if home_tid is None or away_tid is None:
+                log.debug("seed_scheduled_games: unmatched teams '%s'/'%s'",
+                          home_name, away_name)
                 continue
-            stype = _season_type_from_id(gid)
-            era   = 1.0  # era_weight — same default as pull_player_game_logs
+            # Stable synthetic game_id — unique per date+matchup
+            gid = f"SCHED{target.replace('-', '')}{home_tid}{away_tid}"
             cur = conn.execute(
                 "INSERT INTO games(game_id,game_date,home_team_id,away_team_id,"
                 "season,season_type,era_weight) VALUES(?,?,?,?,?,?,?) "
                 "ON CONFLICT(game_id) DO NOTHING",
-                (gid, gdate, home_tid, away_tid, season, stype, era),
+                (gid, target, home_tid, away_tid, season, season_type, 1.0),
             )
             inserted += cur.rowcount
         conn.commit()

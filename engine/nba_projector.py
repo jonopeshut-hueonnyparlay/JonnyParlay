@@ -1368,7 +1368,14 @@ def run_projections(
         if gid in spreads:        game_spread[gid]  = spreads[gid]
         game_season_type[gid] = g.get("season_type", "Regular Season") or "Regular Season"
 
-    active = get_all_active_players(game_date, min_recent_games=2, db_path=db_path)
+    # FIX-P1 (2026-05-04): pass current season so only players with ≥5 games
+    # THIS season are projected.  Without this, waived/two-way players whose
+    # team_id still points at a playoff team bloat the pool from ~13 to 34+
+    # per team.  Both the 240-min team constraint and the Vegas team-total
+    # constraint then scale everyone's projections down by ~0.40, turning
+    # starters' lines into bench-player numbers (e.g. Embiid 30 PTS → 12 PTS).
+    active = get_all_active_players(game_date, min_recent_games=5,
+                                    season=season, db_path=db_path)
     active = active[active["team_id"].isin(team_to_game.keys())]
 
     log.info("Projecting %d players for %s ...", len(active), game_date)
