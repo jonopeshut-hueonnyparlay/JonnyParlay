@@ -33,12 +33,14 @@ from paths import (  # noqa: E402
     PICK_LOG_PATH as _PICK_LOG_PATH_P,
     PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    DATA_DIR as _DATA_DIR,
     data_path as _data_path,
 )
 
 PICK_LOG_PATH        = str(_PICK_LOG_PATH_P)
 PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
 PICK_LOG_MLB_PATH    = str(_PICK_LOG_MLB_PATH_P)
+PICK_LOG_CUSTOM_PATH = str(_DATA_DIR / "pick_log_custom.csv")  # M7: custom shadow log
 OUTPUT_FOLDER        = str(_data_path("picks"))
 
 MIN_SAMPLE_NOTE = 20  # Warn when a bucket has fewer than this many picks
@@ -287,7 +289,7 @@ def main():
     parser.add_argument("--sport",      default=None,  help="Filter by sport (NBA, NHL, MLB, etc.)")
     parser.add_argument("--since",      default=None,  help="Only picks from this date forward (YYYY-MM-DD)")
     parser.add_argument("--stat",       default=None,  help="Filter by stat type (AST, SOG, K, etc.)")
-    parser.add_argument("--shadow",     action="store_true", help="Include MLB shadow log (pick_log_mlb.csv)")
+    parser.add_argument("--shadow",     action="store_true", help="Include MLB + custom shadow logs (pick_log_mlb.csv, pick_log_custom.csv)")
     parser.add_argument("--model-only", action="store_true", help="Exclude manual picks (run_type=manual)")
     parser.add_argument("--export",     action="store_true", help="Save report to .txt file")
     args = parser.parse_args()
@@ -300,6 +302,9 @@ def main():
     extra = [PICK_LOG_MANUAL_PATH]
     if args.shadow:
         extra.append(PICK_LOG_MLB_PATH)
+        # M7: also include custom projection shadow log when it exists
+        if Path(PICK_LOG_CUSTOM_PATH).exists():
+            extra.append(PICK_LOG_CUSTOM_PATH)
 
     exclude_run_types = {"manual"} if args.model_only else None
 

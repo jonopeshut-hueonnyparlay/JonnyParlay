@@ -42,14 +42,16 @@ except ImportError as e:
 
 @contextmanager
 def _pick_log_lock(log_path, timeout=30):
-    """Acquire exclusive lock on pick_log to prevent CLV daemon/grader races."""
+    """Acquire exclusive lock on pick_log to prevent CLV daemon/grader races.
+
+    CRIT-1: on timeout, raises _FileLockTimeout — never yields without the lock.
+    Yielding without the lock would allow a concurrent CLV daemon write to race
+    the pick_log append, potentially corrupting the ledger.
+    """
     lock_path = str(log_path) + ".lock"
-    try:
-        with FileLock(lock_path, timeout=timeout):
-            yield
-    except _FileLockTimeout:
-        logger.warning(f"pick_log lock timeout after {timeout}s — writing anyway (race risk)")
+    with FileLock(lock_path, timeout=timeout):
         yield
+    # _FileLockTimeout propagates naturally if the lock can't be acquired.
 
 try:
     import anthropic as _anthropic
@@ -1317,8 +1319,9 @@ class OddsFetcher:
                         data = json.load(f)
                     print(f"  ♻️  Using cached {sport} odds ({age_min:.0f} min old)")
                     return data
-                except Exception:
-                    pass
+                except json.JSONDecodeError as _e:
+                    # H10: only swallow corrupt JSON; let real I/O errors propagate
+                    logger.warning("H10: Corrupt odds cache, will re-fetch: %s", _e)  # C9: was log.warning (NameError)
         return None
 
     def _save_cache(self, sport, data):
@@ -3497,7 +3500,10 @@ def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
     headers = _dh()
     for attempt in range(1, retries + 1):
         try:
-            r = _req.post(url, json=payload, headers=headers, timeout=10)
+            # H5/H22: split timeout (connect=5s, read=10s); ReadTimeout is NOT
+            # retried because the POST body has already been sent — a retry risks
+            # a duplicate Discord post.
+            r = _req.post(url, json=payload, headers=headers, timeout=(5, 10))
             if r.status_code == 429:
                 retry_after = _ras(r, default=backoff)
                 logger.warning(f"[Discord] Rate limited — waiting {retry_after:.1f}s (attempt {attempt}/{retries})")
@@ -3505,6 +3511,10 @@ def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
                 continue
             r.raise_for_status()
             return True
+        except _req.exceptions.ReadTimeout as e:
+            # H5: never retry ReadTimeout — POST body was already delivered.
+            logger.error(f"[Discord] ReadTimeout (body already sent, NOT retrying): {e}")
+            return False
         except Exception as e:
             if attempt < retries:
                 wait = backoff ** attempt
@@ -4069,23 +4079,35 @@ def post_card_announcement(premium, mode, today, suppress_ping=False):
 
 
 def _card_already_posted_today(today_str):
-    """Return True if primary picks already exist in pick_log.csv for today.
+    """Return True if the premium card has already been posted to Discord today.
 
-    Blank/missing run_type is treated as primary (matches legacy pre-migration
-    rows + the default). This prevents duplicate card posts when a prior run
-    logged picks without setting run_type explicitly.
+    H14: previous implementation scanned pick_log.csv for 'primary' run_type
+    rows, which conflates card posting with KILLSHOT pick logging — a run that
+    only qualified KILLSHOT picks would log them as run_type='primary' and
+    incorrectly suppress the card on the next run.
+
+    Now uses the discord guard key 'premium_card:{today}' as the source of
+    truth (set by post_to_discord → claim_post when the card is actually sent).
+    Falls back to pick_log scan (checking card_slot is set) when the guard
+    cannot be read, so the check still works in test/offline environments.
     """
-    log_path = Path(PICK_LOG_PATH)
-    if not log_path.exists():
-        return False
-    primary_markers = {"primary", "", None}
     try:
-        # Shared lock — don't race a mid-flush CLV/grader write (audit H-8).
+        guard = _load_discord_guard()
+        if guard.get(f"premium_card:{today_str}"):
+            return True
+        # Guard says not posted — also check pick_log as a safety net.
+        # Require card_slot to be non-blank: only the card posting path sets
+        # card_slot; KILLSHOT-only runs leave it blank (H14 fix).
+        log_path = Path(PICK_LOG_PATH)
+        if not log_path.exists():
+            return False
         with _pick_log_lock(log_path):
             with open(log_path, "r", newline="", encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
         return any(
-            r.get("date") == today_str and r.get("run_type") in primary_markers
+            r.get("date") == today_str
+            and r.get("run_type") in {"primary", "", None}
+            and r.get("card_slot", "").strip() not in ("", "0")
             for r in rows
         )
     except Exception:
@@ -4322,7 +4344,7 @@ def _passes_killshot_v2_gate(pick):
     if wp < KILLSHOT_WIN_PROB_FLOOR:
         return False, f"win_prob={wp:.3f} < {KILLSHOT_WIN_PROB_FLOOR}"
     try:
-        odds = int(pick.get("odds", 0))
+        odds = int(float(pick.get("odds", 0)))  # H6: float() first handles "-115.5" strings
     except (TypeError, ValueError):
         return False, "odds unparseable"
     if odds < KILLSHOT_ODDS_MIN or odds > KILLSHOT_ODDS_MAX:
@@ -5091,9 +5113,16 @@ def main():
     parser.add_argument("--parlays-only", action="store_true", help="Only output Longshot + Alt Spread parlays")
     parser.add_argument("--alt-parlay", action="store_true", help="Only output Alt Spread parlay (skips props, minimal API calls)")
     parser.add_argument("--no-cache", action="store_true", help="Skip odds cache, force fresh API calls")
-    parser.add_argument("--force-card", action="store_true", help="Force premium card post even if card was already posted today (fresh run, dedup prevents double-logging)")
+    parser.add_argument("--force-card", action="store_true",
+                        help="Override the daily premium card guard and repost even if the card "
+                             "was already posted today. Useful for fixing a malformed card. "
+                             "Dedup logic still prevents double-logging picks to pick_log.csv.")  # L11
     parser.add_argument("--force", action="store_true", help="Skip game start-time filter (test with already-started games)")
     parser.add_argument("--no-discord", action="store_true", help="Skip all Discord posts (dry run for Discord only)")
+    parser.add_argument("--no-cap", action="store_true",
+                        help="Log ALL qualified picks instead of top-5 premium only. "
+                             "Requires --no-discord (safety guard). Use with shadow mode for "
+                             "faster CLV accumulation — does not affect Discord or live pick flow.")
     parser.add_argument("--test",       action="store_true", help="Suppress @everyone ping on all Discord posts (safe preview)")
     parser.add_argument("--repost",     action="store_true", help="Re-fire premium card + POTD from the most recent primary log entry")
     parser.add_argument("--context", action="store_true", help="Enable context sanity layer (Claude API calls for injury/news check)")
@@ -5109,6 +5138,13 @@ def main():
     parser.add_argument("--bonus-only", action="store_true", help="Run bonus drop + SGP only; skip premium card, daily lay, longshot, killshots, preview")
 
     args = parser.parse_args()
+
+    # --no-cap safety guard: must be paired with --no-discord to prevent
+    # accidentally logging every qualified pick to the live pick_log during a
+    # real Discord run. This flag is only meaningful in shadow / research mode.
+    if getattr(args, "no_cap", False) and not args.no_discord:
+        print("  ERROR: --no-cap requires --no-discord (safety guard — use shadow/research mode only).")
+        sys.exit(1)
 
     # M12: prevent emoji → UnicodeEncodeError crashes on Windows cmd.exe (cp1252)
     if hasattr(sys.stdout, "reconfigure"):
@@ -5460,7 +5496,15 @@ def main():
         print("  [Discord] --force-card: overriding card guard — will repost premium card with fresh picks.")
         _card_was_already_up = False
     if not args.no_save and not _card_was_already_up:
-        log_picks(premium + killshots, args.mode, premium_picks=premium)
+        if getattr(args, "no_cap", False):
+            # --no-cap (shadow/research mode): log ALL qualified picks for CLV accumulation.
+            # premium_picks= is still set so card_slot 1-5 columns are correct for the
+            # actual top-5; extra picks log with blank card_slot (run_type=primary, no slot).
+            # dedup key prevents double-logging if qualified overlaps premium.
+            log_picks(qualified + killshots, args.mode, premium_picks=premium)
+            print(f"  [--no-cap] Logged {len(qualified)} qualified picks (vs top-5 only in normal mode).")
+        else:
+            log_picks(premium + killshots, args.mode, premium_picks=premium)
     elif not args.no_save and killshots:
         # Card already posted but new KILLSHOTs may have emerged (e.g. updated CSVs).
         # Log them separately — dedup key (date+player+stat+line+direction) prevents

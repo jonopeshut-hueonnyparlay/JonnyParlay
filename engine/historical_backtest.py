@@ -134,19 +134,20 @@ def run_historical_backtest(
     # Sample evenly across the season (not just random, to avoid clustering)
     rng = random.Random(seed)
     if n_dates >= len(all_dates):
-        sampled = all_dates
+        sampled_dates = all_dates
     else:
         # Stratified: divide into n_dates buckets, pick one from each
         bucket_size = len(all_dates) / n_dates
-        sampled = sorted(
+        sampled_dates = sorted(
             all_dates[int(rng.uniform(i * bucket_size, (i + 1) * bucket_size))]
             for i in range(n_dates)
         )
 
-    print(f"Sampled {len(sampled)} dates: {sampled[0]} to {sampled[-1]}")
+    print(f"Sampled {len(sampled_dates)} dates: {sampled_dates[0]} to {sampled_dates[-1]}")
 
     # Accumulators
-    errors_by_stat = defaultdict(list)   # stat -> list of (error, is_cold_start)
+    errors_by_stat = defaultdict(list)   # stat -> list of (error, is_cold_start, role, proj)
+    errors_by_role = defaultdict(list)   # role_tier -> list of (abs_error, stat_name, proj) tuples (T4)
     errors_raw     = []
     errors_adj     = []
     role_counts    = defaultdict(int)
@@ -157,10 +158,11 @@ def run_historical_backtest(
     # Minutes tracking: list of (proj_min, act_min, role) for players with min >= 5
     min_records    = []
 
-    for date_idx, game_date in enumerate(sampled):
+    for date_idx, game_date in enumerate(sampled_dates):
         games = get_games_on_date(game_date, db_path)
+        print(f"[{date_idx+1}/{len(sampled_dates)}] {game_date}: {len(games)} games", flush=True)
         if verbose:
-            print(f"\n[{date_idx+1}/{len(sampled)}] {game_date}: {len(games)} games")
+            print(f"\n[{date_idx+1}/{len(sampled_dates)}] {game_date}: {len(games)} games")
 
         for game in games:
             game_id   = game["game_id"]
@@ -231,6 +233,7 @@ def run_historical_backtest(
                     err_raw  = proj_f - actual_f
                     errors_raw.append(err_raw)
                     errors_by_stat[stat_name].append((err_raw, is_cold, role, proj_f))
+                    errors_by_role[role].append((err_raw, stat_name, proj_f))
 
                     # Rate-adjusted: what would player have produced at their
                     # per-minute rate in OUR projected minutes?
@@ -249,7 +252,7 @@ def run_historical_backtest(
     print("\n" + "=" * 65)
     print(f"RESULTS: {season} Regular Season Retrospective Backtest")
     print("=" * 65)
-    print(f"Dates sampled:      {len(sampled)}")
+    print(f"Dates sampled_dates:      {len(sampled_dates)}")
     print(f"Total player-games: {total_players}")
     print(f"Projections run:    {total_players - skipped - proj_errors}")
     print(f"Skipped (proj=None):{skipped}")
@@ -289,6 +292,62 @@ def run_historical_backtest(
         print(f"  {stat_name:6s}  {_mae(all_e):7.3f}  {bias_val:+7.3f}  {_rmse(all_e):7.3f}"
               f"  {mean_p:9.3f}  {scalar:7.4f}"
               f"  {len(all_e):5d}  {len(cold_e):6d}  {_mae(cold_e) if cold_e else float('nan'):8.3f}")
+
+    # ---------------------------------------------------------------------------
+    # T4: Bias by role tier
+    # ---------------------------------------------------------------------------
+    if errors_by_role:
+        print("\n" + "=" * 65)
+        print("BIAS BY ROLE TIER  (T4, 2026-05-02)")
+        print("=" * 65)
+        print(f"  {'Role':15s}  {'MAE':>7s}  {'Bias':>7s}  {'RMSE':>7s}  {'n':>5s}")
+        role_order = ["starter", "sixth_man", "rotation", "spot", "cold_start", "unknown"]
+        seen_roles = set(errors_by_role.keys())
+        ordered = role_order + [r for r in sorted(seen_roles) if r not in role_order]
+        for role in ordered:
+            errs_r = errors_by_role.get(role)
+            if not errs_r:
+                continue
+            all_e = [e for e, _, _ in errs_r]
+            print(f"  {role:15s}  {_mae(all_e):7.3f}  {_bias(all_e):+7.3f}  {_rmse(all_e):7.3f}  {len(all_e):5d}")
+
+        # Per-stat × per-role for PTS (highest volume, most meaningful to inspect)
+        print(f"\n  PTS bias by role tier:")
+        print(f"  {'Role':15s}  {'Bias':>7s}  {'MAE':>7s}  {'MeanProj':>9s}  {'n':>5s}")
+        for role in ordered:
+            errs_r = errors_by_role.get(role)
+            if not errs_r:
+                continue
+            pts_e = [(e, p) for e, st, p in errs_r if st == "PTS"]
+            if not pts_e:
+                continue
+            all_e = [e for e, _ in pts_e]
+            mean_p = sum(p for _, p in pts_e) / len(pts_e)
+            print(f"  {role:15s}  {_bias(all_e):+7.3f}  {_mae(all_e):7.3f}  {mean_p:9.3f}  {len(all_e):5d}")
+
+    # ---------------------------------------------------------------------------
+    # T4: Projection magnitude bucketing (PTS) — is bias worse at high/low proj?
+    # ---------------------------------------------------------------------------
+    pts_errs = errors_by_stat.get("PTS", [])
+    if pts_errs:
+        print("\n" + "=" * 65)
+        print("PTS BIAS BY PROJECTION MAGNITUDE  (T4, 2026-05-02)")
+        print("=" * 65)
+        # Buckets: <8, 8-12, 12-16, 16-20, 20-25, 25+
+        buckets = [
+            ("<8",    lambda p: p < 8),
+            ("8-12",  lambda p: 8 <= p < 12),
+            ("12-16", lambda p: 12 <= p < 16),
+            ("16-20", lambda p: 16 <= p < 20),
+            ("20-25", lambda p: 20 <= p < 25),
+            ("25+",   lambda p: p >= 25),
+        ]
+        print(f"  {'Bucket':8s}  {'MAE':>7s}  {'Bias':>7s}  {'n':>5s}")
+        for label, fn in buckets:
+            bucket_e = [e for e, _, _, p in pts_errs if fn(p)]
+            if not bucket_e:
+                continue
+            print(f"  {label:<8s}  {_mae(bucket_e):7.3f}  {_bias(bucket_e):+7.3f}  {len(bucket_e):5d}")
 
     # ---------------------------------------------------------------------------
     # Minutes analysis
@@ -347,4 +406,3 @@ if __name__ == "__main__":
         verbose=args.verbose,
         db_path=Path(args.db) if args.db else DB_PATH,
     )
- 

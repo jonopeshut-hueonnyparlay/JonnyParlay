@@ -43,6 +43,7 @@ if str(_HERE) not in sys.path:
 from projections_db import (
     DB_PATH, get_player_recent_games, get_player_season_game_count,
     get_player_career_avg_minutes,
+    get_player_career_game_count, get_player_last_appearance_days,
     get_team_pace, get_team_def_ratio, get_player_b2b_context,
     get_all_active_players, get_games_for_date, upsert_projection, get_conn,
     get_team_avg_fga, get_team_shooting_stats,
@@ -57,7 +58,7 @@ if not log.handlers:
         format="%(asctime)s  %(levelname)-8s [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S")
 
-LEAGUE_AVG_PACE   = 99.5
+LEAGUE_AVG_PACE   = 100.22  # R5 Brief 7: updated from 99.5 (2024-25 full season official NBA pace)
 LEAGUE_AVG_TOTAL  = 222.0
 # Playoffs run slower / lower-scoring — separate baselines
 LEAGUE_AVG_PACE_PO  = 96.5
@@ -187,6 +188,17 @@ CURRENT_SEASON = "2025-26"
 # Derived: dk_std ≈ 0.35 * proj_pts across 2024-25 player sample (r²=0.81).
 # Re-calibrate against new season data when running evaluate_projector.py.
 DK_STD_COEFF = 0.35
+# R2 (Research Brief 7, 2026-05-03): role-specific dk_std floors.
+# 0.35 * proj_pts is 35-65% too low for non-starter roles (low proj_pts but high MAE).
+# Actual MAE: starter=5.38, sixth_man=4.73, rotation=4.77, spot=4.11, cold_start=5.49.
+# Floor prevents underestimating uncertainty for bench players whose proj_pts is small.
+DK_STD_FLOOR = {
+    "starter":    4.0,
+    "sixth_man":  4.0,
+    "rotation":   3.5,
+    "spot":       3.0,
+    "cold_start": 3.0,
+}
 
 # P18-v4 — Playoff calibration (2026-05-02).
 # Two-component design replacing the blunt per-stat PLAYOFF_DEFLATORS (P18-v1):
@@ -199,8 +211,8 @@ DK_STD_COEFF = 0.35
 PLAYOFF_MINUTES_SCALAR = {
     "starter":   1.068,   # 31.6 → 33.8 actual (+6.8%)
     "sixth_man": 0.909,   # 23.3 → 21.2 actual (-9.1%)
-    "rotation":  0.786,   # 18.5 → 14.5 actual (-21.4%)
-    "spot":      0.902,   # 14.2 → 12.8 actual (-9.8%)
+    "rotation":  0.550,   # 535 matched pairs Apr 18-29: projects 18.5 min vs 10.2 actual; R3 Brief 7
+    "spot":      0.350,   # 535 matched pairs Apr 18-29: projects 13.9 min vs 4.9 actual; R3 Brief 7
 }
 
 # 1b. REGULAR_SEASON_MINUTES_SCALAR (Research Brief 6, 2026-05-02):
@@ -226,12 +238,12 @@ REGULAR_SEASON_MINUTES_SCALAR = {
 #     Applied after pace/matchup/playoff adjustments, before distribution.
 #     Not applied during playoffs (covered by PLAYOFF_RATE_DEFLATORS).
 REGULAR_SEASON_STAT_SCALAR = {
-    "pts":  1.000,   # bias +0.024 on mean 11.646 -- negligible, no correction
-    "ast":  1.013,   # bias -0.033 on mean  2.664
-    "reb":  1.031,   # bias -0.131 on mean  4.222
-    "fg3m": 1.019,   # bias -0.025 on mean  1.316
-    "blk":  1.064,   # bias -0.028 on mean  0.442 -- large relative, small absolute
-    "stl":  1.000,   # bias -0.004 on mean  0.842 -- negligible, no correction
+    "pts":  1.000,   # OOS 2023-24 bias -0.014 -- confirmed no correction needed
+    "ast":  1.005,   # OOS 2023-24 bias +0.051 -- 1.013 was over-correcting; trimmed to 1.005
+    "reb":  1.031,   # OOS 2023-24 bias -0.005 -- confirmed
+    "fg3m": 1.019,   # OOS 2023-24 bias -0.007 -- confirmed
+    "blk":  1.043,   # OOS 2023-24 bias -0.022; cross-seed mean ~1.035-1.056; trimmed to 1.043
+    "stl":  1.000,   # OOS 2023-24 bias -0.003 -- confirmed no correction needed
     "tov":  1.000,   # not tracked in backtest -- no correction
 }
 
@@ -257,12 +269,12 @@ PLAYOFF_RATE_DEFLATORS = {
 # likely noise; no adjustment applied).
 # TOV is negative because home teams commit fewer turnovers.
 _HOME_AWAY_DELTA = {
-    "pts":  0.0052,   # +/- 1.04% full spread; home = +0.52%
-    "reb":  0.0058,   # +/- 1.17%
-    "ast":  0.0135,   # +/- 2.69%
-    "fg3m": 0.0131,   # +/- 2.62%
-    "blk":  0.0127,   # +/- 2.54%
-    "tov": -0.0063,   # +/- 1.26%  (home team fewer turnovers)
+    "pts":  0.0235,   # R4 Brief 7 empirical: +/- 4.70% full spread; home = +2.35%
+    "reb":  0.0088,   # R4 Brief 7 empirical: +/- 1.76%
+    "ast":  0.0333,   # R4 Brief 7 empirical: +/- 6.67%
+    "fg3m": 0.0452,   # R4 Brief 7 empirical: +/- 9.04%
+    "blk":  0.0439,   # R4 Brief 7 empirical: +/- 8.78%
+    "tov": -0.0122,   # R4 Brief 7 empirical: +/- 2.44%  (home team fewer turnovers)
 }
 
 # PTS blend constants — re-fit annually via:
@@ -280,11 +292,16 @@ BLEND_BIAS_CORRECTION = 0.0    # no additive correction — fix root causes stru
 # DREB: player DREB / (opp_misses * min/48).  Stabilises ~250-300 possessions (~28 games).
 # Positional priors calibrated from 2024-25 DB (min>=10, Regular Season) — P15 2026-05-01.
 # Denominator: (tm_fga - tm_fgm + 0.44*tm_fta) * min/48 — matches compute_reb_rates().
-_REB_POS_OREB_PRIOR = {"G": 0.02043, "F": 0.03247, "C": 0.07048}  # OREB per team miss/48
-_REB_POS_DREB_PRIOR = {"G": 0.08086, "F": 0.10569, "C": 0.17162}  # DREB per opp miss/48
-_REB_PRIOR_N_OREB   = 15   # Research Brief 5: REB k=12-15; was 20
-_REB_PRIOR_N_DREB   = 15   # Research Brief 5: REB k=12-15; was 28 (overshrunken)
+_REB_POS_OREB_PRIOR = {"G": 0.02154, "F": 0.02701, "C": 0.05681}  # OREB per team miss/48 — R6 Brief 7 (scaled proportionally to _REB_RATE_PRIOR update)
+_REB_POS_DREB_PRIOR = {"G": 0.08527, "F": 0.08792, "C": 0.13836}  # DREB per opp miss/48 — R6 Brief 7
+_REB_PRIOR_N_OREB   = 12   # M6: standardised to 12 (matches _REB_RATE_PRIOR_N); Research Brief 5: REB k=12-15
+_REB_PRIOR_N_DREB   = 12   # M6: standardised to 12 (matches _REB_RATE_PRIOR_N); was 28 (overshrunken)
 REB_ALPHA           = 0.45  # weight on decomposed path (lean baseline until rates stabilise)
+# T6 (Research Brief 6, 2026-05-02): positional prior for the per-minute baseline REB path.
+# Calibrated from 2024-25 DB (min>=10, Regular Season): G=0.055, F=0.095, C=0.165 reb/min.
+# Applies Bayesian shrinkage to the EWMA reb/min rate — fixes cold_start baseline of 0.0.
+_REB_RATE_PRIOR   = {"G": 0.058, "F": 0.079, "C": 0.133}  # total reb/min — R6 Brief 7 empirical (was G=0.055,F=0.095,C=0.165)
+_REB_RATE_PRIOR_N = 12   # equivalent games of prior weight (same order of magnitude as reb EWMA span)
 
 # AST decomposition constants (Brief P3, Sec. 3 — 2026-05-01)
 # AST rate per team possession: normalises for pace naturally; avoids per-FGA over-normalisation.
@@ -950,7 +967,9 @@ def project_player(
     )
 
     is_cold_start = games_on_team < MIN_GAMES_FOR_TIER
-    career_min_prior = None   # populated below for cold_start only
+    career_min_prior   = None   # populated below for cold_start only
+    cold_start_subtype = None   # R7 Brief 7: taxi | returner | new_acquisition
+    cold_start_min_cap = None   # R7 Brief 7: per-subtype minutes ceiling (post-scalar)
     if is_cold_start:
         role     = "cold_start"
         rates    = cold_start_rates(position)
@@ -962,6 +981,34 @@ def project_player(
         career_min_prior = get_player_career_avg_minutes(
             player_id, current_season=season, db_path=db_path
         )
+        # R7 Brief 7: cold_start sub-type classification.
+        # Classifies cold_start players to improve minutes cap accuracy:
+        #   taxi         — 0 career games in DB (true first-timer / G-League callup)
+        #   returner     — has career history but last game >= 180 days ago
+        #   new_acquisition — has career history, recently active elsewhere
+        # Per-subtype cold_start_min_cap (applied post-scalar to proj_min):
+        #   taxi         → 12.0 min  (unknown role, very uncertain)
+        #   returner     → career_avg_min (max 22) or 14.0  (reduced role after long layoff)
+        #   new_acquisition → career_avg_min (max 28) or 16.0  (recently active, new team TBD)
+        n_career_games, career_avg_min_raw = get_player_career_game_count(
+            player_id, current_season=season, db_path=db_path
+        )
+        if n_career_games == 0:
+            cold_start_subtype = "taxi"
+            cold_start_min_cap = 12.0
+        else:
+            days_since = get_player_last_appearance_days(
+                player_id, before_date=game_date, db_path=db_path
+            )
+            if days_since is None or days_since >= 180:
+                cold_start_subtype = "returner"
+                cold_start_min_cap = min(career_avg_min_raw, 22.0) if career_avg_min_raw else 14.0
+            else:
+                cold_start_subtype = "new_acquisition"
+                cold_start_min_cap = min(career_avg_min_raw, 28.0) if career_avg_min_raw else 16.0
+        log.debug("R7 cold_start: player_id=%s subtype=%s n_career=%d cap=%.1f career_avg=%s",
+                  player_id, cold_start_subtype, n_career_games, cold_start_min_cap or 0,
+                  f"{career_avg_min_raw:.1f}" if career_avg_min_raw else "None")
     else:
         role = classify_role(df)
 
@@ -994,16 +1041,38 @@ def project_player(
     if is_playoff:
         proj_min = round(proj_min * PLAYOFF_MINUTES_SCALAR.get(role, 1.0), 2)
     else:
-        proj_min = round(proj_min * REGULAR_SEASON_MINUTES_SCALAR.get(role, 1.0), 2)
+        _rs_scalar = REGULAR_SEASON_MINUTES_SCALAR.get(role, 1.0)
+        if role == "spot": _rs_scalar = max(_rs_scalar, 1.200)  # §7.5: floor -- spot CI [1.57,1.83], protects future refits
+        proj_min = round(proj_min * _rs_scalar, 2)
+    # R7 Brief 7: apply cold_start per-subtype minutes ceiling after scaling.
+    # Prevents extreme over-projection for unknown/returning/new-team cold_start players.
+    if cold_start_min_cap is not None and proj_min > cold_start_min_cap:
+        log.debug("R7: cold_start min cap %.1f → %.1f (subtype=%s player_id=%s)",
+                  proj_min, cold_start_min_cap, cold_start_subtype, player_id)
+        proj_min = round(cold_start_min_cap, 2)
     # Always use Regular Season pace data (reliable); playoff pace DB entries
-    # are often missing, causing the fallback (99.5) to inflate projections.
-    # Playoff adjustment is handled by PLAYOFF_DEFLATOR below instead.
+    # are often missing, causing the fallback (100.22) to inflate projections.  # L1: was stale 99.5
+    # §7.6 playoff pace override: scale game_pace to playoff baseline before
+    # computing _base_pf. Regular-season pace (~98-100) → playoff pace (~92-94).
+    # Using ratio LEAGUE_AVG_PACE_PO/LEAGUE_AVG_PACE avoids needing playoff DB data.
+    # This adjusts all pace-dependent stats (PTS, FGA, 3PM, AST, STL, BLK, TOV)
+    # proportionally via their elasticity exponents. Override is bypassed when
+    # implied_total is available (Vegas already prices in playoff pace).
     team_pace   = get_team_pace(team_id,     season, "Regular Season", db_path)
     opp_pace    = get_team_pace(opp_team_id, season, "Regular Season", db_path)
     game_pace   = (team_pace + opp_pace) / 2.0
-    _base_pf    = game_pace / LEAGUE_AVG_PACE
+    # C3 fix: only apply the §7.6 playoff pace scalar when implied_total is NOT
+    # available.  When Vegas's implied total IS available it already prices in
+    # the slower playoff pace, so applying the scalar again would double-discount
+    # and deflate _base_pf, which then propagates to pace_factor for PTS/REB/3PM.
+    # game_pace (used for _proj_poss_ast/_stl/_blk below) is NOT modified when
+    # implied_total is present — consistent with the implied_total's own discount.
     if implied_total is not None and implied_total > 0:
         _base_pf = implied_total / LEAGUE_AVG_TOTAL
+    else:
+        if is_playoff:
+            game_pace = game_pace * (LEAGUE_AVG_PACE_PO / LEAGUE_AVG_PACE)  # §7.6: ~0.970 scalar
+        _base_pf = game_pace / LEAGUE_AVG_PACE
 
     # Per-stat pace factors using non-linear elasticity (Q8.4, Research Brief 5).
     # Formula: pace_X = base_pf^e * LEAGUE_AVG^(1-e) preserves absolute value at
@@ -1021,6 +1090,8 @@ def project_player(
                        * 1.0)              # multiplied by proj_min/48 below
     _proj_poss_stl  = (game_pace ** _e_stl  * LEAGUE_AVG_PACE ** (1.0 - _e_stl)
                        * 1.0)              # multiplied by proj_min/48 below
+    _proj_poss_blk  = (game_pace ** _e_stl  * LEAGUE_AVG_PACE ** (1.0 - _e_stl)
+                       * 1.0)              # M5: separate from STL (same elasticity, independent future tuning)
 
     pg = _pos_group(position)
     matchup_pts = float(np.clip(
@@ -1030,11 +1101,13 @@ def project_player(
     matchup_ast = float(np.clip(
         get_team_def_ratio(opp_team_id, pg, "ast", season, db_path), *MATCHUP_CLIP))
 
-    # P3 — fg3m DvP: use opponent 3PM-allowed ratio instead of piggybacking PTS DvP.
-    # team_def_splits already computes fg3m ratios (fg3m is in _DEF_STATS).
-    # PTS DvP conflated 2P and 3P defense; a team can be stingy inside but leaky from 3.
+    # P3 — 3PM DvP: use fg3a-allowed ratio (shot volume) not fg3m-allowed ratio.
+    # fg3m ratio conflates volume + defense efficiency; fg3a ratio isolates how many
+    # 3-point attempts a team concedes, letting the player's own 3P% handle makes.
+    # T2d (2026-05-02): changed from "fg3m" to "fg3a"; fg3a added to _DEF_STATS +
+    # compute_defensive_splits query. Requires --recompute-splits on next pull.
     matchup_fg3m = float(np.clip(
-        get_team_def_ratio(opp_team_id, pg, "fg3m", season, db_path), *MATCHUP_CLIP))
+        get_team_def_ratio(opp_team_id, pg, "fg3a", season, db_path), *MATCHUP_CLIP))
 
     # P6 — STL DvP: opponents with high TOV rates create more steal opportunities.
     # opp_tov_rate = opp team's TOV / possession. Normalised by league average.
@@ -1106,8 +1179,9 @@ def project_player(
     # Q8.4: Uses separate pace_fg3m (^0.78) rather than pace_factor (^0.90).
     # Rationale: 3PM rate is partially shot-selection (pace-insensitive) and
     # partially volume (pace-sensitive) — empirical elasticity is lower than PTS.
-    # DvP: matchup_fg3m uses the opponent's actual 3PM-allowed ratio from
-    # team_def_splits — decoupled from PTS DvP (P3, 2026-05-01).
+    # DvP: matchup_fg3m now uses the opponent's fg3a-allowed ratio (attempts-conceded)
+    # from team_def_splits — volume adjustment only; player's own fg3_pct handles makes.
+    # T2d (2026-05-02): switched from fg3m → fg3a ratio.
     team_proj_fga_3pm   = team_avg_fga * pace_fg3m
     player_proj_fga_3pm = (usg_pct / 100.0) * team_proj_fga_3pm * (proj_min / 48.0)
     player_proj_3pa_3pm = fg3a_rate * player_proj_fga_3pm
@@ -1129,15 +1203,31 @@ def project_player(
     proj_oreb       = oreb_rate * avail_oreb_pg * (proj_min / 48.0) * pace_reb
     proj_dreb       = dreb_rate * avail_dreb_pg * (proj_min / 48.0) * pace_reb
     proj_reb_custom = (proj_oreb + proj_dreb) * matchup_reb   # DvP [0.80, 1.20]
-    baseline_reb    = rates.get("reb", 0.0) * proj_min
+    # T6: Bayesian shrinkage on per-minute REB baseline to positional prior.
+    # Applied only for cold_start players (0 recent games) where the observed
+    # reb/min rate is 0.0 by definition. Players with real recent data use their
+    # observed rate directly — shrinking them toward a positional prior would
+    # bias projections for traded/returning players (B1-001 fix).
+    _reb_n_games   = len(df_clean) if df_clean is not None and not df_clean.empty else 0
+    _reb_rate_raw  = rates.get("reb", 0.0)
+    if _reb_n_games == 0:
+        _reb_rate_prior  = _REB_RATE_PRIOR.get(pg, 0.090)
+        _reb_rate_shrunk = (
+            (_reb_n_games * _reb_rate_raw + _REB_RATE_PRIOR_N * _reb_rate_prior)
+            / max(1, _reb_n_games + _REB_RATE_PRIOR_N)
+        )
+    else:
+        _reb_rate_shrunk = _reb_rate_raw  # use observed rate for players with real data
+    baseline_reb    = _reb_rate_shrunk * proj_min
     proj_reb        = REB_ALPHA * proj_reb_custom + (1.0 - REB_ALPHA) * baseline_reb
     projections["reb"] = max(0.0, round(proj_reb, 2))
 
     # AST: per-possession rate decomposition (Brief P3, Sec. 3).
     # Rate normalised by team possessions — avoids over-normalising via FGA.
     # Position-conditional EWMA span + Bayesian shrinkage (non-PGs volatile).
-    # game_pace = (team_pace + opp_pace) / 2 — incorporates opponent tempo.
-    ast_rate        = compute_ast_rate(df_clean, team_pace, pg, avail_weights=avail_weights)
+    # M3: use game_pace as denominator so training basis matches projection basis.
+    # game_pace = (team_pace + opp_pace) / 2 — same value used in _proj_poss_ast.
+    ast_rate        = compute_ast_rate(df_clean, game_pace, pg, avail_weights=avail_weights)
     # Q8.4: AST uses pace^0.50 elasticity. Formula: game_pace^e × LEAGUE_AVG^(1-e)
     # preserves the absolute possession count at league-average pace for any e.
     proj_poss_ast   = _proj_poss_ast * proj_min / 48.0
@@ -1152,15 +1242,16 @@ def project_player(
     # STL DvP (P6): opponents with high TOV rates create more steal opportunities.
     # BLK DvP (P7): opponents who attack the paint more give rim protectors more chances.
     proj_poss_stl   = _proj_poss_stl * proj_min / 48.0
-    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg, team_pace,
+    proj_poss_blk   = _proj_poss_blk * proj_min / 48.0  # M5: separate from STL
+    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg, game_pace,  # C1: was team_pace
                                                 avail_weights=avail_weights)
     projections["stl"] = max(0.0, round(stl_rate * proj_poss_stl * matchup_stl, 2))
-    projections["blk"] = max(0.0, round(blk_rate * proj_poss_stl * matchup_blk, 2))
+    projections["blk"] = max(0.0, round(blk_rate * proj_poss_blk * matchup_blk, 2))  # M5
 
     # TOV: per-possession rate (P5). Use linear game_pace (TOV scales proportionally
     # with possessions — turnovers are directly possession-limited).
     proj_poss_tov   = game_pace * proj_min / 48.0
-    tov_rate = compute_tov_rate(df_clean, team_pace, pg, avail_weights=avail_weights)
+    tov_rate = compute_tov_rate(df_clean, game_pace, pg, avail_weights=avail_weights)  # C2: was team_pace
     projections["tov"] = max(0.0, round(tov_rate * proj_poss_tov, 2))
 
     # Q8.7 — trade archetype blending.
@@ -1216,7 +1307,9 @@ def project_player(
     ast_p25,  ast_med,  ast_p75  = compute_distribution(projections["ast"],  "ast",  role, n_games)
     fg3m_p25, fg3m_med, fg3m_p75 = compute_distribution(projections["fg3m"], "fg3m", role, n_games)
 
-    dk_std = round(projections["pts"] * DK_STD_COEFF, 2)
+    # R2: apply role-specific floor so bench player uncertainty is not underestimated
+    dk_std = round(max(projections["pts"] * DK_STD_COEFF,
+                       DK_STD_FLOOR.get(role, 3.0)), 2)
     run_ts = datetime.datetime.utcnow().isoformat(timespec="seconds")
 
     return {
@@ -1281,6 +1374,8 @@ def run_projections(
     log.info("Projecting %d players for %s ...", len(active), game_date)
     results = []
     conn = get_conn(db_path) if persist else None
+    if conn is not None:
+        conn.execute("BEGIN IMMEDIATE")  # §8: single exclusive write tx; reduces contention with CLV daemon
 
     for _, row in active.iterrows():
         pid     = int(row["player_id"])
@@ -1317,8 +1412,16 @@ def run_projections(
         conn.commit(); conn.close()
 
     # Task #5: 240-minute team constraint — scale team proj_min totals to ≤ 240.
-    _SCALE_KEYS = ["proj_pts", "proj_reb", "proj_ast", "proj_fg3m",
-                   "proj_blk", "proj_stl", "proj_tov"]
+    # M7: also scale p25/p75 percentile keys and dk_std — they are proportional
+    # to the median projections so the same scale factor applies.
+    _SCALE_KEYS = [
+        "proj_pts",  "proj_pts_p25",  "proj_pts_p75",
+        "proj_reb",  "proj_reb_p25",  "proj_reb_p75",
+        "proj_ast",  "proj_ast_p25",  "proj_ast_p75",
+        "proj_fg3m", "proj_fg3m_p25", "proj_fg3m_p75",
+        "proj_blk", "proj_stl", "proj_tov",
+        "dk_std",
+    ]
     from collections import defaultdict as _dd
     _by_team = _dd(list)
     for p in results:

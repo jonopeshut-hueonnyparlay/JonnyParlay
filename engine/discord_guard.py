@@ -13,6 +13,18 @@ This module is the single source of truth:
 - On JSONDecodeError: regex-rebuild from raw bytes recovers guard keys
   instead of returning {} and re-posting the full card with @everyone.
 
+Guard key format (L14):
+    Keys are colon-separated strings with an embedded YYYY-MM-DD date used for
+    90-day TTL pruning.  Canonical formats in use:
+        recap:<YYYY-MM-DD>
+        premium_card:<YYYY-MM-DD>
+        daily_lay:<YYYY-MM-DD>
+        killshot:<YYYY-MM-DD>:<PlayerName>:<STAT>:<DIR>:<line>
+        sgp:<YYYY-MM-DD>:<Home> vs <Away>
+        morning_preview:<YYYY-MM-DD>
+        weekly_recap:<YYYY-MM-DD>
+    Consumers must construct keys here rather than hardcoding them elsewhere.
+
 Public API:
     load_guard()         -> dict
     save_guard(guard)    -> None
@@ -136,23 +148,25 @@ def _load_unlocked() -> dict:
       regex scan, logs a warning, and returns whatever was recovered.
       Returning {} on corruption would reset every guard key and cause
       run_picks to repost the full daily card with @everyone (audit C2).
+
+    M20: uses read_bytes() for a single-syscall read, reducing the window
+    for reading a partial write even when called under an active FileLock.
     """
     try:
-        with open(GUARD_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        raw = GUARD_FILE.read_bytes()  # M20: atomic single read
     except FileNotFoundError:
         return {}
+    except OSError:
+        print(
+            "  [discord_guard] CORRUPT guard file AND failed to read "
+            "raw bytes -- returning {} (re-post risk). Restore from backup.",
+            file=sys.stderr,
+        )
+        return {}
+    try:
+        return json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError):
         # File exists but is corrupted -- attempt raw-byte recovery.
-        try:
-            raw = GUARD_FILE.read_bytes()
-        except OSError:
-            print(
-                "  [discord_guard] CORRUPT guard file AND failed to read "
-                "raw bytes -- returning {} (re-post risk). Restore from backup.",
-                file=sys.stderr,
-            )
-            return {}
         recovered = _rebuild_from_raw_bytes(raw)
         preview = list(recovered)[:10]
         ellipsis = "..." if len(recovered) > 10 else ""

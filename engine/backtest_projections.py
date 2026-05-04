@@ -61,24 +61,71 @@ def _load_pick_log(csv_path: Path) -> pd.DataFrame:
     """Load pick_log.csv, filter to graded prop picks.
 
     Strips rows with unterminated quoted fields (FUSE-truncated legs JSON).
+    CRIT-3: uses csv.reader for RFC-4180-correct field validation instead of
+    manual byte-level quote counting (which overcounted for escaped ""pairs).
     """
-    raw = Path(csv_path).read_bytes()
-    lines = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
+    raw_text = Path(csv_path).read_bytes().decode("utf-8", errors="replace")
+    raw_lines = raw_text.splitlines()
 
-    clean_lines: list = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        # Odd unescaped-quote count = unterminated field
-        q = stripped.count(b'"') - stripped.count(b'""') * 2
-        if q % 2 != 0:
-            log.debug("Skipping malformed line: %s", stripped[:60])
-            continue
-        clean_lines.append(line)
+    clean_rows: list = []
+    n_malformed = 0
+    expected_cols: int | None = None
 
-    buf = _io.StringIO("\n".join(l.decode("utf-8", errors="replace") for l in clean_lines))
-    df = pd.read_csv(buf, dtype=str, on_bad_lines="skip", engine="python")
+    for raw_line in raw_lines:
+        if not raw_line.strip():
+            continue
+        # CRIT-3: parse each line in isolation so unterminated quotes can't
+        # cause csv.reader to consume subsequent lines as field continuations.
+        try:
+            row = next(iter(csv.reader([raw_line])))
+        except (csv.Error, StopIteration) as exc:
+            log.warning("CRIT-3: csv.Error on pick_log line (%s): %s", exc, raw_line[:80])
+            n_malformed += 1
+            continue
+
+        if expected_cols is None:
+            # First non-blank line is the header
+            expected_cols = len(row)
+            clean_rows.append(row)
+            continue
+
+        if len(row) != expected_cols:
+            # H25: rows with exactly one fewer column are legacy 27-col rows
+            # (before the `legs` column was added in schema_version 3). Pad
+            # with an empty trailing field rather than dropping them silently.
+            if len(row) == expected_cols - 1:
+                row = row + [""]
+                log.debug(
+                    "H25: padded legacy %d-col row to %d cols: %s",
+                    expected_cols - 1, expected_cols, raw_line[:80],
+                )
+            else:
+                # Wrong field count → FUSE-truncated or otherwise malformed
+                log.warning(
+                    "CRIT-3: Skipping malformed pick_log row (%d fields, expected %d): %s",
+                    len(row), expected_cols, raw_line[:80],
+                )
+                n_malformed += 1
+                continue
+
+        clean_rows.append(row)
+
+    if n_malformed:
+        log.warning("CRIT-3: %d malformed row(s) dropped — check for FUSE truncation", n_malformed)
+
+    if len(clean_rows) < 2:
+        # Header only or completely empty
+        return pd.DataFrame()
+
+    # Rebuild a clean CSV buffer from the validated rows
+    out = _io.StringIO()
+    _writer = csv.writer(out)
+    for row in clean_rows:
+        _writer.writerow(row)
+    out.seek(0)
+    # H25: all rows in clean_rows now have exactly expected_cols fields;
+    # on_bad_lines="error" catches any remaining inconsistency loudly.
+    df = pd.read_csv(out, dtype=str, on_bad_lines="error", engine="python")
     df.columns = [c.strip().lower() for c in df.columns]
 
     # Only graded picks with actual results
@@ -299,6 +346,7 @@ def run_backtest(
     regen=False,
     verbose=False,
 ):
+    _proj_cache.clear()  # H26: prevent stale projections across multi-run scenarios
     if csv_path is None:
         csv_path = DATA_DIR / "pick_log.csv"
 
@@ -338,6 +386,10 @@ def run_backtest(
 
         actual, actual_min = _get_actual_stat_and_min(player, stat, date_s, db_path)
         if actual is None:
+            continue
+        # CRIT-4: DNP guard — exclude players who did not play (actual_min=0)
+        # so they don't inflate raw-error accumulators with full-projection errors
+        if actual_min is not None and actual_min == 0:
             continue
 
         # SaberSim error (raw only — no proj_min available)
@@ -458,6 +510,7 @@ def run_backtest_all_projections(
     db_path=DB_PATH,
     verbose=False,
 ):
+    _proj_cache.clear()  # H26: prevent stale projections across multi-run scenarios
     """Sweep ALL rows in the projections table and compare to actuals.
 
     P1 implementation: expands from pick_log-filtered n=~40 to all-projections
@@ -509,6 +562,10 @@ def run_backtest_all_projections(
     for row in rows:
         proj_min  = float(row["proj_min"])  if row["proj_min"]  is not None else None
         actual_min = float(row["actual_min"]) if row["actual_min"] is not None else None
+
+        # CRIT-4: skip DNP players — actual_min=0 inflates raw MAE with full-proj error
+        if actual_min is not None and actual_min <= 0:
+            continue
 
         for stat_name, proj_col, actual_col in _STAT_PAIRS:
             if stat_filter and stat_name != stat_filter.upper():

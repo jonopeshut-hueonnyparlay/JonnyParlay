@@ -235,9 +235,11 @@ def week_range_containing(ref_date):
     return monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d")
 
 def filter_week(all_rows, mon_str, sun_str):
+    # C8: include VOID picks (stake refunded, same as P for record-keeping).
+    # Excluding VOID under-counts total bets placed and inflates win-rate.
     return [
         r for r in all_rows
-        if r.get("result") in ("W", "L", "P")
+        if r.get("result") in ("W", "L", "P", "VOID")
         and r.get("run_type") in COUNTED_RUN_TYPES
         and mon_str <= r.get("date", "") <= sun_str
     ]
@@ -469,7 +471,7 @@ def build_weekly_embed(mon_str, sun_str, week_picks, all_rows, suppress_ping=Fal
     dt = datetime.strptime(sun_str, "%Y-%m-%d")
     month_prefix = f"{dt.year}-{dt.month:02d}-"
     month_picks  = [r for r in all_rows
-                    if r.get("result") in ("W","L","P")
+                    if r.get("result") in ("W","L","P","VOID")  # L5: VOID grouped with P
                     and r.get("run_type") in COUNTED_RUN_TYPES
                     and r.get("date","").startswith(month_prefix)]
     mw, ml, _, mpl, _ = daily_stats(month_picks)
@@ -568,11 +570,15 @@ def _save_guard(guard):
         return
     try:
         atomic_write_json(DISCORD_GUARD_FILE, _prune_guard(guard))
-    except Exception:
-        with open(DISCORD_GUARD_FILE, "w", encoding="utf-8") as f:
-            json.dump(guard, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
+    except Exception as e:
+        # H23: do NOT fall back to a direct open() write — a crash or flush
+        # failure mid-write would corrupt the guard file (truncate to zero).
+        # Accept that the guard isn't persisted; worst case is a re-post on
+        # the next run (use --repost to intentionally force one).
+        import logging as _lg
+        _lg.getLogger("weekly_recap").warning(
+            "Guard save failed — guard not persisted (use --repost to prevent re-post): %s", e
+        )
 
 
 # ── Webhook post with optional file ──────────────────────────────────────────

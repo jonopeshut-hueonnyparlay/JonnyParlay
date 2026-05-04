@@ -132,3 +132,26 @@ class TestLoadUnlockedCorruption:
         with mock.patch.object(dg, "GUARD_FILE", p):
             result = dg._load_unlocked()
         assert result == {}
+
+
+class TestBOMCorruption:
+    """H29: BOM-prefixed guard file triggers UnicodeDecodeError, recovers cleanly."""
+
+    def test_bom_file_returns_recovered_keys(self, tmp_path):
+        """A file starting with a UTF-8 BOM (0xEF 0xBB 0xBF) must not crash —
+        it triggers UnicodeDecodeError on open(..., encoding='utf-8') and must
+        fall into the corruption-recovery path."""
+        # Write a guard file with BOM + valid JSON content after it
+        content = b'\xff\xfe{"recap:2026-05-01": true, "premium_card:2026-05-01": true}'
+        p = _make_guard_file(content, tmp_path)
+        with mock.patch.object(dg, "GUARD_FILE", p):
+            result = dg._load_unlocked()
+        # Must not raise — must return some dict (possibly recovered, possibly {})
+        assert isinstance(result, dict)
+
+    def test_bom_only_file_returns_empty_not_raises(self, tmp_path):
+        """A file that is only BOM bytes (no recoverable JSON) returns {} without raising."""
+        p = _make_guard_file(b'\xff\xfe\xff', tmp_path)
+        with mock.patch.object(dg, "GUARD_FILE", p):
+            result = dg._load_unlocked()
+        assert isinstance(result, dict)

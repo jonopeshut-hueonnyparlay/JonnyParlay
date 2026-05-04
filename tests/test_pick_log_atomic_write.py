@@ -64,9 +64,14 @@ def test_header_rewrite_uses_tmp_file(tmp_path):
         new_header = reader.fieldnames
         surviving_rows = list(reader)
 
-    # New header should be the full 27-col schema (superset of old_header)
+    # New header should be the full 28-col schema (superset of old_header)
     assert set(old_header).issubset(set(new_header))
     assert "context_verdict" in new_header  # one of the new columns
+    assert "legs" in new_header             # CRIT-5: 28th column must be present
+    assert new_header[-1] == "legs", (     # H13: legs must be LAST (position 27, 0-indexed)
+        f"'legs' must be the final column (schema_version=3) but got: {new_header[-1]!r}"
+    )
+    assert len(new_header) == 28, f"Expected 28 columns, got {len(new_header)}"
     # Original rows preserved
     assert len(surviving_rows) == 2
     assert surviving_rows[0]["player"] == "LeBron James"
@@ -116,13 +121,13 @@ def test_append_path_calls_fsync(tmp_path):
 
     log_path = tmp_path / "pick_log.csv"
     today = _today_et()
-    # Seed with current 27-col header — no rewrite needed
+    # Seed with current 28-col schema (schema_version=3, includes legs) — no rewrite needed
     current_header = [
         "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
         "direction", "proj", "win_prob", "edge", "odds", "book",
         "tier", "pick_score", "size", "game", "mode", "result",
         "closing_odds", "clv", "card_slot", "is_home",
-        "context_verdict", "context_reason", "context_score",
+        "context_verdict", "context_reason", "context_score", "legs",
     ]
     with open(log_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)

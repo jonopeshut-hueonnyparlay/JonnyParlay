@@ -21,13 +21,24 @@ from __future__ import annotations
 import csv
 import datetime
 import logging
+from zoneinfo import ZoneInfo
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
 _HERE = Path(__file__).resolve().parent
+
+# H17: canonical key format for team-total lookup shared with generate_projections.py
+# Format: "<game_id>:<team_id>" -- both files must use this constant to stay in sync.
+TEAM_TOTAL_KEY_SEP = ":"
+
+def make_team_total_key(game_id, team_id) -> str:
+    """Build the canonical team-total dict key used by fetch_nba_implied_totals()
+    and constrain_team_totals(). H17: single definition, two consumers."""
+    return f"{game_id}{TEAM_TOTAL_KEY_SEP}{team_id}"
+
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
@@ -60,6 +71,241 @@ _STATUS_TO_CSV = {
     "P":   "Confirmed", # probable -> confirmed
     "":    "",          # no data -> blank
 }
+
+# ---------------------------------------------------------------------------
+# Odds API: implied totals fetch  (Q8.6)
+# ---------------------------------------------------------------------------
+_ODDS_BASE = "https://api.the-odds-api.com/v4"
+_NBA_SPORT = "basketball_nba"
+
+# §8: Odds API retry / 429 handling
+_ODDS_RETRY_WAIT_S  = 3    # seconds to wait before retry on timeout/5xx
+_ODDS_429_WAIT_S    = 60   # seconds to back off on HTTP 429
+
+
+def _odds_api_get(url: str, params: dict, timeout: int = 15):
+    """Thin wrapper around requests.get with retry and 429 handling.
+
+    Behaviour:
+      - On HTTP 429: sleep _ODDS_429_WAIT_S seconds, retry once.
+      - On requests.Timeout or HTTP 5xx: sleep _ODDS_RETRY_WAIT_S, retry once.
+      - Logs X-Requests-Remaining header on every response so we can monitor
+        quota usage without touching the API response body.
+      - Returns the Response object (caller checks .status_code / .json()).
+      - Re-raises on second consecutive failure so callers get a clean exception.
+    """
+    import time
+    import requests as _req
+
+    def _log_remaining(resp):
+        remaining = resp.headers.get("X-Requests-Remaining")
+        if remaining is not None:
+            log.info("_odds_api_get: X-Requests-Remaining=%s", remaining)
+
+    attempt = 0
+    last_exc = None
+    while attempt < 2:
+        attempt += 1
+        try:
+            resp = _req.get(url, params=params, timeout=timeout)
+            _log_remaining(resp)
+            if resp.status_code == 429:
+                log.warning(
+                    "_odds_api_get: HTTP 429 (attempt %d) -- backing off %ds",
+                    attempt, _ODDS_429_WAIT_S,
+                )
+                if attempt < 2:
+                    time.sleep(_ODDS_429_WAIT_S)
+                    continue
+            elif resp.status_code >= 500 and attempt < 2:
+                log.warning(
+                    "_odds_api_get: HTTP %s (attempt %d) -- retrying in %ds",
+                    resp.status_code, attempt, _ODDS_RETRY_WAIT_S,
+                )
+                time.sleep(_ODDS_RETRY_WAIT_S)
+                continue
+            return resp
+        except _req.Timeout as exc:
+            last_exc = exc
+            log.warning(
+                "_odds_api_get: Timeout (attempt %d) -- retrying in %ds",
+                attempt, _ODDS_RETRY_WAIT_S,
+            )
+            if attempt < 2:
+                time.sleep(_ODDS_RETRY_WAIT_S)
+        except Exception:
+            raise  # unexpected -- let caller handle
+
+    # Exhausted retries
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("_odds_api_get: exhausted retries with no exception captured")
+
+
+def fetch_nba_implied_totals(
+    game_date: str,
+    db_path: str = DB_PATH,
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Fetch NBA over/under totals from The Odds API and join to our game_ids.
+
+    Returns:
+        implied_totals  -- {game_id: over_under_line}
+        team_totals     -- {"game_id:team_id": team_total_line}
+
+    Falls back to ({}, {}) gracefully on any error (no key, network down, etc.)
+    so the projection pipeline still runs -- it just uses pace-only defaults.
+    """
+    try:
+        import requests as _requests_check  # noqa: F401 -- verify requests is available
+    except ImportError:
+        log.warning("fetch_nba_implied_totals: requests not installed -- skipping")
+        return {}, {}
+
+    # Load API key from secrets_config (same as run_picks.py)
+    try:
+        from secrets_config import ODDS_API_KEY
+    except Exception:
+        try:
+            import os
+            ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
+        except Exception:
+            ODDS_API_KEY = ""
+    if not ODDS_API_KEY:
+        log.warning("fetch_nba_implied_totals: no ODDS_API_KEY -- skipping")
+        return {}, {}
+
+    conn = get_conn(db_path)
+
+    # Build name -> team_id map from DB (Odds API uses full team names)
+    name_to_tid: Dict[str, int] = {
+        r["name"]: r["team_id"]
+        for r in conn.execute("SELECT team_id, name FROM teams").fetchall()
+    }
+
+    # Load today's games (game_id, home_team_id, away_team_id)
+    games_rows = conn.execute(
+        "SELECT game_id, home_team_id, away_team_id FROM games WHERE game_date=?",
+        (game_date,)
+    ).fetchall()
+    conn.close()
+
+    if not games_rows:
+        log.info("fetch_nba_implied_totals: no games in DB for %s -- skipping", game_date)
+        return {}, {}
+
+    # Index: (home_team_id, away_team_id) -> game_id
+    matchup_to_gid: Dict[tuple, str] = {
+        (int(r["home_team_id"]), int(r["away_team_id"])): str(r["game_id"])
+        for r in games_rows
+    }
+
+    implied_totals: Dict[str, float] = {}
+    team_totals:    Dict[str, float] = {}
+
+    # -- Fetch game totals --------------------------------------------------
+    params = {
+        "apiKey":     ODDS_API_KEY,
+        "regions":    "us",
+        "markets":    "totals",
+        "oddsFormat": "american",
+    }
+    try:
+        resp = _odds_api_get(
+            f"{_ODDS_BASE}/sports/{_NBA_SPORT}/odds",
+            params=params,
+        )
+        if resp.status_code != 200:
+            log.warning("fetch_nba_implied_totals: totals API returned %s", resp.status_code)
+            return {}, {}
+        events = resp.json()
+        if not isinstance(events, list):
+            log.warning("fetch_nba_implied_totals: unexpected API response shape: %s", type(events).__name__)
+            return {}, {}
+    except Exception as exc:
+        log.warning("fetch_nba_implied_totals: totals fetch failed: %s", exc)
+        return {}, {}
+
+    for ev in events:
+        home_name = ev.get("home_team", "")
+        away_name = ev.get("away_team", "")
+        home_tid  = name_to_tid.get(home_name)
+        away_tid  = name_to_tid.get(away_name)
+        if home_tid is None or away_tid is None:
+            log.debug("fetch_nba_implied_totals: unmatched teams '%s' / '%s'",
+                      home_name, away_name)
+            continue
+
+        game_id = matchup_to_gid.get((home_tid, away_tid))
+        if game_id is None:
+            continue   # game not in today's schedule
+
+        # Best Over line across bookmakers (first hit wins -- lines nearly identical)
+        best_total: Optional[float] = None
+        for bm in ev.get("bookmakers", []):
+            for mkt in bm.get("markets", []):
+                if mkt.get("key") != "totals":
+                    continue
+                for outcome in mkt.get("outcomes", []):
+                    if outcome.get("name") == "Over":
+                        pt = outcome.get("point")
+                        if pt is not None and best_total is None:
+                            best_total = float(pt)
+        if best_total is not None:
+            implied_totals[game_id] = best_total
+            log.debug("  %s @ %s -> total %.1f (game_id %s)",
+                      away_name, home_name, best_total, game_id)
+
+    # -- Fetch team totals (optional) --------------------------------------
+    params_tt = {
+        "apiKey":     ODDS_API_KEY,
+        "regions":    "us",
+        "markets":    "team_totals",
+        "oddsFormat": "american",
+    }
+    try:
+        resp_tt = _odds_api_get(
+            f"{_ODDS_BASE}/sports/{_NBA_SPORT}/odds",
+            params=params_tt,
+        )
+        if resp_tt.status_code == 200:
+            tt_events = resp_tt.json()
+            if not isinstance(tt_events, list):  # H20: validate shape before iterating
+                log.warning("fetch_nba_implied_totals: team_totals unexpected shape: %s", type(tt_events).__name__)
+                tt_events = []
+            for ev in tt_events:
+                home_name = ev.get("home_team", "")
+                away_name = ev.get("away_team", "")
+                home_tid  = name_to_tid.get(home_name)
+                away_tid  = name_to_tid.get(away_name)
+                if home_tid is None or away_tid is None:
+                    continue
+                game_id = matchup_to_gid.get((home_tid, away_tid))
+                if game_id is None:
+                    continue
+                for bm in ev.get("bookmakers", []):
+                    for mkt in bm.get("markets", []):
+                        if mkt.get("key") != "team_totals":
+                            continue
+                        for outcome in mkt.get("outcomes", []):
+                            if outcome.get("name") == "Over":
+                                desc = outcome.get("description", "")
+                                pt   = outcome.get("point")
+                                if pt is None:
+                                    continue
+                                # description = team name for team_totals market
+                                tid = name_to_tid.get(desc)
+                                if tid is not None:
+                                    key = make_team_total_key(game_id, tid)
+                                    if key not in team_totals:
+                                        team_totals[key] = float(pt)
+    except Exception as exc:
+        log.debug("fetch_nba_implied_totals: team_totals fetch failed: %s", exc)
+        # team_totals is optional -- don't abort
+
+    log.info("fetch_nba_implied_totals: %d game totals, %d team totals for %s",
+             len(implied_totals), len(team_totals), game_date)
+    return implied_totals, team_totals
+
 
 # ---------------------------------------------------------------------------
 # Team abbreviation lookup
@@ -99,7 +345,7 @@ def _proj_to_row(
     opp_abbr   = team_abbrev_map.get(opp_id, "")
 
     saber_total = implied_totals.get(game_id, 0.0)
-    team_key    = f"{game_id}:{team_id}"
+    team_key    = make_team_total_key(game_id, team_id)  # H17
     saber_team  = team_totals.get(team_key, round(saber_total / 2.0, 1))
 
     # Status: if no injury flag but starter -> "Confirmed"
@@ -109,7 +355,7 @@ def _proj_to_row(
     # Map position to SaberSim-style (G/F/C)
     pos = proj.get("position") or ""
     if not pos:
-        # M2: map sixth_man explicitly to "F" — role_tier[:1] would produce "S"
+        # M2: map sixth_man explicitly to "F" -- role_tier[:1] would produce "S"
         # which injury_parser._normalise_position() doesn't recognise, silently
         # excluding sixth-men from minutes redistribution when a starter is OUT.
         role = proj.get("role_tier", "")
@@ -149,7 +395,7 @@ def write_nba_csv(
 
     Args:
         projections:    List of dicts from run_projections()
-        game_date:      "YYYY-MM-DD" (default: today)
+        game_date:      "YYYY-MM-DD" (default: today in ET)
         implied_totals: {game_id: over_under_total} from Odds API
         team_totals:    {"game_id:team_id": team_total} from Odds API
         injury_statuses:{player_id: status_code} from injury_parser
@@ -160,7 +406,7 @@ def write_nba_csv(
         Path to written CSV.
     """
     if game_date is None:
-        game_date = str(datetime.date.today())
+        game_date = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")  # H18: use ET date
     if implied_totals is None:
         implied_totals = {}
     if team_totals is None:
@@ -209,13 +455,6 @@ def validate_csv(csv_path: Path) -> bool:
     """
     try:
         sys.path.insert(0, str(PROJECT_ROOT / "engine"))
-        # Import parse_csv without running the full engine
-        import importlib.util, types
-        spec = importlib.util.spec_from_file_location(
-            "run_picks_stub",
-            str(PROJECT_ROOT / "engine" / "run_picks.py"),
-        )
-        # We only need parse_csv and name_key -- do a targeted import
         import csv as _csv
         with open(csv_path, "r", encoding="utf-8-sig") as f:
             reader = _csv.DictReader(f)
@@ -229,7 +468,7 @@ def validate_csv(csv_path: Path) -> bool:
         if missing:
             log.error("validate_csv: missing columns %s", missing)
             return False
-        log.info("validate_csv: OK — %d rows, headers=%s", len(rows),
+        log.info("validate_csv: OK -- %d rows, headers=%s", len(rows),
                  sorted(headers - {"dk_std"}))
         return True
     except Exception as exc:
@@ -248,22 +487,39 @@ def generate_daily_csv(
     team_totals: Optional[Dict[str, float]] = None,
     db_path: str = DB_PATH,
     validate: bool = True,
+    fetch_odds: bool = True,
 ) -> Optional[Path]:
     """Pull injuries, run projections, write CSV.  One-shot daily workflow.
 
     Args:
-        game_date:      "YYYY-MM-DD" (default: today)
+        game_date:      "YYYY-MM-DD" (default: today in ET)
         season:         NBA season
-        implied_totals: {game_id: total} from Odds API (optional)
-        team_totals:    {"game_id:team_id": team_total} (optional)
+        implied_totals: {game_id: total} from Odds API (optional; auto-fetched
+                        when fetch_odds=True and caller omits it)
+        team_totals:    {"game_id:team_id": team_total} (optional; same)
         db_path:        SQLite path
         validate:       If True, run validate_csv() before returning
+        fetch_odds:     If True (default), auto-fetch implied_totals/team_totals
+                        from The Odds API when caller doesn't supply them.
 
     Returns:
         Path to written CSV, or None on failure.
     """
     if game_date is None:
-        game_date = str(datetime.date.today())
+        game_date = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")  # H18: use ET date
+
+    # Q8.6 -- auto-fetch implied totals when not supplied by caller
+    if fetch_odds and implied_totals is None:
+        fetched_totals, fetched_team_totals = fetch_nba_implied_totals(
+            game_date=game_date, db_path=db_path)
+        implied_totals = fetched_totals
+        if team_totals is None:
+            team_totals = fetched_team_totals
+    else:
+        if implied_totals is None:
+            implied_totals = {}
+        if team_totals is None:
+            team_totals = {}
 
     from nba_projector import run_projections
     from injury_parser import get_injury_context
@@ -288,8 +544,8 @@ def generate_daily_csv(
     csv_path = write_nba_csv(
         projections=projections,
         game_date=game_date,
-        implied_totals=implied_totals or {},
-        team_totals=team_totals or {},
+        implied_totals=implied_totals,
+        team_totals=team_totals,
         injury_statuses=injury_statuses,
         db_path=db_path,
     )
@@ -310,12 +566,14 @@ def _main() -> None:
     import argparse
     parser = argparse.ArgumentParser(
         description="Generate SaberSim-schema NBA CSV from custom projections")
-    parser.add_argument("--date",     default=str(datetime.date.today()))
-    parser.add_argument("--season",   default="2025-26")
-    parser.add_argument("--db",       default=DB_PATH)
-    parser.add_argument("--out",      default=None, help="Override output path")
-    parser.add_argument("--validate", action="store_true", default=True)
+    parser.add_argument("--date",       default=datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"))
+    parser.add_argument("--season",     default="2025-26")
+    parser.add_argument("--db",         default=DB_PATH)
+    parser.add_argument("--out",        default=None, help="Override output path")
+    parser.add_argument("--validate",   action="store_true", default=True)
     parser.add_argument("--no-validate", dest="validate", action="store_false")
+    parser.add_argument("--no-odds",    action="store_true",
+                        help="Skip Odds API fetch (use pace-only defaults)")
     args = parser.parse_args()
 
     csv_path = generate_daily_csv(
@@ -323,6 +581,7 @@ def _main() -> None:
         season=args.season,
         db_path=args.db,
         validate=args.validate,
+        fetch_odds=not args.no_odds,
     )
     if csv_path:
         print(f"CSV ready: {csv_path}")

@@ -53,7 +53,8 @@ _API_SLEEP        = 0.65
 _API_RETRY_MAX    = 3
 _API_RETRY_BACKOFF = [2, 5, 15]
 _CLIP_LO, _CLIP_HI = 0.80, 1.20
-_DEF_STATS  = ["pts", "reb", "ast", "fg3m", "stl", "blk", "tov"]
+_DEF_STATS  = ["pts", "reb", "ast", "fg3m", "fg3a", "stl", "blk", "tov"]
+MIN_SPLIT_GAMES = 5  # M8: minimum games for a team's defensive split to be stored
 _POS_GROUPS = ["G", "F", "C"]
 
 
@@ -205,6 +206,7 @@ def get_conn(db_path=DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 20000")   # 20s — prevents "database is locked" under contention
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
@@ -463,7 +465,7 @@ def compute_defensive_splits(conn, seasons: Optional[List[str]] = None) -> None:
 
     df = pd.read_sql_query(
         f"SELECT pgs.game_id, pgs.player_id, pgs.team_id AS ptid, pgs.min,"
-        f" pgs.pts,pgs.reb,pgs.ast,pgs.fg3m,pgs.stl,pgs.blk,pgs.tov,"
+        f" pgs.pts,pgs.reb,pgs.ast,pgs.fg3m,pgs.fg3a,pgs.stl,pgs.blk,pgs.tov,"
         f" g.season,g.home_team_id,g.away_team_id,p.position"
         f" FROM player_game_stats pgs"
         f" JOIN games g   ON g.game_id=pgs.game_id"
@@ -498,6 +500,7 @@ def compute_defensive_splits(conn, seasons: Optional[List[str]] = None) -> None:
                 agg = (pgdf.groupby("opp_team_id")[col]
                            .agg(["mean", "count"]).reset_index())
                 agg.columns = ["team_id", "avg", "cnt"]
+                agg = agg[agg["cnt"] >= MIN_SPLIT_GAMES]  # M8: skip 1-4 game samples (outlier ratios)
                 for _, row in agg.iterrows():
                     ratio = max(_CLIP_LO, min(_CLIP_HI, float(row["avg"]) / league_avg))
                     conn.execute(
@@ -584,40 +587,42 @@ def get_player_recent_games(player_id: int, before_date: str,
     # L6: also join a per-game total-pts subquery to derive final_margin
     # (abs difference between the two teams' total pts).  Used by
     # compute_availability_weights() for the blowout-proxy garbage-time filter.
-    df = pd.read_sql_query(
-        f"SELECT pgs.game_id,g.game_date,g.season,g.era_weight,"
-        f" pgs.team_id,pgs.min,pgs.pts,pgs.reb,pgs.ast,pgs.fg3m,"
-        f" pgs.stl,pgs.blk,pgs.tov,pgs.fgm,pgs.fga,pgs.fg3a,"
-        f" pgs.ftm,pgs.fta,pgs.oreb,pgs.dreb,"
-        f" pgs.plus_minus,pgs.ts_pct,pgs.starter_flag,"
-        f" tm.tm_fga,tm.tm_fta,tm.tm_tov,tm.tm_min,"
-        f" ABS(COALESCE(scr.s1,0) - COALESCE(scr.s2,0)) AS game_margin"
-        f" FROM player_game_stats pgs"
-        f" JOIN games g ON g.game_id=pgs.game_id"
-        f" JOIN ("
-        f"   SELECT game_id,team_id,"
-        f"          SUM(fga) AS tm_fga, SUM(fta) AS tm_fta,"
-        f"          SUM(tov) AS tm_tov, SUM(min) AS tm_min"
-        f"   FROM player_game_stats GROUP BY game_id,team_id"
-        f" ) tm ON tm.game_id=pgs.game_id AND tm.team_id=pgs.team_id"
-        f" LEFT JOIN ("
-        f"   SELECT game_id,"
-        f"          MAX(CASE WHEN rn=1 THEN team_pts END) AS s1,"
-        f"          MAX(CASE WHEN rn=2 THEN team_pts END) AS s2"
-        f"   FROM ("
-        f"     SELECT game_id, team_id, SUM(pts) AS team_pts,"
-        f"            ROW_NUMBER() OVER (PARTITION BY game_id"
-        f"                               ORDER BY team_id) AS rn"
-        f"     FROM player_game_stats GROUP BY game_id,team_id"
-        f"   ) GROUP BY game_id"
-        f" ) scr ON scr.game_id=pgs.game_id"
-        f" WHERE pgs.player_id=:pid AND g.game_date<:before"
-        f" AND pgs.min>=:mm {sc}"
-        f" ORDER BY g.game_date DESC LIMIT :n",
-        conn,
-        params={"pid": player_id, "before": before_date,
-                "mm": min_minutes, "season": season_filter or "", "n": n_games})
-    conn.close()
+    try:
+        df = pd.read_sql_query(
+            f"SELECT pgs.game_id,g.game_date,g.season,g.era_weight,"
+            f" pgs.team_id,pgs.min,pgs.pts,pgs.reb,pgs.ast,pgs.fg3m,"
+            f" pgs.stl,pgs.blk,pgs.tov,pgs.fgm,pgs.fga,pgs.fg3a,"
+            f" pgs.ftm,pgs.fta,pgs.oreb,pgs.dreb,"
+            f" pgs.plus_minus,pgs.ts_pct,pgs.starter_flag,"
+            f" tm.tm_fga,tm.tm_fta,tm.tm_tov,tm.tm_min,"
+            f" ABS(COALESCE(scr.s1,0) - COALESCE(scr.s2,0)) AS game_margin"
+            f" FROM player_game_stats pgs"
+            f" JOIN games g ON g.game_id=pgs.game_id"
+            f" JOIN ("
+            f"   SELECT game_id,team_id,"
+            f"          SUM(fga) AS tm_fga, SUM(fta) AS tm_fta,"
+            f"          SUM(tov) AS tm_tov, SUM(min) AS tm_min"
+            f"   FROM player_game_stats GROUP BY game_id,team_id"
+            f" ) tm ON tm.game_id=pgs.game_id AND tm.team_id=pgs.team_id"
+            f" LEFT JOIN ("
+            f"   SELECT game_id,"
+            f"          MAX(CASE WHEN rn=1 THEN team_pts END) AS s1,"
+            f"          MAX(CASE WHEN rn=2 THEN team_pts END) AS s2"
+            f"   FROM ("
+            f"     SELECT game_id, team_id, SUM(pts) AS team_pts,"
+            f"            ROW_NUMBER() OVER (PARTITION BY game_id"
+            f"                               ORDER BY team_id) AS rn"
+            f"     FROM player_game_stats GROUP BY game_id,team_id"
+            f"   ) GROUP BY game_id"
+            f" ) scr ON scr.game_id=pgs.game_id"
+            f" WHERE pgs.player_id=:pid AND g.game_date<:before"
+            f" AND pgs.min>=:mm {sc}"
+            f" ORDER BY g.game_date DESC LIMIT :n",
+            conn,
+            params={"pid": player_id, "before": before_date,
+                    "mm": min_minutes, "season": season_filter or "", "n": n_games})
+    finally:
+        conn.close()  # C2-001: always close — prevents leak on pd.read_sql_query exception
     return df
 
 
@@ -822,7 +827,92 @@ def get_player_career_avg_minutes(
         ).fetchone()
     finally:
         conn.close()
+    if row is None:
+        log.warning("H19: no career history for player_id=%s (season=%s, min_games=%s) — cold_start will use flat prior", player_id, current_season, min_games)
     return float(row[0]) if row else None
+
+
+def get_player_career_game_count(
+    player_id: int,
+    current_season: str,
+    db_path: Path = DB_PATH,
+) -> tuple[int, float | None]:  # L2: tightened return type hint
+    """Return (n_career_games, career_avg_min_raw) across ALL seasons excluding current.
+
+    n_career_games: total qualifying game count (min >= 5) in all prior seasons.
+    career_avg_min_raw: raw average minutes across those games (None if zero games).
+
+    Qualifying threshold: min >= 5 (same as get_player_recent_games default).
+    A player with n_career_games == 0 has no qualifying appearances in the DB —
+    they are classified as 'taxi' regardless of last_appearance_days.
+
+    Used by R7 (Research Brief 7) cold-start sub-type classification:
+      - taxi:          n_career_games == 0  (never appeared in DB)
+      - returner:      n_career_games >= 1  AND last_appearance_days >= 180
+      - new_acquisition: n_career_games >= 1  AND last_appearance_days < 180
+
+    See also: get_player_last_appearance_days() — provides the days component.
+    """
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*), AVG(pgs.min)
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE pgs.player_id = ?
+              AND g.season != ?
+              AND pgs.min >= 5
+            """,
+            (player_id, current_season),
+        ).fetchone()
+    finally:
+        conn.close()
+    n = int(row[0]) if row else 0
+    avg_min = float(row[1]) if row and row[1] is not None else None
+    return n, avg_min
+
+
+def get_player_last_appearance_days(
+    player_id: int,
+    before_date: str,
+    db_path: Path = DB_PATH,
+) -> Optional[int]:
+    """Return the number of days since the player's most recent DB game appearance.
+
+    before_date: ISO date string (YYYY-MM-DD) — only games strictly before this
+    date are considered (i.e. exclude today's scheduled game).
+    Returns None if the player has no prior appearances in the DB.
+
+    Used by R7 (Research Brief 7) to classify returner vs new_acquisition:
+      - >= 180 days gap => returner (injury return / G-League call-up)
+      - <  180 days gap => new_acquisition (recent trade, waiver, or call-up)
+    """
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT MAX(g.game_date)
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE pgs.player_id = ?
+              AND g.game_date < ?
+              AND pgs.min >= 5
+            """,
+            (player_id, before_date),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or not row[0]:
+        return None
+    from datetime import date
+    try:  # C4: guard against malformed date strings in DB
+        last_date = date.fromisoformat(row[0])
+        ref_date = date.fromisoformat(before_date)
+    except ValueError as e:
+        log.warning("get_player_last_appearance_days: bad date string (player_id=%s): %s", player_id, e)
+        return None
+    return (ref_date - last_date).days
 
 
 def get_player_season_game_count(player_id: int, season: str,
@@ -865,48 +955,47 @@ def get_player_trade_context(
     _BLEND_WINDOW = 6  # applies blend for games 1-6 on new team
 
     conn = get_conn(db_path)
+    try:  # H2: wrap entire body so conn is always closed
+        # Games on current team this season (qualifying minutes threshold: 5)
+        row_new = conn.execute(
+            "SELECT COUNT(*) FROM player_game_stats pgs"
+            " JOIN games g ON g.game_id=pgs.game_id"
+            " WHERE pgs.player_id=? AND g.season=? AND pgs.team_id=?"
+            " AND pgs.min>=5 AND g.game_date<?",
+            (player_id, season, current_team_id, before_date),
+        ).fetchone()
+        games_on_new_team = int(row_new[0]) if row_new else 0
 
-    # Games on current team this season (qualifying minutes threshold: 5)
-    row_new = conn.execute(
-        "SELECT COUNT(*) FROM player_game_stats pgs"
-        " JOIN games g ON g.game_id=pgs.game_id"
-        " WHERE pgs.player_id=? AND g.season=? AND pgs.team_id=?"
-        " AND pgs.min>=5 AND g.game_date<?",
-        (player_id, season, current_team_id, before_date),
-    ).fetchone()
-    games_on_new_team = int(row_new[0]) if row_new else 0
+        if games_on_new_team > _BLEND_WINDOW or games_on_new_team == 0:
+            return None  # outside blend window or no games yet
 
-    if games_on_new_team > _BLEND_WINDOW or games_on_new_team == 0:
+        # Find most recent prior team this season (different from current_team_id)
+        row_prev = conn.execute(
+            "SELECT pgs.team_id FROM player_game_stats pgs"
+            " JOIN games g ON g.game_id=pgs.game_id"
+            " WHERE pgs.player_id=? AND g.season=? AND pgs.team_id!=?"
+            " AND pgs.min>=5 AND g.game_date<?"
+            " ORDER BY g.game_date DESC LIMIT 1",
+            (player_id, season, current_team_id, before_date),
+        ).fetchone()
+
+        if row_prev is None:
+            return None  # no prior team this season
+
+        prev_team_id = int(row_prev[0])
+
+        # Fetch last 20 qualifying games on prior team (for rate estimation)
+        prev_df = pd.read_sql_query(
+            "SELECT pgs.*,g.game_date,g.era_weight"
+            " FROM player_game_stats pgs"
+            " JOIN games g ON g.game_id=pgs.game_id"
+            " WHERE pgs.player_id=? AND pgs.team_id=? AND pgs.min>=5"
+            " ORDER BY g.game_date DESC LIMIT 20",
+            conn,
+            params=(player_id, prev_team_id),
+        )
+    finally:
         conn.close()
-        return None  # outside blend window or no games yet
-
-    # Find most recent prior team this season (different from current_team_id)
-    row_prev = conn.execute(
-        "SELECT pgs.team_id FROM player_game_stats pgs"
-        " JOIN games g ON g.game_id=pgs.game_id"
-        " WHERE pgs.player_id=? AND g.season=? AND pgs.team_id!=?"
-        " AND pgs.min>=5 AND g.game_date<?"
-        " ORDER BY g.game_date DESC LIMIT 1",
-        (player_id, season, current_team_id, before_date),
-    ).fetchone()
-
-    if row_prev is None:
-        conn.close()
-        return None  # no prior team this season
-
-    prev_team_id = int(row_prev[0])
-
-    # Fetch last 20 qualifying games on prior team (for rate estimation)
-    prev_df = pd.read_sql_query(
-        "SELECT pgs.*,g.game_date,g.era_weight"
-        " FROM player_game_stats pgs"
-        " JOIN games g ON g.game_id=pgs.game_id"
-        " WHERE pgs.player_id=? AND pgs.team_id=? AND pgs.min>=5"
-        " ORDER BY g.game_date DESC LIMIT 20",
-        conn,
-        params=(player_id, prev_team_id),
-    )
-    conn.close()
 
     return {
         "prev_team_id":      prev_team_id,
@@ -972,17 +1061,21 @@ def get_team_game_participants(
     return result
 
 
+_LEAGUE_AVG_PACE_FALLBACK = 100.22  # 2024-25 full-season NBA pace (R5, Research Brief 7)
+                                     # H1: was stale 99.5; kept in sync with nba_projector.LEAGUE_AVG_PACE
+
+
 def get_team_pace(team_id: int, season: str,
                   season_type: str = "Regular Season",
                   db_path: Path = DB_PATH) -> float:
-    """Team pace (possessions/48). Falls back to 99.5 if not found."""
+    """Team pace (possessions/48). Falls back to _LEAGUE_AVG_PACE_FALLBACK if not found."""
     conn = get_conn(db_path)
     row = conn.execute(
         "SELECT pace FROM team_season_stats"
         " WHERE team_id=? AND season=? AND season_type=?",
         (team_id, season, season_type)).fetchone()
     conn.close()
-    return float(row[0]) if row and row[0] else 99.5
+    return float(row[0]) if row and row[0] else _LEAGUE_AVG_PACE_FALLBACK
 
 
 def get_team_def_ratio(opp_team_id: int, position_group: str,
@@ -1039,6 +1132,89 @@ def get_all_active_players(before_date: str, min_recent_games: int = 3,
     return df
 
 
+def seed_scheduled_games(
+    game_date: str,
+    season: str = CURRENT_SEASON,
+    db_path: Path = DB_PATH,
+) -> int:
+    """Seed today's scheduled games from ScoreboardV2 before games are played.
+
+    Inserts upcoming games into the games table using ON CONFLICT DO NOTHING so
+    completed games already in the DB are never overwritten.  Returns the number
+    of games newly inserted.
+
+    Called at the start of generate_projections.py run() so the projector can
+    build projections before tip-off (not just after games complete).
+
+    Falls back gracefully if the NBA API is unreachable or returns no data.
+    """
+    try:
+        from nba_api.stats.endpoints import ScoreboardV2
+    except ImportError:
+        log.warning("seed_scheduled_games: nba_api not available — skipping")
+        return 0
+
+    try:
+        sb = ScoreboardV2(game_date=game_date, timeout=10)
+        games_df = sb.game_header.get_data_frame()
+    except Exception as exc:
+        log.warning("seed_scheduled_games: API call failed for %s — %s", game_date, exc)
+        return 0
+
+    if games_df is None or games_df.empty:
+        log.info("seed_scheduled_games: no games returned for %s", game_date)
+        return 0
+
+    # Determine season_type from game_id prefix: 002=Regular, 004=Playoffs, 001=Preseason
+    def _season_type_from_id(gid: str) -> str:
+        gid = str(gid)
+        if len(gid) >= 3:
+            prefix = gid[2]  # NBA game_id: 10-digit, char index 2 = type
+            if prefix == "4":
+                return "Playoffs"
+            if prefix == "2":
+                return "Regular Season"
+        return "Regular Season"
+
+    conn = get_conn(db_path)
+    # Ensure teams table is populated (safe no-op if already seeded)
+    try:
+        _seed_teams(conn)
+    except Exception:
+        pass  # teams already exist
+
+    inserted = 0
+    try:
+        for _, row in games_df.iterrows():
+            gid        = str(row.get("GAME_ID", "")).strip()
+            home_tid   = _safe_int(row.get("HOME_TEAM_ID"))
+            away_tid   = _safe_int(row.get("VISITOR_TEAM_ID"))
+            gdate      = str(row.get("GAME_DATE_EST", game_date))[:10]
+            if not gid or home_tid is None or away_tid is None:
+                continue
+            stype = _season_type_from_id(gid)
+            era   = 1.0  # era_weight — same default as pull_player_game_logs
+            cur = conn.execute(
+                "INSERT INTO games(game_id,game_date,home_team_id,away_team_id,"
+                "season,season_type,era_weight) VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(game_id) DO NOTHING",
+                (gid, gdate, home_tid, away_tid, season, stype, era),
+            )
+            inserted += cur.rowcount
+        conn.commit()
+    except Exception as exc:
+        log.warning("seed_scheduled_games: DB write failed — %s", exc)
+        conn.rollback()
+    finally:
+        conn.close()
+
+    if inserted:
+        log.info("seed_scheduled_games: inserted %d game(s) for %s", inserted, game_date)
+    else:
+        log.info("seed_scheduled_games: %s — games already in DB (no new inserts)", game_date)
+    return inserted
+
+
 def get_games_for_date(game_date: str, db_path: Path = DB_PATH) -> pd.DataFrame:
     """All games on date with team abbreviations."""
     conn = get_conn(db_path)
@@ -1078,11 +1254,21 @@ def upsert_projection(conn, proj: dict) -> None:
         " :matchup_factor_pts,:matchup_factor_reb,:matchup_factor_ast,"
         " :source,:dk_std)"
         " ON CONFLICT(run_date,player_id,game_id) DO UPDATE SET"
-        " proj_min=excluded.proj_min,proj_pts=excluded.proj_pts,"
-        " proj_reb=excluded.proj_reb,proj_ast=excluded.proj_ast,"
-        " proj_fg3m=excluded.proj_fg3m,proj_stl=excluded.proj_stl,"
-        " proj_blk=excluded.proj_blk,proj_tov=excluded.proj_tov,"
-        " role_tier=excluded.role_tier,dk_std=excluded.dk_std,"
+        # C5: previously missing columns — stale data persisted on re-run
+        " player_name=excluded.player_name,"
+        " team_id=excluded.team_id,opp_team_id=excluded.opp_team_id,"
+        " role_tier=excluded.role_tier,"
+        " proj_min=excluded.proj_min,"
+        " proj_pts=excluded.proj_pts,proj_pts_p25=excluded.proj_pts_p25,proj_pts_p75=excluded.proj_pts_p75,"
+        " proj_reb=excluded.proj_reb,proj_reb_p25=excluded.proj_reb_p25,proj_reb_p75=excluded.proj_reb_p75,"
+        " proj_ast=excluded.proj_ast,proj_ast_p25=excluded.proj_ast_p25,proj_ast_p75=excluded.proj_ast_p75,"
+        " proj_fg3m=excluded.proj_fg3m,proj_fg3m_p25=excluded.proj_fg3m_p25,proj_fg3m_p75=excluded.proj_fg3m_p75,"
+        " proj_stl=excluded.proj_stl,proj_blk=excluded.proj_blk,proj_tov=excluded.proj_tov,"
+        " injury_status=excluded.injury_status,pace_factor=excluded.pace_factor,"
+        " matchup_factor_pts=excluded.matchup_factor_pts,"
+        " matchup_factor_reb=excluded.matchup_factor_reb,"
+        " matchup_factor_ast=excluded.matchup_factor_ast,"
+        " source=excluded.source,dk_std=excluded.dk_std,"
         " run_ts=excluded.run_ts",
         proj)
 
@@ -1184,8 +1370,6 @@ def verify(db_path: str = DB_PATH) -> bool:
     print(f"\n{passed}/{total} checks passed.")
     return passed == total
 
-
-
 def pull_player_positions(conn: sqlite3.Connection,
                           season: str = "2025-26") -> int:
     """Infer position (G/F/C) from player height and update players table.
@@ -1228,80 +1412,93 @@ def pull_player_positions(conn: sqlite3.Connection,
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="JonnyParlay projection DB manager"
+        description="JonnyParlay projection DB manager",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python engine/projections_db.py --pull                          # pull all seasons
+  python engine/projections_db.py --pull --seasons 2025-26        # one season
+  python engine/projections_db.py --pull --seasons 2025-26 --season-types Playoffs
+  python engine/projections_db.py --pull --reset                  # wipe + repull
+  python engine/projections_db.py --recompute-splits              # rebuild splits only
+  python engine/projections_db.py --verify                        # sanity checks
+  python engine/projections_db.py --status                        # DB summary
+        """,
     )
-    parser.add_argument(
-        "--pull", action="store_true",
-        help="Pull historical data from nba_api"
-    )
-    parser.add_argument(
-        "--seasons", nargs="+",
-        default=["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"],
-        help="Seasons to pull, e.g. 2024-25 2025-26"
-    )
-    parser.add_argument(
-        "--season-types", nargs="+",
-        default=["Regular Season"],
-        dest="season_types",
-        help="Season types: 'Regular Season' 'Playoffs'"
-    )
-    parser.add_argument(
-        "--reset", action="store_true",
-        help="Drop and recreate all tables before pulling"
-    )
-    parser.add_argument(
-        "--compute-splits", action="store_true",
-        dest="compute_splits",
-        help="Recompute team_def_splits from existing player_game_stats"
-    )
-    parser.add_argument(
-        "--status", action="store_true",
-        help="Print DB status and exit"
-    )
-    parser.add_argument(
-        "--verify", action="store_true",
-        help="Run sanity checks and exit"
-    )
-    parser.add_argument(
-        "--db", default=DB_PATH,
-        help=f"Path to SQLite DB (default: {DB_PATH})"
-    )
+    parser.add_argument("--pull", action="store_true",
+                        help="Pull historical data from nba_api")
+    parser.add_argument("--seasons", nargs="+",
+                        default=None,
+                        help="Seasons to pull, e.g. 2024-25 2025-26 (default: DEFAULT_SEASONS)")
+    parser.add_argument("--season-types", nargs="+",
+                        default=["Regular Season", "Playoffs"],
+                        dest="season_types",
+                        help="Season types to pull (default: Regular Season Playoffs)")
+    parser.add_argument("--reset", action="store_true",
+                        help="Wipe all data before pulling (use with --pull)")
+    parser.add_argument("--force", action="store_true",
+                        help="Clear pull_log for targeted seasons before pulling, "
+                             "forcing a fresh fetch even if already pulled. "
+                             "Use for daily playoff updates.")
+    parser.add_argument("--recompute-splits", action="store_true",
+                        dest="recompute_splits",
+                        help="Rebuild team_def_splits from existing game stats (no API calls)")
+    parser.add_argument("--verify", action="store_true",
+                        help="Run sanity checks on the DB")
+    parser.add_argument("--status", action="store_true",
+                        help="Print DB summary (row counts, pull log)")
+    parser.add_argument("--db", default=None,
+                        help="Override DB path (default: data/projections.db)")
     args = parser.parse_args()
 
+    db = Path(args.db) if args.db else DB_PATH
+
     if args.status:
-        print_status(args.db)
-        return
+        print_status(db)
 
     if args.verify:
-        ok = verify(args.db)
-        raise SystemExit(0 if ok else 1)
+        ok = verify(db)
+        if not ok:
+            sys.exit(1)
 
-    if args.compute_splits:
-        conn = get_conn(args.db)
-        seasons = args.seasons
-        print(f"Computing defensive splits for seasons: {seasons}")
-        compute_defensive_splits(conn, seasons)
+    if args.recompute_splits:
+        log.info("Recomputing defensive splits...")
+        conn = get_conn(db)
+        compute_defensive_splits(conn)
         conn.close()
-        print("Done.")
-        return
+        log.info("Splits recomputed.")
 
     if args.pull:
-        pull_all(
-            seasons=args.seasons,
-            reset=args.reset,
-            season_types=args.season_types,
-            db_path=args.db,
-        )
-        print_status(args.db)
-        return
+        seasons = args.seasons  # None = use DEFAULT_SEASONS
+        if args.force:
+            # Clear pull_log for the targeted seasons+types so they re-fetch fresh data.
+            # Useful for daily playoff pulls where the season is "already pulled" but
+            # new games have been completed since the last pull.
+            conn = get_conn(db)
+            season_list = seasons if seasons else DEFAULT_SEASONS
+            for s in season_list:
+                for st in args.season_types:
+                    ep = f"PlayerGameLogs_{st.replace(' ', '')}"
+                    conn.execute("DELETE FROM pull_log WHERE season=? AND endpoint=?", (s, ep))
+            conn.commit()
+            conn.close()
+            log.info("--force: cleared pull_log for %s / %s", season_list, args.season_types)
+        pull_all(seasons=seasons, reset=args.reset,
+                 season_types=args.season_types, db_path=db)
 
-    # Default: just show status
-    print_status(args.db)
+    if not any([args.pull, args.recompute_splits, args.verify, args.status]):
+        parser.print_help()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-8s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     _main()

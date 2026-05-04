@@ -114,8 +114,8 @@ def main() -> None:
         sys.exit(1)
 
     df = load_settled_props(log_path, args.sport)
-    if len(df) < 30:
-        print(f"WARNING: only {len(df)} settled picks — Platt fit will be noisy.")
+    if len(df) < 50:  # L16: raised from 30 → 50; CV folds are too small below this
+        print(f"WARNING: only {len(df)} settled picks — Platt fit requires ≥50 for reliable CV.")
         print("Continue anyway? [y/N] ", end="", flush=True)
         if input().strip().lower() != "y":
             sys.exit(0)
@@ -126,7 +126,7 @@ def main() -> None:
 
     a, b = _fit_nll_exact(over_p, is_over, y)
 
-    # Evaluate calibration quality
+    # In-sample evaluation (biased — fit and eval on same data)
     raw_p_win = np.where(is_over, over_p, 1.0 - over_p)
     logit_cal = np.clip(a * over_p + b, -30.0, 30.0)
     cal_over = sigmoid(logit_cal)
@@ -135,6 +135,34 @@ def main() -> None:
     brier_raw = brier_score(raw_p_win, y)
     brier_cal = brier_score(cal_p_win, y)
     brier_pct = (brier_raw - brier_cal) / brier_raw * 100
+
+    # H27: 5-fold cross-validated Brier to detect in-sample overfit.
+    # With < 50 picks, CV folds are tiny — treat OOS Brier as indicative only.
+    n = len(y)
+    k_folds = 5
+    fold_size = max(1, n // k_folds)
+    idx = np.arange(n)
+    oos_raw_scores: list[float] = []
+    oos_cal_scores: list[float] = []
+    for fold in range(k_folds):
+        val_idx = idx[fold * fold_size: (fold + 1) * fold_size]
+        if len(val_idx) == 0:
+            continue
+        train_idx = np.concatenate([idx[:fold * fold_size], idx[(fold + 1) * fold_size:]])
+        if len(train_idx) == 0:
+            continue
+        a_cv, b_cv = _fit_nll_exact(over_p[train_idx], is_over[train_idx], y[train_idx])
+        raw_val = np.where(is_over[val_idx], over_p[val_idx], 1.0 - over_p[val_idx])
+        logit_cv = np.clip(a_cv * over_p[val_idx] + b_cv, -30.0, 30.0)
+        cal_val = np.where(is_over[val_idx], sigmoid(logit_cv), 1.0 - sigmoid(logit_cv))
+        oos_raw_scores.append(brier_score(raw_val, y[val_idx]))
+        oos_cal_scores.append(brier_score(cal_val, y[val_idx]))
+    brier_oos_raw = float(np.mean(oos_raw_scores)) if oos_raw_scores else float("nan")
+    brier_oos_cal = float(np.mean(oos_cal_scores)) if oos_cal_scores else float("nan")
+    brier_oos_pct = (
+        (brier_oos_raw - brier_oos_cal) / brier_oos_raw * 100
+        if brier_oos_raw > 0 else float("nan")
+    )
 
     print()
     print(f"  Picks fitted:          {len(df)}  (sport={args.sport})")
@@ -145,9 +173,12 @@ def main() -> None:
     print(f"  Platt a (slope):       {a:.4f}")
     print(f"  Platt b (intercept):   {b:.4f}")
     print()
-    print(f"  Brier raw:             {brier_raw:.4f}")
-    print(f"  Brier calibrated:      {brier_cal:.4f}")
-    print(f"  Brier improvement:     {brier_pct:.1f}%")
+    print(f"  Brier raw (in-sample): {brier_raw:.4f}  [NOTE: in-sample, biased low]")
+    print(f"  Brier cal  (in-sample):{brier_cal:.4f}  [NOTE: in-sample, biased low]")
+    print(f"  Brier improvement IS:  {brier_pct:.1f}%")
+    print(f"  Brier raw  (5-fold CV):{brier_oos_raw:.4f}")
+    print(f"  Brier cal  (5-fold CV):{brier_oos_cal:.4f}")
+    print(f"  Brier improvement OOS: {brier_oos_pct:.1f}%  <-- use this for go/no-go")
     print()
     print("  ── Bucket check ─────────────────────────────────────────")
     edges = np.array([0.55, 0.60, 0.65, 0.70, 0.75, 0.80])
@@ -164,9 +195,13 @@ def main() -> None:
     print(f"  PLATT_A = {a:.4f}   # slope")
     print(f"  PLATT_B = {b:.4f}  # intercept")
     print()
-    if brier_pct < 0:
-        print("  NOTE: negative Brier improvement — calibration is hurting.")
-        print("  Consider keeping PLATT_A=1.0, PLATT_B=0.0 (no-op) until more data.")
+    # M16: hard exit when OOS Brier improvement is negative — do NOT paste bad constants
+    if not (brier_oos_pct != brier_oos_pct):  # check not NaN
+        if brier_oos_pct < 0:
+            print("  ⚠  OOS Brier improvement is NEGATIVE — calibration hurts out-of-sample.")
+            print("  Do NOT update PLATT_A/PLATT_B.  Keep existing constants.")
+            print("  Root causes: double-calibration bias, too few picks, or distribution shift.")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

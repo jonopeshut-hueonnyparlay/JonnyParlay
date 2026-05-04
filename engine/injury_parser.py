@@ -96,8 +96,10 @@ def fetch_injury_report(date: Optional[datetime.date] = None) -> pd.DataFrame:
     try:
         from nbainjuries.injury import get_reportdata, check_reportvalid, gen_url
         from nbainjuries._exceptions import URLRetrievalError
-    except ImportError:
-        log.warning("nbainjuries not installed -- injury data unavailable")
+    except (ImportError, Exception) as _ie:
+        # Catches ImportError (package missing) and JVMNotFoundException (Java/jvm.dll
+        # not installed) which jpype raises during nbainjuries __init__ import.
+        log.warning("nbainjuries unavailable (%s) -- injury data skipped", type(_ie).__name__)
         return pd.DataFrame()
 
     if date is None:
@@ -114,7 +116,9 @@ def fetch_injury_report(date: Optional[datetime.date] = None) -> pd.DataFrame:
             if df_raw is not None and not df_raw.empty:
                 log.info("Injury report fetched for %s (ts=%s)", date, ts.strftime("%I:%M %p"))
                 return _normalise_report(df_raw)
-        except Exception as exc:
+        except (KeyError, ValueError, TypeError, AttributeError, RuntimeError,
+                URLRetrievalError, OSError) as exc:
+            # M15: catch expected parse/network errors only; let unexpected bugs propagate
             last_err = exc
             continue
 
@@ -390,6 +394,14 @@ def get_injury_context(
             existing_overrides=injury_minutes_overrides,
             db_path=db_path,
         )
+
+    # M16: clamp overrides to [0, 48] (NBA); log any that were out-of-range
+    _MAX_OVERRIDE = 48.0
+    for pid, mins in list(injury_minutes_overrides.items()):
+        clamped = max(0.0, min(_MAX_OVERRIDE, mins))
+        if clamped != mins:
+            log.warning("M16: minute override for player_id=%s clamped %s → %s", pid, mins, clamped)
+            injury_minutes_overrides[pid] = clamped
 
     return injury_statuses, injury_minutes_overrides
 

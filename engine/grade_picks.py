@@ -1113,14 +1113,18 @@ def grade_prop(pick, player_stats, scores_by_game=None):
 
     actual = float(actual)
 
-    if direction == "over":
+    direction_norm = direction.lower().strip() if direction else ""
+    if direction_norm == "over":
         if actual > line: return "W"
         elif actual < line: return "L"
         else: return "P"
-    else:  # under
+    elif direction_norm == "under":
         if actual < line: return "W"
         elif actual > line: return "L"
         else: return "P"
+    else:
+        logger.warning(f"[grade_prop] Unknown direction {direction!r} for {pick.get('player','?')} {stat} — skipping")
+        return None
 
 
 # ============================================================
@@ -1151,6 +1155,11 @@ def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
     Audit M-4 / M-16: routes through http_utils.retry_after_secs (which
     prefers the ``Retry-After`` header and tolerates empty / non-JSON 429
     bodies) and carries the canonical JonnyParlay User-Agent.
+
+    H22: uses split (connect=5, read=10) timeout. ReadTimeout is NOT retried
+    because the POST body was already flushed — Discord may have processed it,
+    so a retry would cause a duplicate post. ConnectTimeout and other network
+    errors are safe to retry (the request never left the client).
     """
     if not url:
         return False
@@ -1160,7 +1169,7 @@ def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
     headers = default_headers()
     for attempt in range(1, retries + 1):
         try:
-            r = requests.post(url, json=payload, headers=headers, timeout=10)
+            r = requests.post(url, json=payload, headers=headers, timeout=(5, 10))
             if r.status_code == 429:
                 retry_after = retry_after_secs(r, default=backoff)
                 logger.warning(f"[Discord] Rate limited — waiting {retry_after:.1f}s (attempt {attempt}/{retries})")
@@ -1169,6 +1178,15 @@ def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
             if r.status_code in (200, 204):
                 return True
             r.raise_for_status()
+        except requests.exceptions.ReadTimeout:
+            # H22: do NOT retry — POST body was already sent; Discord may have
+            # processed the message. A retry risks a duplicate post.
+            logger.warning(
+                "[Discord] %s: read timeout on attempt %d — "
+                "not retrying (message may already have been received by Discord)",
+                label, attempt,
+            )
+            return False
         except Exception as e:
             if attempt < retries:
                 wait = backoff ** attempt
@@ -1265,7 +1283,8 @@ def compute_pick_streak(all_rows):
     Sorted by date then run_time so intra-day ordering is preserved.
     Returns (0, '') if no graded picks exist.
     """
-    MODEL_RUN_TYPES = {"primary", "bonus", "daily_lay", "longshot", "sgp"}
+    # Props only — parlays are entertainment, not tracked edge (CLAUDE.md preference).
+    MODEL_RUN_TYPES = {"primary", "bonus"}
     picks = [
         r for r in all_rows
         if r.get("result") in ("W", "L")
@@ -1510,6 +1529,9 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
 
 def build_monthly_embed(year, month, all_rows):
     """Build the monthly summary embed for a completed month."""
+    if not (1 <= month <= 12):  # H21: guard against out-of-range month
+        logger.warning("build_monthly_embed: invalid month %d — skipping", month)
+        return None
     month_name = MONTH_NAMES[month]
     picks = get_month_picks(all_rows, year, month)
     if not picks:
@@ -1535,11 +1557,8 @@ def build_monthly_embed(year, month, all_rows):
         return f"{last} {dir_} {line} {stat} | {ppl_str}"
 
     win_pct = f"{round(w / (w + l) * 100)}%" if (w + l) > 0 else "—"
-    desc = (
-        f"**{w}-{l} ({win_pct}) | {pl_str} | ROI {roi_str}**\n\n"
-        + "\n".join(tier_lines)
-        + best_tier_line
-    )
+    # Tier breakdown intentionally omitted from public embed (internal only — use analyze_picks.py).
+    desc = f"**{w}-{l} ({win_pct}) | {pl_str} | ROI {roi_str}**\n\n"
     if best:
         desc += f"\n\n🏆 **Best:** {pick_label(*best)}"
     if worst and worst != best:
@@ -1548,6 +1567,10 @@ def build_monthly_embed(year, month, all_rows):
 
     color = 0xFFD700 if pl >= 0 else 0xFF4444
 
+    # M11: validate next-month key before dict lookup — (month%12)+1 maps 12→1, 1-11→2-12
+    _next_month = (month % 12) + 1
+    assert _next_month in MONTH_NAMES, f"build_monthly_embed: next_month={_next_month} not in MONTH_NAMES (month={month})"
+
     return {
         "username": "PicksByJonny",
         "content": "@everyone",
@@ -1555,7 +1578,7 @@ def build_monthly_embed(year, month, all_rows):
             "title": f"📅 {month_name} {year} Recap",
             "description": desc,
             "color": color,
-            "footer": {"text": f"picksbyjonny | {MONTH_NAMES[(month % 12) + 1]} starts now"}
+            "footer": {"text": f"picksbyjonny | {MONTH_NAMES[_next_month]} starts now"}
         }]
     }
 
@@ -1729,8 +1752,7 @@ def _save_guard(guard):
     """Save the discord_posted guard file atomically (tmp+rename).
 
     Also prunes entries older than _GUARD_TTL_DAYS so the file doesn't grow
-    unboundedly. Falls back to a best-effort direct write if the atomic
-    rename fails (rare, e.g. cross-device).
+    unboundedly.
     """
     # Delegate to shared cross-process-safe helper if available
     if _HAS_SHARED_GUARD:
@@ -1739,11 +1761,10 @@ def _save_guard(guard):
     try:
         atomic_write_json(DISCORD_GUARD_FILE, _prune_guard(guard))
     except Exception as e:
-        logger.warning(f"[grade_picks] Atomic guard write failed ({e}) — falling back to direct write")
-        with open(DISCORD_GUARD_FILE, "w", encoding="utf-8") as f:
-            json.dump(guard, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
+        # C7 fix (H23 pattern): do NOT fall back to a direct open() write — a
+        # partial write on a full disk would truncate the guard file, causing
+        # duplicate Discord posts on the next run. Log warning only.
+        logger.warning("[grade_picks] Atomic guard write failed — guard NOT updated: %s", e)
 
 
 def _already_posted(guard, event_key):

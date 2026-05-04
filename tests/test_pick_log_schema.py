@@ -43,6 +43,16 @@ def test_canonical_header_is_28_cols():
     )
 
 
+def test_canonical_header_legs_is_last():
+    """CRIT-6 (H-CRIT-002): legs must be the canonical 28th (final) column.
+    Tools that read legs by column index depend on this position being stable."""
+    from pick_log_schema import CANONICAL_HEADER
+    assert CANONICAL_HEADER[-1] == "legs", (
+        f"'legs' must be the last column (index 27); got {CANONICAL_HEADER[-1]!r}"
+    )
+    assert list(CANONICAL_HEADER).index("legs") == 27
+
+
 def test_canonical_header_has_no_duplicates():
     from pick_log_schema import CANONICAL_HEADER
     assert len(set(CANONICAL_HEADER)) == len(CANONICAL_HEADER)

@@ -9,8 +9,9 @@ closing_odds + clv to pick_log.csv (shadow logs skipped by default).
 Usage:
     python capture_clv.py [--date YYYY-MM-DD]
 
-Capture window: T-30 to T+3 min relative to game commence_time.
-Poll interval: 2 minutes. ~15 pre-tip polling attempts per game.
+Capture window: T-45 to T+3 min relative to game commence_time.
+CLV written only within T-10 of tip for true closing line measurement.
+Poll interval: 2 minutes. ~22 pre-tip polling attempts per game.
 
 CLV formula: clv = implied_prob(closing_odds) - implied_prob(your_odds)
   Positive = you beat the close (good). Negative = line moved in your favor
@@ -142,13 +143,19 @@ GAME_LINE_MARKET = {
 # Stats we skip (no standard market coverage)
 SKIP_STATS = {"NRFI", "YRFI", "TEAM_TOTAL", "GOLF_WIN", "PARLAY"}
 
-# Capture window: T-30 min to T+3 min. Player prop markets are pulled from the
-# Odds API feed at tip-off, and commence_time can shift backward by 10-20 min
+# Capture window: T-45 min to T+3 min. Player prop markets are pulled from the
+# Odds API feed at tip-off, and commence_time can shift backward by up to 60 min
 # as the API reconciles scheduled vs actual start. Widening the pre-tip window
-# to -30 gives the daemon multiple capture attempts before the shift lands us
-# in a post-tip window where prop markets are already gone.
-CAPTURE_BEFORE_SECS    = 30 * 60
-CAPTURE_AFTER_SECS     = 3 * 60
+# to -45 gives ~22 polling attempts before a potential shift lands us post-tip.
+#
+# Write-gate: T-10 min. We poll and verify odds availability from T-45 onward,
+# but only WRITE CLV to pick_log within T-10 of scheduled start. This ensures
+# we record the true closing line rather than early pre-tip odds that may move.
+# The daemon keeps polling (without writing) from T-45 to T-11 to confirm markets
+# are live, then writes at the first poll inside the T-10 write window.
+CAPTURE_BEFORE_SECS    = 45 * 60  # start polling window (T-45)
+CAPTURE_AFTER_SECS     = 3 * 60   # post-tip cutoff (T+3) — props gone after tip
+CAPTURE_WRITE_BEFORE_SECS = 10 * 60  # only write CLV when secs_to_start <= this
 POLL_INTERVAL_SECS     = 120       # 2 min — used when a game is in/near its window
 POLL_INTERVAL_LONG_SECS = 30 * 60  # 30 min cap — sleep until just before first window
 
@@ -178,6 +185,11 @@ _ALL_SHADOW_LOGS = {
     "MLB": DATA_DIR / "pick_log_mlb.csv",
 }
 SHADOW_LOGS = _ALL_SHADOW_LOGS if ENABLE_SHADOW_CLV else {}
+# Custom projection shadow log — always NBA, so markets always exist.
+# Enabled whenever the file is present (generate_projections.py --shadow writes here).
+# Kept separate from ENABLE_SHADOW_CLV (which gates per-sport shadow logs).
+CUSTOM_SHADOW_LOG = DATA_DIR / "pick_log_custom.csv"
+ENABLE_CUSTOM_CLV = True  # flip to False to pause CLV capture on custom shadow picks
 
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
@@ -217,9 +229,19 @@ def save_checkpoint(run_date: str, captured_games: set[str]) -> None:
 
 # ── Odds API helpers ───────────────────────────────────────────────────────────
 
-def implied_prob(american_odds: int | float) -> float:
-    """Convert American odds to implied probability (raw, with vig)."""
-    o = float(american_odds)
+def implied_prob(american_odds: int | float) -> float | None:
+    """Convert American odds to implied probability (raw, with vig).
+
+    C6: returns None for odds=0, NaN, inf, or any non-numeric value so
+    callers can skip the row instead of writing corrupted CLV strings.
+    """
+    import math as _math
+    try:
+        o = float(american_odds)
+    except (TypeError, ValueError):
+        return None
+    if not o or not _math.isfinite(o):
+        return None
     if o < 0:
         return abs(o) / (abs(o) + 100)
     else:
@@ -422,8 +444,19 @@ def _odds_api_get(url: str, params: dict, label: str) -> dict | list | None:
                 time.sleep(sleep_s)
             continue
 
+        if r.status_code == 401:
+            # Odds API returns 401 with body "OUT_OF_USAGE_CREDITS" when daily
+            # quota is exhausted (not via x-requests-remaining header). Detect
+            # this and park the daemon until UTC midnight reset.
+            body_text = r.text[:500]
+            if any(kw in body_text.upper() for kw in
+                   ("OUT_OF_USAGE", "CREDITS", "QUOTA", "EXHAUSTED")):
+                _mark_quota_exhausted()
+            logger.error("%s: HTTP 401 (quota/auth, no retry): %s", label, body_text[:200])
+            return None
+
         if not r.ok:
-            # 4xx other than 429 — won't succeed on retry.
+            # 4xx other than 401/429 — won't succeed on retry.
             logger.error("%s: HTTP %d (no retry): %s", label, r.status_code, r.text[:200])
             return None
 
@@ -696,7 +729,11 @@ def get_closing_odds_for_pick(pick: dict, outcomes_by_market: dict,
         elif stat in ("SPREAD", "F5_SPREAD"):
             # player field = "NYY -1.5" or "F5 New York Yankees"
             # is_home in pick tells us home vs away → match team name
-            is_home = str(pick.get("is_home", "")).strip().lower() in ("true", "1", "yes")
+            # H4: track whether is_home is actually known; blank legacy rows must not
+            # fall through to away_team (they'd corrupt CLV for pre-fix spread picks).
+            _ih_raw = str(pick.get("is_home", "")).strip().lower()
+            is_home_known = _ih_raw in ("true", "false", "1", "0", "yes", "no")
+            is_home = _ih_raw in ("true", "1", "yes")
             # We need to match by team in the outcome name
             # The player field has the team abbrev/name + line
             # Use is_home to pick the right side
@@ -726,7 +763,8 @@ def get_closing_odds_for_pick(pick: dict, outcomes_by_market: dict,
                         best_book = book
             # Fallback: use is_home + event team names when player-field name matching failed.
             # Without team context we'd grab the wrong side — use home_team/away_team if provided.
-            if best is None and line is not None:
+            # H4: only use is_home when it's actually known; blank legacy rows skip this fallback.
+            if best is None and line is not None and is_home_known:
                 target_team = (home_team if is_home else away_team).lower()
                 target_words = [w for w in target_team.split() if len(w) > 2] if target_team else []
                 for oc in outcomes:
@@ -900,7 +938,8 @@ def run(run_date: str):
 
     print(f"\n{'-'*60}")
     print(f"  CLV Daemon -- {run_date}")
-    print(f"  Capturing T-{CAPTURE_BEFORE_SECS//60}min before each game")
+    print(f"  Capture window: T-{CAPTURE_BEFORE_SECS//60}min to T+{CAPTURE_AFTER_SECS//60}min")
+    print(f"  Write gate:     within T-{CAPTURE_WRITE_BEFORE_SECS//60}min of tip")
     print(f"  Polling every {POLL_INTERVAL_SECS//60} min")
     print(f"{'-'*60}\n")
 
@@ -914,7 +953,10 @@ def run(run_date: str):
         # Cross-check: any game in captured_games whose picks still have empty
         # closing_odds gets evicted so the daemon retries them.
         all_today_picks: list[dict] = []
-        for lp in [PICK_LOG] + list(SHADOW_LOGS.values()):
+        _all_logs = [PICK_LOG] + list(SHADOW_LOGS.values())
+        if ENABLE_CUSTOM_CLV and CUSTOM_SHADOW_LOG.exists():
+            _all_logs.append(CUSTOM_SHADOW_LOG)
+        for lp in _all_logs:
             all_today_picks.extend(load_picks(lp, run_date))
         needs_clv_games: set[str] = {
             p.get("game", "") for p in all_today_picks
@@ -961,8 +1003,10 @@ def run(run_date: str):
             logger.warning("capture_attempts cap hit (%d) — evicted oldest: %s", MAX_ATTEMPTS_ENTRIES, old_key)
         return attempts
 
-    # All log files to update
+    # All log files to update (main + per-sport shadow + custom projection shadow)
     log_paths = [PICK_LOG] + list(SHADOW_LOGS.values())
+    if ENABLE_CUSTOM_CLV and CUSTOM_SHADOW_LOG.exists():
+        log_paths.append(CUSTOM_SHADOW_LOG)
 
     while True:
         # Audit H-10: bail at the top of each iteration if a signal was caught
@@ -1092,11 +1136,28 @@ def run(run_date: str):
                     continue
 
                 outcomes_by_market = flatten_outcomes(event_data)
+                ev_home = event.get("home_team", "")
+                ev_away = event.get("away_team", "")
+
+                # Write-gate: verify odds availability from T-45 onward but
+                # only commit the write once we're within T-CAPTURE_WRITE_BEFORE_SECS
+                # of scheduled tip. This ensures we record the true closing line.
+                if secs_to_start > CAPTURE_WRITE_BEFORE_SECS:
+                    n_avail = sum(
+                        1 for (_, pick) in game_picks
+                        if get_closing_odds_for_pick(
+                            pick, outcomes_by_market, ev_home, ev_away
+                        )[0] is not None
+                    )
+                    mins_to_gate = int((secs_to_start - CAPTURE_WRITE_BEFORE_SECS) / 60)
+                    print(f"    ⏱  {n_avail}/{len(game_picks)} odds available "
+                          f"(T{int(secs_to_start/60):+d}min) — "
+                          f"write gate opens in {mins_to_gate}min "
+                          f"(T-{CAPTURE_WRITE_BEFORE_SECS//60}min)")
+                    continue  # retry next poll; game stays in pending list
 
                 # Group game_picks by log_path
                 updates_by_log: dict[Path, dict] = {}
-                ev_home = event.get("home_team", "")
-                ev_away = event.get("away_team", "")
                 for (log_path, pick) in game_picks:
                     closing_odds, closing_book = get_closing_odds_for_pick(
                         pick, outcomes_by_market, home_team=ev_home, away_team=ev_away
@@ -1150,10 +1211,12 @@ def run(run_date: str):
                     # Only give up once game is past the T+3 window — not based on attempt count.
                     # Props can be unavailable pre-tip and appear closer to game time.
                     if secs_to_start < -CAPTURE_AFTER_SECS:
-                        print(f"    ⚠ Only got {captured_picks_for_game}/{total_picks_for_game} closing odds — past T+{CAPTURE_AFTER_SECS//60}min, giving up")
+                        print(f"    !! Only got {captured_picks_for_game}/{total_picks_for_game} closing odds "
+                              f"past T+{CAPTURE_AFTER_SECS//60}min, giving up")
                         _retire_game(game_str)
                     else:
-                        print(f"    ⏳ Got {captured_picks_for_game}/{total_picks_for_game} closing odds (attempt {attempts}) — will retry")
+                        print(f"    ... Got {captured_picks_for_game}/{total_picks_for_game} closing odds "
+                              f"(attempt {attempts}) -- will retry")
 
         # Check if all picks are done
         remaining = sum(
@@ -1162,7 +1225,7 @@ def run(run_date: str):
             if lp.exists()
         )
         if remaining == 0:
-            print(f"\n  ✅ All picks captured for {run_date}. Daemon exiting.")
+            print(f"\n  All picks captured for {run_date}. Daemon exiting.")
             break
 
         # Sleep until just before the earliest game window opens, capped at 30 min.
@@ -1173,7 +1236,7 @@ def run(run_date: str):
             sleep_secs = max(sleep_secs, POLL_INTERVAL_SECS)
             mins_away = int(secs_to_next_window / 60)
             print(f"\n  [{now.strftime('%H:%M')} UTC] {remaining} pick(s) pending. "
-                  f"First window in ~{mins_away}min — sleeping {sleep_secs//60}min...\n")
+                  f"First window in ~{mins_away}min -- sleeping {sleep_secs//60}min...\n")
         else:
             sleep_secs = POLL_INTERVAL_SECS
             print(f"\n  [{now.strftime('%H:%M')} UTC] {remaining} pick(s) pending. "

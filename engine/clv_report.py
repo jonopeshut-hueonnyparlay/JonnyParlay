@@ -124,7 +124,7 @@ def roi_grade(roi):
 
 # ── Load ──────────────────────────────────────────────────────────────────────
 
-def load_all_picks(days, sport_filter, tier_filter, include_shadow=False):
+def load_all_picks(days, sport_filter, tier_filter, stat_filter=None, include_shadow=False):
     """Load graded (W/L/P) picks from the main + manual + optional shadow
     logs, filtered to the last ``days`` days, optional sport, optional tier.
 
@@ -143,7 +143,7 @@ def load_all_picks(days, sport_filter, tier_filter, include_shadow=False):
     if include_shadow:
         log_files += [p for p in SHADOW_LOGS.values() if p.exists()]
 
-    return load_rows(
+    rows = load_rows(
         log_files,
         sports=[sport_filter] if sport_filter else None,
         tiers=[tier_filter] if tier_filter else None,
@@ -152,6 +152,9 @@ def load_all_picks(days, sport_filter, tier_filter, include_shadow=False):
         exclude_stats=["PARLAY"],
         graded_only=True,
     )
+    if stat_filter:
+        rows = [r for r in rows if r.get("stat", "").upper() == stat_filter.upper()]
+    return rows
 
 
 # ── Analysis ──────────────────────────────────────────────────────────────────
@@ -235,14 +238,17 @@ def section(title):
 
 # ── Main report ───────────────────────────────────────────────────────────────
 
-def run(days, sport_filter, tier_filter, include_shadow=False):
-    picks = load_all_picks(days, sport_filter, tier_filter, include_shadow=include_shadow)
+def run(days, sport_filter, tier_filter, stat_filter=None, include_shadow=False):
+    picks = load_all_picks(days, sport_filter, tier_filter, stat_filter=stat_filter,
+                           include_shadow=include_shadow)
 
     filters = []
     if sport_filter:
         filters.append(sport_filter.upper())
     if tier_filter:
         filters.append(tier_filter.upper())
+    if stat_filter:
+        filters.append(stat_filter.upper())
     filter_str = f" [{', '.join(filters)}]" if filters else ""
 
     print(f"\n{'═'*56}")
@@ -310,6 +316,8 @@ def run(days, sport_filter, tier_filter, include_shadow=False):
         print(f"  {sport:<10} {fmt_record(ss):<18} {pnl:<10}{roi_str}{clv_str}")
 
     # ── By Stat ───────────────────────────────────────────────────────────────
+    # Per-stat CLV table (T3, 2026-05-02): stats with N>=5, sorted by avg_clv desc.
+    # Shows CLV sample count to surface which stats have enough data.
     section("BY STAT TYPE")
     by_stat = defaultdict(list)
     for p in picks:
@@ -321,12 +329,24 @@ def run(days, sport_filter, tier_filter, include_shadow=False):
         stat_rows.append((stat, ss))
     stat_rows.sort(key=lambda x: x[1]["total"], reverse=True)
 
+    clv_stat_rows = [(st, ss) for st, ss in stat_rows if ss["clv_n"] >= 5]
+    clv_stat_rows.sort(key=lambda x: x[1]["avg_clv"] if x[1]["avg_clv"] is not None else -float("inf"),
+                       reverse=True)  # H12: -99 → -inf so stats with no CLV data sort below any real value
+
     for stat, ss in stat_rows:
         pnl = f"{'+' if ss['units_won']>=0 else ''}{ss['units_won']:.2f}u"
         clv_str = ""
         if ss["clv_n"] > 0:
-            clv_str = f"  CLV {'+' if ss['avg_clv']>=0 else ''}{ss['avg_clv']*100:.2f}%"
+            clv_str = f"  CLV {'+' if ss['avg_clv']>=0 else ''}{ss['avg_clv']*100:.2f}% (n={ss['clv_n']})"
         print(f"  {stat:<12} {fmt_record(ss):<18} {pnl:<10}{clv_str}")
+
+    if clv_stat_rows:
+        print(f"\n  CLV ranking by stat (n≥5, sorted best→worst):")
+        print(f"  {'Stat':<12}  {'Avg CLV':>9}  {'Beat%':>7}  {'n':>5}")
+        for stat, ss in clv_stat_rows:
+            beat = f"{ss['clv_beat_rate']*100:.0f}%" if ss.get("clv_beat_rate") is not None else "—"
+            clv_sign = "+" if ss["avg_clv"] >= 0 else ""
+            print(f"  {stat:<12}  {clv_sign}{ss['avg_clv']*100:>8.2f}%  {beat:>7}  {ss['clv_n']:>5}")
 
     # ── CLV Breakdown (when data exists) ──────────────────────────────────────
     clv_picks = [p for p in picks if safe_float(p.get("clv")) is not None]
@@ -344,8 +364,7 @@ def run(days, sport_filter, tier_filter, include_shadow=False):
             pnl = f"{'+' if ns['units_won']>=0 else ''}{ns['units_won']:.2f}u"
             print(f"  -CLV record:  {fmt_record(ns)}  {pnl}")
 
-        # Rolling 7-day CLV trend
-        from collections import OrderedDict
+        # Rolling 7-day CLV trend  # M6: OrderedDict import removed — was unused
         dates = sorted(set(p.get("date", "") for p in clv_picks))
         if len(dates) >= 3:
             print(f"\n  7-day CLV trend:")
@@ -378,17 +397,22 @@ def run(days, sport_filter, tier_filter, include_shadow=False):
         direction = p.get("direction", "")
         print(f"  {icon} {p.get('date','')}  {tier:<10} {player:<28} {stat} {line} {direction}{clv_str}")
 
-    print(f"\n{'═'*56}\n")
+    print(f"\n{'='*56}\n")
 
 
 def main():
     parser = argparse.ArgumentParser(description="CLV + performance report")
+    parser.add_argument("--version", action="version", version="clv_report 1.0.0")  # L6
     parser.add_argument("--days",   type=int, default=30, help="Look-back days (default: 30)")
     parser.add_argument("--sport",  default=None, help="Filter by sport (NBA, NHL, etc.)")
     parser.add_argument("--tier",   default=None, help="Filter by tier (T1, T2, KILLSHOT, etc.)")
+    parser.add_argument("--stat",   default=None,
+                        help="Filter by stat (PTS, AST, REB, 3PM, SOG, etc.) — case-insensitive")
     parser.add_argument("--shadow", action="store_true", help="Include shadow (MLB) log")
     args = parser.parse_args()
-    run(args.days, args.sport, args.tier, include_shadow=args.shadow)
+    run(args.days, args.sport, args.tier,
+        stat_filter=args.stat.upper() if args.stat else None,  # M28: normalize before passing down
+        include_shadow=args.shadow)
 
 
 if __name__ == "__main__":

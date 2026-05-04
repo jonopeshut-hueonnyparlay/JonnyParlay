@@ -350,3 +350,37 @@ if __name__ == "__main__":
             print(f"  FAIL  {name}: {e}")
     print(f"\n{len(tests) - len(failures)}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# ── H30: edge=None / adj_edge=None must not crash _killshot_size ─────────────
+
+def test_size_none_adj_edge_returns_base():
+    """_killshot_size falls back to KILLSHOT_SIZE_BASE when adj_edge is None."""
+    pick = {
+        "win_prob": 0.75, "adj_edge": None,
+        "tier": "KILLSHOT", "stat": "PTS", "pick_score": 92.0,
+        "odds": -130, "line": 25.5, "direction": "over",
+    }
+    assert _killshot_size(pick) == KILLSHOT_SIZE_BASE
+
+
+def test_size_missing_edge_returns_base():
+    """_killshot_size falls back to KILLSHOT_SIZE_BASE when adj_edge key absent."""
+    pick = {
+        "win_prob": 0.80,
+        "tier": "KILLSHOT", "stat": "AST", "pick_score": 95.0,
+        "odds": -110, "line": 9.5, "direction": "over",
+    }
+    assert _killshot_size(pick) == KILLSHOT_SIZE_BASE
+
+
+def test_gate_none_edge_pick_is_not_crashed():
+    """_passes_killshot_v2_gate does not reference edge — None edge must not cause
+    an exception (gate only checks tier/score/wp/odds/stat)."""
+    pick = {
+        "tier": "T1", "pick_score": 92.0, "win_prob": 0.67,
+        "odds": -130, "stat": "PTS", "adj_edge": None,
+        "line": 25.5, "direction": "over",
+    }
+    passed, reason = _passes_killshot_v2_gate(pick)
+    assert isinstance(passed, bool)   # must not raise

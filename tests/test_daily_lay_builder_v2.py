@@ -7,6 +7,7 @@ Covers: size_daily_lay, build_alt_spread_parlay gates, _daily_lay_legs_json,
 
 import json
 import sys, os
+from unittest import mock
 sys.path.insert(0, os.path.dirname(__file__))
 
 import pytest
@@ -276,3 +277,76 @@ class TestGradeDailyLayJsonPath:
         scores = self._all_scores("2026-04-15", home_score=110, away_score=100)
         result = grade_daily_lay(row, scores)
         assert result == "W"
+
+
+class TestPerLegGates:
+    """H31: per-leg edge + cover_prob gates inside build_alt_spread_parlay.
+
+    Uses real NBA team names so TEAM_ABBREV lookup succeeds and team_game_info
+    is populated with a non-None margin, letting entries reach the per-leg gates.
+    sport_sigmas must be nested: {"NBA": {"spread": float}}.
+    alt_spread_data must supply the actual spread candidates to evaluate.
+    """
+
+    _HOME = "Los Angeles Lakers"   # TEAM_ABBREV key "los angeles lakers" -> LAL
+    _AWAY = "Boston Celtics"       # TEAM_ABBREV key "boston celtics" -> BOS
+    _HOME_KEY = "NBA_LAL"
+    _AWAY_KEY = "NBA_BOS"
+
+    def _make_inputs(self, home_odds=-110):
+        """Return (game_lines, team_proj_map, sport_sigmas, alt_spread_data)."""
+        game_lines = [{
+            "game": f"{self._AWAY} @ {self._HOME}",
+            "home": self._HOME,
+            "away": self._AWAY,
+            "spread": {
+                self._HOME: {"line": -3.5, "odds": home_odds, "book": "fanduel"},
+                self._AWAY: {"line": +3.5, "odds": -110, "book": "fanduel"},
+            },
+            "total": {},
+            "ml": {},
+            "sport": "NBA",
+            "event_id": "test_ev_1",
+        }]
+        team_proj_map = {
+            self._HOME_KEY: {"saber_team": 115.0},
+            self._AWAY_KEY: {"saber_team": 111.0},
+        }
+        sport_sigmas = {"NBA": {"spread": 8.0}}
+        # One candidate entry for the home team
+        alt_spread_data = [{"team": self._HOME, "odds": home_odds, "line": -3.5}]
+        return game_lines, team_proj_map, sport_sigmas, alt_spread_data
+
+    def test_low_cover_prob_leg_is_rejected(self):
+        """A leg with cover_prob < MIN_LEG_COVER_PROB_DAILY (0.58) is rejected.
+
+        odds=-110 → implied≈0.524; normal_cdf=0.45 → cover_prob=0.55 < 0.58.
+        Edge (0.026) is fine but cover_prob gate fires first.
+        """
+        import run_picks as rp
+        game_lines, tpm, ss, asd = self._make_inputs(home_odds=-110)
+        with mock.patch.object(rp, "normal_cdf", return_value=0.45):
+            result = rp.build_alt_spread_parlay(
+                game_lines=game_lines,
+                team_proj_map=tpm,
+                sport_sigmas=ss,
+                alt_spread_data=asd,
+            )
+        assert result is None, "Low cover_prob leg should be rejected → no parlay"
+
+    def test_low_edge_leg_is_rejected(self):
+        """A leg with edge < MIN_LEG_EDGE_DAILY (0.025) is rejected.
+
+        odds=-150 → implied=0.60; normal_cdf=0.40 → cover_prob=0.60.
+        cover_prob (0.60) >= 0.58 passes that gate; edge=0.00 < 0.025 fails.
+        """
+        import run_picks as rp
+        game_lines, tpm, ss, asd = self._make_inputs(home_odds=-150)
+        with mock.patch.object(rp, "normal_cdf", return_value=0.40):
+            result = rp.build_alt_spread_parlay(
+                game_lines=game_lines,
+                team_proj_map=tpm,
+                sport_sigmas=ss,
+                alt_spread_data=asd,
+            )
+        assert result is None, "Zero-edge leg should be rejected → no parlay"

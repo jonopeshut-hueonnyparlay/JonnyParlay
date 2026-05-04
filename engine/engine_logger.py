@@ -107,8 +107,13 @@ def get_logger(
     logger.propagate = False
 
     effective_stream = stream if stream is not None else sys.stderr
-    log_path_str = str(log_path) if log_path is not None else ""
-    key = (name, log_path_str)
+    # M19: normalize path separators so the same file supplied as Path vs str
+    # or with mixed slashes (Windows vs POSIX) maps to the same idempotency key.
+    if log_path is not None:
+        _lp_norm = os.path.normcase(os.path.abspath(str(log_path)))
+    else:
+        _lp_norm = ""  # empty string distinguishes None from any real path
+    key = (name, _lp_norm)
 
     if key in _CONFIGURED:
         return logger

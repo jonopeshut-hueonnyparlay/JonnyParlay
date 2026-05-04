@@ -150,6 +150,9 @@ def run_calibration(
     if n < 20:
         print("ERROR: only {} graded picks with win_prob -- need >= 20 for calibration.".format(n))
         sys.exit(1)
+    if n < 50:  # L16: warn that CV folds are unreliable below 50 picks
+        print("WARNING: only {} picks — 5-fold CV is unreliable below 50. "
+              "OOS Brier improvement should be treated as indicative only.".format(n))
 
     model_probs = df["win_prob"].values.astype(float)
     outcomes    = df["outcome"].values
@@ -157,8 +160,33 @@ def run_calibration(
     a, b = _fit_platt(model_probs, outcomes)
     calibrated  = _sigmoid(a * model_probs + b)
 
+    # In-sample Brier (biased — fit and eval on same data)
     brier_raw = brier_score(model_probs, outcomes)
     brier_cal = brier_score(calibrated, outcomes)
+
+    # H28: 5-fold cross-validated Brier to detect in-sample overfit.
+    k_folds = 5
+    fold_sz = max(1, n // k_folds)
+    idx = np.arange(n)
+    oos_raw_list: list = []
+    oos_cal_list: list = []
+    for fold in range(k_folds):
+        val_idx = idx[fold * fold_sz: (fold + 1) * fold_sz]
+        if len(val_idx) == 0:
+            continue
+        tr_idx = np.concatenate([idx[:fold * fold_sz], idx[(fold + 1) * fold_sz:]])
+        if len(tr_idx) == 0:
+            continue
+        a_cv, b_cv = _fit_platt(model_probs[tr_idx], outcomes[tr_idx])
+        cal_cv = _sigmoid(a_cv * model_probs[val_idx] + b_cv)
+        oos_raw_list.append(brier_score(model_probs[val_idx], outcomes[val_idx]))
+        oos_cal_list.append(brier_score(cal_cv, outcomes[val_idx]))
+    brier_oos_raw = float(np.mean(oos_raw_list)) if oos_raw_list else float("nan")
+    brier_oos_cal = float(np.mean(oos_cal_list)) if oos_cal_list else float("nan")
+    brier_oos_pct = (
+        (brier_oos_raw - brier_oos_cal) / brier_oos_raw * 100
+        if brier_oos_raw > 0 else float("nan")
+    )
 
     diag = reliability_diagram(model_probs, calibrated, outcomes, n_bins=10)
 
@@ -178,6 +206,9 @@ def run_calibration(
         "brier_score_raw": round(brier_raw, 4),
         "brier_score_calibrated": round(brier_cal, 4),
         "brier_improvement_pct": round((brier_raw - brier_cal) / brier_raw * 100, 1),
+        "brier_score_raw_cv": round(brier_oos_raw, 4),
+        "brier_score_cal_cv": round(brier_oos_cal, 4),
+        "brier_improvement_pct_cv": round(brier_oos_pct, 1),
         "reliability_diagram": diag,
         "interpretation": _interpret(a, b, bias, brier_raw, n),
     }
@@ -191,13 +222,23 @@ def run_calibration(
         bias, "over-confident" if bias > 0 else "under-confident"))
     print("\n  Platt a (slope):     {:.4f}  (1.0 = perfect calibration)".format(a))
     print("  Platt b (intercept): {:.4f}  (0.0 = no shift)".format(b))
-    print("\n  Brier score (raw):        {:.4f}".format(brier_raw))
-    print("  Brier score (calibrated): {:.4f}".format(brier_cal))
-    print("  Brier improvement:        {:.1f}%".format(result["brier_improvement_pct"]))
+    print("\n  Brier (raw, in-sample):   {:.4f}  [NOTE: biased low]".format(brier_raw))
+    print("  Brier (cal, in-sample):   {:.4f}  [NOTE: biased low]".format(brier_cal))
+    print("  Brier improvement IS:     {:.1f}%".format(result["brier_improvement_pct"]))
+    print("  Brier (raw, 5-fold CV):   {:.4f}".format(brier_oos_raw))
+    print("  Brier (cal, 5-fold CV):   {:.4f}".format(brier_oos_cal))
+    print("  Brier improvement OOS:    {:.1f}%  <-- use this for go/no-go".format(brier_oos_pct))
     print("\n  Target: Brier < 0.23  ({})".format(
         "PASS" if brier_raw < 0.23 else "FAIL -- investigate"))
     print("\n{}".format(_text_reliability_diagram(diag)))
     print("\nInterpretation:\n{}".format(result["interpretation"]))
+
+    # M17: hard exit when OOS Brier improvement is negative — caller must not paste new constants
+    if brier_oos_pct == brier_oos_pct and brier_oos_pct < 0:  # brier_oos_pct != NaN
+        print("\n  ⚠  OOS Brier improvement is NEGATIVE ({:.1f}%) — "
+              "calibration hurts out-of-sample.".format(brier_oos_pct))
+        print("  Do NOT update PLATT_A/PLATT_B.  Keep existing constants.")
+        sys.exit(1)
 
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)

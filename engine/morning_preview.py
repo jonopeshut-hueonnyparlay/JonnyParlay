@@ -149,11 +149,13 @@ def _save_guard(guard):
         return
     try:
         atomic_write_json(DISCORD_GUARD_FILE, _prune_guard(guard))
-    except Exception:
-        with open(DISCORD_GUARD_FILE, "w", encoding="utf-8") as f:
-            json.dump(guard, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
+    except Exception as e:
+        # H24: do NOT fall back to a direct open() write — a crash mid-write
+        # would corrupt the guard file. Log and accept un-persisted state.
+        import logging as _lg
+        _lg.getLogger("morning_preview").warning(
+            "Guard save failed — guard not persisted: %s", e
+        )
 
 def _webhook_post(url, payload, retries=3):
     """POST JSON payload to a Discord webhook.
@@ -278,7 +280,7 @@ def post_morning_preview(date_str, today_picks, suppress_ping=False, force=False
 
     guard_key = f"preview:{date_str}"
 
-    # --- Test / force paths: no claim, so they can re-run freely ---
+    # --- Test / force paths ---
     if force or suppress_ping:
         # Still honor "already posted" as a soft check — unless force=True,
         # we don't want --test to spam after a real post already fired.
@@ -295,23 +297,36 @@ def post_morning_preview(date_str, today_picks, suppress_ping=False, force=False
                 print(f"  [Discord] [SKIP] Morning preview already posted for {date_str} — --test skipped")
                 return False
 
+        # H24: for --repost (force=True), claim the guard key BEFORE posting
+        # so concurrent --repost invocations are serialized. Release any
+        # stale claim first, then atomically re-claim.
+        if force and not suppress_ping:
+            if _HAS_SHARED_GUARD:
+                _shared_release_post(guard_key)
+                if not _shared_claim_post(guard_key):
+                    print(f"  [Discord] [SKIP] --repost already in progress for {date_str}")
+                    return False
+            else:
+                g = _load_guard()
+                g[guard_key] = True
+                _save_guard(g)  # pre-claim before post
+
         payload = build_preview_embed(date_str, today_picks, suppress_ping=suppress_ping)
         if not payload:
+            if force and not suppress_ping and _HAS_SHARED_GUARD:
+                _shared_release_post(guard_key)
             return False
         if _webhook_post(DISCORD_ANNOUNCE_WEBHOOK, payload):
             print(f"  [Discord] ✅ Morning preview posted for {date_str} ({len(today_picks)} picks)")
-            # force=True persists the claim so nothing re-fires after --repost;
-            # --test never claims so you can keep testing.
-            if force and not suppress_ping:
-                if _HAS_SHARED_GUARD:
-                    # Re-claim (idempotent — claim_post returns False if already set,
-                    # which is fine here because force is deliberate).
-                    _shared_claim_post(guard_key)
-                else:
-                    g = _load_guard()
-                    g[guard_key] = True
-                    _save_guard(g)
             return True
+        # Webhook failed — release claim so a subsequent --repost can re-claim
+        if force and not suppress_ping:
+            if _HAS_SHARED_GUARD:
+                _shared_release_post(guard_key)
+            else:
+                g = _load_guard()
+                g.pop(guard_key, None)
+                _save_guard(g)
         print(f"  [Discord] ❌ Morning preview post failed")
         return False
 

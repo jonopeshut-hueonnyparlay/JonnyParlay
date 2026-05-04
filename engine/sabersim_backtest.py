@@ -32,6 +32,7 @@ if str(_HERE) not in sys.path:
 from paths import DATA_DIR, PROJECT_ROOT
 from projections_db import DB_PATH, get_conn
 from name_utils import fold_name
+from nba_projector import run_projections  # M21: module-level import (was inside loop)
 
 log = logging.getLogger("ss_backtest")
 if not log.handlers:
@@ -210,12 +211,11 @@ def run_comparison(
         if regen or not custom:
             log.info("  Regenerating custom projections for %s ...", game_date)
             try:
-                from nba_projector import run_projections
                 projs = run_projections(
                     game_date=game_date, season="2025-26",
                     implied_totals={}, spreads={},
                     injury_statuses={}, injury_minutes_overrides={},
-                    db_path=db_path, persist=False,
+                    db_path=db_path, persist=True,  # H8: persist=True so projections are cached in DB
                 )
                 custom = {
                     fold_name(p["player_name"]): {

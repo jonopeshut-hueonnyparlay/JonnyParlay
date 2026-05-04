@@ -212,3 +212,33 @@ class TestAllowedBooks:
         """SGP should not accept books outside the approved list."""
         assert "pinnacle" not in sgp.SGP_ALLOWED_BOOKS
         assert "bovada" not in sgp.SGP_ALLOWED_BOOKS
+
+
+class TestDisallowedBook:
+    """H32: SGP builder rejects legs from books not in SGP_ALLOWED_BOOKS."""
+
+    def test_disallowed_book_not_in_allowed_set(self):
+        """Confirm well-known sharp/offshore books are excluded."""
+        import sgp_builder as sgp
+        for book in ("pinnacle", "bovada", "mybookie", "betonline_ag"):
+            assert book not in sgp.SGP_ALLOWED_BOOKS, (
+                f"'{book}' must not be in SGP_ALLOWED_BOOKS"
+            )
+
+    def test_allowed_books_contains_expected_soft_books(self):
+        """The major US soft books must all be present."""
+        import sgp_builder as sgp
+        required = {"fanduel", "draftkings", "betmgm", "williamhill_us"}
+        missing = required - sgp.SGP_ALLOWED_BOOKS
+        assert not missing, f"Required books missing from SGP_ALLOWED_BOOKS: {missing}"
+
+    def test_book_filter_excludes_disallowed(self):
+        """_sgp_book returns empty string / skips legs from non-allowed books."""
+        import sgp_builder as sgp
+        legs = [
+            {"book": "pinnacle",  "wp": 0.65},
+            {"book": "fanduel",   "wp": 0.65},
+        ]
+        # _sgp_book should only count fanduel
+        book = sgp._sgp_book(legs)
+        assert book == "fanduel"
