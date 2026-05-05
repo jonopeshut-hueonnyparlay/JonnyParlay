@@ -220,31 +220,30 @@ PLAYOFF_MINUTES_SCALAR = {
 #     v1 derived from 23,995 player-game records (2024-25 regular season).
 #     v2 updated 2026-05-02 from 30-date 2025-26 retrospective backtest
 #     (4653 player-games).  new_scalar = old_scalar * residual_ratio.
-#     cold_start deferred -- pending task #2 reclassification (5->10 game
-#     threshold) which changes the distribution before re-fitting.
+#     v3 updated 2026-05-05 after REB prior fix + EWMA_SPAN_MIN 6->8.
+#     30-date backtest (4653 player-games, seed=42, season 2025-26).
 REGULAR_SEASON_MINUTES_SCALAR = {
-    "starter":    1.056,   # v2: residual ratio 1.0557 (+5.6% underprojection)
-    "sixth_man":  1.019,   # v2: residual ratio 1.0189 (+1.9%)
-    "rotation":   1.035,   # v2: residual ratio 0.9784 (1.058 was overcorrecting)
-    "spot":       1.700,   # v2: residual ratio 1.0170 -- prior still slightly low
-    "cold_start": 0.940,   # v2 refit: 1.151 * residual_ratio(0.8168) after threshold->10
+    "starter":    1.0534,  # v3: ratio 0.9976 — nearly flat
+    "sixth_man":  1.0139,  # v3: ratio 0.9950
+    "rotation":   1.0327,  # v3: ratio 0.9977
+    "spot":       1.5695,  # v3: ratio 0.9233 — spot over-projected, pulled down
+    "cold_start": 1.0034,  # v3: ratio 1.0674 — cold_start was under; corrected
 }
 
 # 1c. REGULAR_SEASON_STAT_SCALAR (task #3, 2026-05-02):
 #     Residual per-stat bias correction after minutes model is fully calibrated.
-#     Derived from 30-date 2025-26 backtest (4653 player-games).
-#     scalar = (mean_proj - bias) / mean_proj  i.e. 1 - bias/mean_proj.
-#     PTS is already essentially unbiased (scalar 0.9979 -> 1.000).
-#     STL is negligible (1.005 -> 1.000).  All others applied.
+#     v2 updated 2026-05-05 after REB prior fix + EWMA_SPAN_MIN 6->8.
+#     30-date backtest (4653 player-games, seed=42).  Overall raw bias: -0.006.
+#     scalar = (mean_proj - bias) / mean_proj.
 #     Applied after pace/matchup/playoff adjustments, before distribution.
 #     Not applied during playoffs (covered by PLAYOFF_RATE_DEFLATORS).
 REGULAR_SEASON_STAT_SCALAR = {
-    "pts":  1.000,   # OOS 2023-24 bias -0.014 -- confirmed no correction needed
-    "ast":  1.005,   # OOS 2023-24 bias +0.051 -- 1.013 was over-correcting; trimmed to 1.005
-    "reb":  1.031,   # OOS 2023-24 bias -0.005 -- confirmed
-    "fg3m": 1.019,   # OOS 2023-24 bias -0.007 -- confirmed
-    "blk":  1.043,   # OOS 2023-24 bias -0.022; cross-seed mean ~1.035-1.056; trimmed to 1.043
-    "stl":  1.000,   # OOS 2023-24 bias -0.003 -- confirmed no correction needed
+    "pts":  1.0019,  # v3 bias -0.022 on mean 11.599 — minimal correction
+    "ast":  1.0120,  # v3 bias -0.019 on mean 2.679
+    "reb":  1.0264,  # v3 bias +0.020 — REB prior fix reduced from 1.031; now slightly over
+    "fg3m": 1.0231,  # v3 bias -0.005 on mean 1.336
+    "blk":  1.0608,  # v3 bias -0.008 on mean 0.462 — BLK needs bigger lift
+    "stl":  1.0017,  # v3 bias -0.001 — negligible
     "tov":  1.000,   # not tracked in backtest -- no correction
 }
 
