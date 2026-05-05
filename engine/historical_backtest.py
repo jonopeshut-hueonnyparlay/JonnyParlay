@@ -40,7 +40,10 @@ _ENGINE = _ROOT / "engine"
 if str(_ENGINE) not in sys.path:
     sys.path.insert(0, str(_ENGINE))
 
-from nba_projector import project_player, CURRENT_SEASON
+from nba_projector import (
+    project_player, CURRENT_SEASON,
+    REGULAR_SEASON_STAT_SCALAR, REGULAR_SEASON_MINUTES_SCALAR,
+)
 from projections_db import DB_PATH, get_conn
 
 # ---------------------------------------------------------------------------
@@ -275,9 +278,13 @@ def run_historical_backtest(
     print(f"\nKnown-player MAE (non cold):   {_mae(known_raw):.3f}  (n={len(known_raw)})")
     print(f"Cold-start MAE:                {_mae(cold_raw):.3f}  (n={len(cold_raw)})")
 
+    # stat_key -> (mean_p, sugg_correction) for use in per-role×stat section below
+    stat_mean_proj: dict = {}
+
     print("\nPer-stat breakdown (raw errors):")
-    print(f"  {'Stat':6s}  {'MAE':>7s}  {'Bias':>7s}  {'RMSE':>7s}  {'MeanProj':>9s}  {'Scalar':>7s}  {'n':>5s}  {'n_cold':>6s}  {'cold_MAE':>8s}")
-    for stat_name, _, _ in STAT_KEYS:
+    print(f"  {'Stat':6s}  {'MAE':>7s}  {'Bias':>7s}  {'RMSE':>7s}  {'MeanProj':>9s}"
+          f"  {'CurrScalar':>10s}  {'NewScalar':>9s}  {'n':>5s}  {'n_cold':>6s}  {'cold_MAE':>8s}")
+    for stat_name, stat_col, _ in STAT_KEYS:
         errs  = errors_by_stat[stat_name]
         if not errs:
             continue
@@ -286,12 +293,16 @@ def run_historical_backtest(
         projs    = [p for _, _, _, p in errs]
         mean_p   = sum(projs) / len(projs) if projs else 0.0
         bias_val = _bias(all_e)
-        # Suggested scalar to eliminate current bias: scalar = 1 - bias/mean_proj
-        # (bias = proj - actual, so actual = proj - bias; to hit actual: proj * scalar = actual)
-        scalar   = (mean_p - bias_val) / mean_p if mean_p > 0 else 1.0
+        # Correction factor: multiply current STAT_SCALAR by this to eliminate bias.
+        # sugg_correction = mean_actual / mean_proj  (since bias = proj - actual)
+        sugg_correction = (mean_p - bias_val) / mean_p if mean_p > 0 else 1.0
+        curr_scalar = REGULAR_SEASON_STAT_SCALAR.get(stat_col, 1.0)
+        new_scalar  = round(curr_scalar * sugg_correction, 4)
+        stat_mean_proj[stat_name] = (mean_p, sugg_correction)
         print(f"  {stat_name:6s}  {_mae(all_e):7.3f}  {bias_val:+7.3f}  {_rmse(all_e):7.3f}"
-              f"  {mean_p:9.3f}  {scalar:7.4f}"
+              f"  {mean_p:9.3f}  {curr_scalar:10.4f}  {new_scalar:9.4f}"
               f"  {len(all_e):5d}  {len(cold_e):6d}  {_mae(cold_e) if cold_e else float('nan'):8.3f}")
+    print(f"  {'':6s}  (NewScalar = CurrScalar × correction to zero out bias; paste into REGULAR_SEASON_STAT_SCALAR)")
 
     # ---------------------------------------------------------------------------
     # T4: Bias by role tier
@@ -311,19 +322,22 @@ def run_historical_backtest(
             all_e = [e for e, _, _ in errs_r]
             print(f"  {role:15s}  {_mae(all_e):7.3f}  {_bias(all_e):+7.3f}  {_rmse(all_e):7.3f}  {len(all_e):5d}")
 
-        # Per-stat × per-role for PTS (highest volume, most meaningful to inspect)
-        print(f"\n  PTS bias by role tier:")
-        print(f"  {'Role':15s}  {'Bias':>7s}  {'MAE':>7s}  {'MeanProj':>9s}  {'n':>5s}")
-        for role in ordered:
-            errs_r = errors_by_role.get(role)
-            if not errs_r:
-                continue
-            pts_e = [(e, p) for e, st, p in errs_r if st == "PTS"]
-            if not pts_e:
-                continue
-            all_e = [e for e, _ in pts_e]
-            mean_p = sum(p for _, p in pts_e) / len(pts_e)
-            print(f"  {role:15s}  {_bias(all_e):+7.3f}  {_mae(all_e):7.3f}  {mean_p:9.3f}  {len(all_e):5d}")
+        # Per-stat × per-role breakdown (all stats) — reveals role-specific bias patterns
+        for stat_name, stat_col, _ in STAT_KEYS:
+            print(f"\n  {stat_name} bias by role tier  (CurrScalar={REGULAR_SEASON_STAT_SCALAR.get(stat_col, 1.0):.4f}):")
+            print(f"  {'Role':15s}  {'Bias':>7s}  {'MAE':>7s}  {'MeanProj':>9s}  {'SuggCorr':>9s}  {'n':>5s}")
+            for role in ordered:
+                errs_r = errors_by_role.get(role)
+                if not errs_r:
+                    continue
+                stat_e = [(e, p) for e, st, p in errs_r if st == stat_name]
+                if not stat_e:
+                    continue
+                all_e  = [e for e, _ in stat_e]
+                mean_p = sum(p for _, p in stat_e) / len(stat_e)
+                bias_v = _bias(all_e)
+                sugg   = (mean_p - bias_v) / mean_p if mean_p > 0 else 1.0
+                print(f"  {role:15s}  {bias_v:+7.3f}  {_mae(all_e):7.3f}  {mean_p:9.3f}  {sugg:9.4f}  {len(all_e):5d}")
 
     # ---------------------------------------------------------------------------
     # T4: Projection magnitude bucketing (PTS) — is bias worse at high/low proj?
@@ -373,14 +387,19 @@ def run_historical_backtest(
         print(f"\n  Suggested scalar for nba_projector.py: {mean_ratio:.4f}")
         print(f"  (Apply as: proj_min *= {mean_ratio:.4f} before stat calculation)")
 
-        # By role tier
+        # By role tier — shows current scalar, ratio, and what the new scalar should be
         roles_seen = sorted(set(r for _, _, r in min_records))
-        print(f"\n  {'Role':15s}  {'n':>5s}  {'mean_ratio':>10s}  {'mean_bias':>10s}")
+        print(f"\n  {'Role':15s}  {'n':>5s}  {'ProjMin':>8s}  {'ActMin':>8s}  {'Ratio':>7s}  {'CurrScalar':>10s}  {'NewScalar':>9s}  {'Bias':>7s}")
+        print(f"  (NewScalar = CurrScalar × Ratio; paste into REGULAR_SEASON_MINUTES_SCALAR)")
         for role in roles_seen:
             recs = [(p, a) for p, a, r in min_records if r == role]
-            r_ratios = [a / p for p, a in recs]
-            r_bias   = sum(a - p for p, a in recs) / len(recs)
-            print(f"  {role:15s}  {len(recs):5d}  {sum(r_ratios)/len(r_ratios):10.4f}  {r_bias:+10.3f}")
+            mean_proj_min = sum(p for p, _ in recs) / len(recs)
+            mean_act_min  = sum(a for _, a in recs) / len(recs)
+            ratio    = mean_act_min / mean_proj_min if mean_proj_min > 0 else 1.0
+            r_bias   = mean_act_min - mean_proj_min
+            curr_sc  = REGULAR_SEASON_MINUTES_SCALAR.get(role, 1.0)
+            new_sc   = round(curr_sc * ratio, 4)
+            print(f"  {role:15s}  {len(recs):5d}  {mean_proj_min:8.2f}  {mean_act_min:8.2f}  {ratio:7.4f}  {curr_sc:10.4f}  {new_sc:9.4f}  {r_bias:+7.3f}")
 
     # Comparison to known playoff benchmark
     print("\n" + "-" * 65)
@@ -394,7 +413,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--n-dates", type=int, default=30)
     parser.add_argument("--seed",    type=int, default=42)
-    parser.add_argument("--season",  default="2024-25")
+    parser.add_argument("--season",  default=CURRENT_SEASON)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--db",      default=None)
     args = parser.parse_args()
