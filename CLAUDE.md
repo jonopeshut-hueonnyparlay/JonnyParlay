@@ -1,5 +1,24 @@
 # Memory
 
+## Audit 2026-05-05 — Status (injury system + deep audit)
+Full-system audit spawned 2026-05-05 after computer crash + injury system diagnosis. Key fixes:
+
+**Injury name format fix (C1):** NBA PDF uses "Last, First" but DB stores "First Last". `_maybe_reverse_name()` added to `injury_parser.py` — applied in `_normalise_report()` before `fold_name()`. Active-team filter added to `get_injury_context()` — only processes players on teams with games today.
+
+**Projection fixes:** H1 (override scalar bypass — season/playoff scalar skipped when injury_minutes_override is not None), H2 (USG% OT inflation — `tm_min.clip(upper=240.0)`), H5 (career threshold carried forward when career_min_prior is None but career_avg_min_raw exists), H6 (proj_min included in `_CONSTRAINT_SCALE_KEYS` in generate_projections.py).
+
+**DB fixes:** H4 (SCHED collision — seed_scheduled_games checks for real row before inserting; get_games_for_date deduplicates by matchup keeping real rows), M3 (try/finally on all 13 remaining bare conn.close() in projections_db.py), M4 (spread warning in _fetch_spreads when team name unmatched).
+
+**CLV fixes:** C1 (CLV write key upgraded to 5-tuple with date prefix), L4 (picks_needing_clv excludes terminal results W/L/P/VOID), M9 (`_mark_picks_stale()` writes STALE to closing_odds when CLV permanently retired).
+
+**Other fixes:** M5 (generate_daily_csv applies constrain_team_totals when team_totals available; warns when missing), M6 (run_picks over-force counter update), M7 (KILLSHOT units included in 12u daily cap sanity check), M8 (weekly_recap avg_clv stored as decimal; tests updated).
+
+**Tests added (2026-05-05):** test_clv_date_key.py (11 tests), test_clv_stale_marker.py (3), test_injury_parser_fixes.py (13), test_derive_team_totals.py, test_team_total_derivation.py.
+
+**Test suite (2026-05-05):** 903 passed / 0 failed. Commit: fd97218.
+
+**Audit 2026-05-05 — ALL ITEMS CLOSED.**
+
 ## Audit 2026-05-04 — Status
 Full audit doc: `docs/audits/AUDIT_2026-05-04.md`. **14 CRIT / 17 HIGH / 28 MED / 17 LOW** — 10-agent full-system audit post Research Brief 7.
 
