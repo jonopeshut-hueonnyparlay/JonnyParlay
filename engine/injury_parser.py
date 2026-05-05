@@ -137,6 +137,14 @@ def fetch_injury_report(date: Optional[datetime.date] = None) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _maybe_reverse_name(name: str) -> str:
+    """Convert 'Last, First' (NBA PDF format) to 'First Last'."""
+    if isinstance(name, str) and "," in name:
+        last, _, first = name.partition(",")
+        return f"{first.strip()} {last.strip()}"
+    return name
+
+
 def _normalise_report(df: pd.DataFrame) -> pd.DataFrame:
     """Normalise raw nbainjuries DataFrame into standard schema."""
     col_map = {
@@ -151,6 +159,10 @@ def _normalise_report(df: pd.DataFrame) -> pd.DataFrame:
     for c in needed:
         if c not in df.columns:
             df[c] = ""
+
+    # NBA injury PDF uses "Last, First" — convert to "First Last" before folding
+    df["player_name"] = df["player_name"].apply(
+        lambda x: _maybe_reverse_name(str(x)) if pd.notna(x) else x)
 
     df["status_code"], df["play_prob"] = zip(
         *df["status_raw"].apply(_parse_status)
@@ -343,6 +355,16 @@ def get_injury_context(
     date = datetime.date.fromisoformat(game_date) if game_date else datetime.date.today()
     date_str = str(date)
 
+    # Only process players on teams that actually have a game today
+    conn = get_conn(db_path)
+    active_team_ids: set[int] = set()
+    for row in conn.execute(
+        "SELECT home_team_id, away_team_id FROM games WHERE game_date=?", (date_str,)
+    ).fetchall():
+        active_team_ids.add(row["home_team_id"])
+        active_team_ids.add(row["away_team_id"])
+    conn.close()
+
     injury_df = fetch_injury_report(date)
     if injury_df.empty:
         log.info("No injury data -- proceeding with no adjustments")
@@ -351,6 +373,17 @@ def get_injury_context(
     injury_df = resolve_player_ids(injury_df, db_path)
     if injury_df.empty:
         return {}, {}
+
+    if active_team_ids:
+        conn = get_conn(db_path)
+        pid_to_team = {
+            r["player_id"]: r["team_id"]
+            for r in conn.execute("SELECT player_id, team_id FROM players").fetchall()
+        }
+        conn.close()
+        injury_df = injury_df[
+            injury_df["player_id"].map(pid_to_team).isin(active_team_ids)
+        ]
 
     injury_statuses: Dict[int, str] = {}
     injury_minutes_overrides: Dict[int, float] = {}
