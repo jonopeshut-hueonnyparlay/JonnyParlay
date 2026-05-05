@@ -915,6 +915,80 @@ def get_player_last_appearance_days(
     return (ref_date - last_date).days
 
 
+def get_projection_vs_actual(
+    days: int = 30,
+    season: Optional[str] = None,
+    role: Optional[str] = None,
+    db_path: Path = DB_PATH,
+) -> "pd.DataFrame":
+    """Join projections table with player_game_stats actuals for accuracy analysis.
+
+    Returns a DataFrame with columns:
+        player_id, player_name, game_date, role_tier,
+        proj_min, actual_min,
+        proj_pts, actual_pts, proj_reb, actual_reb,
+        proj_ast, actual_ast, proj_fg3m, actual_fg3m,
+        proj_blk, actual_blk, proj_stl, actual_stl
+
+    Only rows where both a projection and an actual box score exist are returned
+    (inner join). The most recent projection per (player_id, game_id) is used so
+    reruns don't inflate the count.
+    """
+    import datetime as _dt
+    cutoff = (
+        (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
+        if days > 0 else "2000-01-01"
+    )
+    season_clause = "AND g.season = :season" if season else ""
+    role_clause   = "AND p.role_tier = :role" if role else ""
+
+    sql = f"""
+    WITH latest_proj AS (
+        SELECT player_id, game_id,
+               MAX(run_ts) AS max_ts
+        FROM projections
+        GROUP BY player_id, game_id
+    )
+    SELECT
+        pr.player_name,
+        pr.player_id,
+        g.game_date,
+        pr.role_tier,
+        pr.proj_min,
+        pgs.min   AS actual_min,
+        pr.proj_pts,  pgs.pts   AS actual_pts,
+        pr.proj_reb,  pgs.reb   AS actual_reb,
+        pr.proj_ast,  pgs.ast   AS actual_ast,
+        pr.proj_fg3m, pgs.fg3m  AS actual_fg3m,
+        pr.proj_blk,  pgs.blk   AS actual_blk,
+        pr.proj_stl,  pgs.stl   AS actual_stl
+    FROM projections pr
+    JOIN latest_proj lp ON lp.player_id = pr.player_id
+                        AND lp.game_id  = pr.game_id
+                        AND lp.max_ts   = pr.run_ts
+    JOIN games g ON g.game_id = pr.game_id
+    JOIN player_game_stats pgs ON pgs.player_id = pr.player_id
+                               AND pgs.game_id   = pr.game_id
+    WHERE g.game_date >= :cutoff
+      AND pgs.min >= 5
+      {season_clause}
+      {role_clause}
+    ORDER BY g.game_date DESC, pr.player_name
+    """
+    params: dict = {"cutoff": cutoff}
+    if season:
+        params["season"] = season
+    if role:
+        params["role"] = role
+
+    conn = get_conn(db_path)
+    try:
+        df = pd.read_sql_query(sql, conn, params=params)
+    finally:
+        conn.close()
+    return df
+
+
 def get_player_season_game_count(player_id: int, season: str,
                                   team_id: Optional[int] = None,
                                   db_path: Path = DB_PATH) -> int:
