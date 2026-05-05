@@ -179,8 +179,10 @@ def _normalise_report(df: pd.DataFrame) -> pd.DataFrame:
 def _build_name_key_map(db_path: str = DB_PATH) -> Dict[str, int]:
     """Return {name_key: player_id} from players table."""
     conn = get_conn(db_path)
-    rows = conn.execute("SELECT player_id, name_key FROM players").fetchall()
-    conn.close()
+    try:
+        rows = conn.execute("SELECT player_id, name_key FROM players").fetchall()
+    finally:
+        conn.close()
     return {r["name_key"]: r["player_id"] for r in rows}
 
 
@@ -228,13 +230,15 @@ def _get_team_rotation(
 ) -> pd.DataFrame:
     """Return DataFrame of team rotation players with avg minutes."""
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT p.player_id, p.name, p.position"
-        " FROM players p"
-        " WHERE p.team_id = ?",
-        (team_id,)
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT p.player_id, p.name, p.position"
+            " FROM players p"
+            " WHERE p.team_id = ?",
+            (team_id,)
+        ).fetchall()
+    finally:
+        conn.close()
     if not rows:
         return pd.DataFrame()
 
@@ -242,17 +246,16 @@ def _get_team_rotation(
     for r in rows:
         df = get_player_recent_games(
             r["player_id"], before_date, n_games=n_games,
-            season_filter=season, min_minutes=5.0, db_path=db_path)
+            season_filter=season, min_minutes=REDISTRIB_MIN_ELIGIBLE, db_path=db_path)
         if df.empty:
             continue
         avg_min = df["min"].mean()
-        if avg_min >= 5.0:
-            records.append({
-                "player_id": r["player_id"],
-                "name": r["name"],
-                "position": r["position"],
-                "avg_min": avg_min,
-            })
+        records.append({
+            "player_id": r["player_id"],
+            "name": r["name"],
+            "position": r["position"],
+            "avg_min": avg_min,
+        })
 
     if not records:
         return pd.DataFrame()
@@ -374,16 +377,24 @@ def get_injury_context(
     if injury_df.empty:
         return {}, {}
 
-    if active_team_ids:
+    if not active_team_ids:
+        log.warning("get_injury_context: no active games found for %s — "
+                    "injury report not filtered by team (possible seed failure)", date_str)
+    else:
         conn = get_conn(db_path)
-        pid_to_team = {
-            r["player_id"]: r["team_id"]
-            for r in conn.execute("SELECT player_id, team_id FROM players").fetchall()
-        }
-        conn.close()
+        try:
+            pid_to_team = {
+                r["player_id"]: r["team_id"]
+                for r in conn.execute("SELECT player_id, team_id FROM players").fetchall()
+            }
+        finally:
+            conn.close()
         injury_df = injury_df[
             injury_df["player_id"].map(pid_to_team).isin(active_team_ids)
         ]
+        if injury_df.empty:
+            log.warning("get_injury_context: no injury report players matched active-game teams for %s", date_str)
+            return {}, {}
 
     injury_statuses: Dict[int, str] = {}
     injury_minutes_overrides: Dict[int, float] = {}
@@ -399,10 +410,12 @@ def get_injury_context(
 
         if code in ("O",):  # confirmed out / doubtful-treated-as-out
             conn = get_conn(db_path)
-            team_row = conn.execute(
-                "SELECT team_id, position FROM players WHERE player_id=?", (pid,)
-            ).fetchone()
-            conn.close()
+            try:
+                team_row = conn.execute(
+                    "SELECT team_id, position FROM players WHERE player_id=?", (pid,)
+                ).fetchone()
+            finally:
+                conn.close()
             if team_row:
                 out_players.append((
                     pid,
@@ -420,7 +433,13 @@ def get_injury_context(
             out_pid, date_str, n_games=15, season_filter=season, db_path=db_path)
         if df.empty:
             continue
-        avg_min = df["min"].mean()
+        # M2: use EWMA (matching nba_projector) not simple mean — prevents
+        # over-estimating the minutes pool for injury-volatile players.
+        avg_min = float(
+            df.sort_values("game_date")["min"]
+            .clip(upper=44.0)
+            .ewm(span=8, min_periods=1).mean().iloc[-1]
+        )
         if avg_min < REDISTRIB_MIN_ELIGIBLE:
             continue   # bench players -- not worth redistributing
         log.info("Redistributing %.1f min from OUT player (id=%d, pos=%s) to team %d",

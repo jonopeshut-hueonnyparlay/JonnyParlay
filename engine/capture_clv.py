@@ -537,10 +537,12 @@ def load_picks(log_path: Path, run_date: str) -> list[dict]:
 
 def picks_needing_clv(picks: list[dict]) -> list[dict]:
     """Filter to picks that haven't had closing odds captured yet and aren't graded."""
+    _terminal = {"W", "L", "P", "VOID"}
     return [
         p for p in picks
         if not p.get("closing_odds", "").strip()
         and p.get("stat", "") not in SKIP_STATS
+        and p.get("result", "") not in _terminal
     ]
 
 
@@ -563,6 +565,7 @@ def _do_write_closing_odds(log_path: Path, updates: dict[tuple, dict]) -> int:
     updated = 0
     for row in rows:
         key = (
+            row.get("date", "").strip(),
             row.get("player", "").strip().lower(),
             row.get("stat", "").strip(),
             str(row.get("line", "")).strip(),
@@ -989,6 +992,36 @@ def run(run_date: str):
         save_checkpoint(run_date, captured_games)
         capture_attempts.pop(game_str, None)
 
+    def _mark_picks_stale(game_picks_list: list, captured_log_keys: dict | None = None) -> None:
+        """Write closing_odds='STALE' for picks that permanently missed CLV capture.
+
+        M9: prevents blank closing_odds rows from accumulating for games where
+        the Odds API had no data. 'STALE' is excluded by picks_needing_clv() so
+        the daemon won't retry these picks on subsequent polls.
+
+        game_picks_list: list of (log_path, pick) tuples for the whole game.
+        captured_log_keys: {log_path: set_of_keys} already written — these are
+            skipped so we don't overwrite a successful capture with STALE.
+        """
+        captured_log_keys = captured_log_keys or {}
+        stale_by_log: dict[Path, dict] = {}
+        for log_path, pick in game_picks_list:
+            key = (
+                pick.get("date", "").strip(),
+                pick.get("player", "").strip().lower(),
+                pick.get("stat", "").strip(),
+                str(pick.get("line", "")).strip(),
+                pick.get("direction", "").strip().lower(),
+            )
+            already_captured = key in captured_log_keys.get(log_path, set())
+            if already_captured:
+                continue
+            stale_by_log.setdefault(log_path, {})[key] = {"closing_odds": "STALE", "clv": None}
+        for log_path, updates in stale_by_log.items():
+            n = write_closing_odds(log_path, updates)
+            if n:
+                logger.info("Marked %d pick(s) STALE for retired game in %s", n, log_path.name)
+
     def _bump_attempt(game_str: str) -> int:
         """Increment and return the attempt counter for `game_str`, with LRU
         eviction when the dict exceeds MAX_ATTEMPTS_ENTRIES (defence in depth
@@ -1130,6 +1163,7 @@ def run(run_date: str):
                     attempts = _bump_attempt(game_str)
                     if attempts >= MAX_FETCH_ATTEMPTS or secs_to_start < -STALE_AFTER_SECS:
                         print(f"    ⚠ No odds data for {event_id} (attempt {attempts}/{MAX_FETCH_ATTEMPTS}) — giving up")
+                        _mark_picks_stale(game_picks)  # M9: mark uncaptured picks STALE
                         _retire_game(game_str)
                     else:
                         print(f"    ⚠ No odds data for {event_id} (attempt {attempts}/{MAX_FETCH_ATTEMPTS}) — will retry")
@@ -1176,6 +1210,7 @@ def run(run_date: str):
                     clv_str = f"{clv:+.1%}" if clv is not None else "n/a"
 
                     key = (
+                        pick.get("date", "").strip(),
                         pick.get("player", "").strip().lower(),
                         pick.get("stat", "").strip(),
                         str(pick.get("line", "")).strip(),
@@ -1204,6 +1239,8 @@ def run(run_date: str):
                 # remain open so we retry missing picks on the next poll.
                 total_picks_for_game = len(game_picks)
                 captured_picks_for_game = sum(len(u) for u in updates_by_log.values())
+                # Build set of already-written keys per log for STALE marking
+                captured_keys_by_log = {lp: set(u.keys()) for lp, u in updates_by_log.items()}
                 if captured_picks_for_game >= total_picks_for_game or secs_to_start < -STALE_AFTER_SECS:
                     _retire_game(game_str)
                 else:
@@ -1213,6 +1250,7 @@ def run(run_date: str):
                     if secs_to_start < -CAPTURE_AFTER_SECS:
                         print(f"    !! Only got {captured_picks_for_game}/{total_picks_for_game} closing odds "
                               f"past T+{CAPTURE_AFTER_SECS//60}min, giving up")
+                        _mark_picks_stale(game_picks, captured_keys_by_log)  # M9: mark uncaptured STALE
                         _retire_game(game_str)
                     else:
                         print(f"    ... Got {captured_picks_for_game}/{total_picks_for_game} closing odds "

@@ -191,8 +191,10 @@ def compute_clv_summary(picks):
             "best": None, "worst": None,
         }
 
-    # Store clv as percentage points for display (0.015 → 1.5pp).
-    clv_vals   = [c * 100.0 for _, c in captured]
+    # avg_clv stored and returned as decimal (e.g. 0.015 = 1.5pp).
+    # Multiply by 100 only at final display, not here — keeps scale consistent
+    # with clv_report.clv_grade() which also expects decimal.
+    clv_vals   = [c for _, c in captured]
     avg        = sum(clv_vals) / len(clv_vals)
     beat       = sum(1 for v in clv_vals if v > 0)
     beat_pct   = beat / cap_n * 100.0
@@ -201,7 +203,7 @@ def compute_clv_summary(picks):
     return {
         "total": total, "captured": cap_n, "missing": missing,
         "coverage_pct": round(coverage, 1),
-        "avg_clv": round(avg, 2),
+        "avg_clv": round(avg, 4),
         "beat_close": beat,
         "beat_close_pct": round(beat_pct, 1),
         "best":  (best_pair[0],  round(best_pair[1]  * 100.0, 2)),
@@ -347,7 +349,7 @@ def build_weekly_xlsx(week_picks, mon_str, sun_str):
     ws.cell(row=tr, column=1,  value="TOTALS").font  = Font(bold=True, color="FFD700", size=11)
     ws.cell(row=tr, column=11, value=f"{w}W-{l}L{('-' + str(pu) + 'P') if pu else ''}").font = Font(bold=True, color="FFD700")
     if clv_summary["avg_clv"] is not None:
-        avg_label = f"{clv_summary['avg_clv']:+.2f}pp ({clv_summary['captured']}/{clv_summary['total']})"
+        avg_label = f"{clv_summary['avg_clv'] * 100:+.2f}pp ({clv_summary['captured']}/{clv_summary['total']})"
         ws.cell(row=tr, column=12, value=avg_label).font = Font(
             bold=True, color="2ECC71" if clv_summary['avg_clv'] >= 0 else "FF4444"
         )
@@ -396,7 +398,7 @@ def _format_clv_block(summary):
         ]
         return "\n".join([header] + body)
 
-    avg_str = f"{summary['avg_clv']:+.2f}pp"
+    avg_str = f"{summary['avg_clv'] * 100:+.2f}pp"
     beat_str = f"{summary['beat_close']}/{cap} ({summary['beat_close_pct']:.0f}%)"
 
     body = [f"📊 **CLV**"]

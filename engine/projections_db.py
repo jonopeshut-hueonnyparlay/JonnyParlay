@@ -640,24 +640,26 @@ def get_team_shooting_stats(team_id: int, season: str,
     Falls back to league averages if insufficient data.
     """
     conn = get_conn(db_path)
-    df = pd.read_sql_query(
-        """
-        SELECT
-            SUM(pgs.fga)  AS fga,
-            SUM(pgs.fgm)  AS fgm,
-            SUM(pgs.oreb) AS oreb,
-            SUM(pgs.dreb) AS dreb,
-            COUNT(DISTINCT pgs.game_id) AS n_games
-        FROM player_game_stats pgs
-        JOIN games g ON g.game_id = pgs.game_id
-        WHERE pgs.team_id = :team_id
-          AND g.season    = :season
-          AND g.season_type = 'Regular Season'
-        """,
-        conn,
-        params={"team_id": team_id, "season": season},
-    )
-    conn.close()
+    try:
+        df = pd.read_sql_query(
+            """
+            SELECT
+                SUM(pgs.fga)  AS fga,
+                SUM(pgs.fgm)  AS fgm,
+                SUM(pgs.oreb) AS oreb,
+                SUM(pgs.dreb) AS dreb,
+                COUNT(DISTINCT pgs.game_id) AS n_games
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE pgs.team_id = :team_id
+              AND g.season    = :season
+              AND g.season_type = 'Regular Season'
+            """,
+            conn,
+            params={"team_id": team_id, "season": season},
+        )
+    finally:
+        conn.close()
 
     # League-average fallbacks (2024-25 calibrated)
     _DEFAULTS = {
@@ -692,21 +694,23 @@ def get_team_tov_rate(team_id: int, season: str,
     """
     _LEAGUE_AVG = 0.136
     conn = get_conn(db_path)
-    df = pd.read_sql_query(
-        """
-        SELECT
-            SUM(pgs.tov)                AS total_tov,
-            COUNT(DISTINCT pgs.game_id) AS n_games
-        FROM player_game_stats pgs
-        JOIN games g ON g.game_id = pgs.game_id
-        WHERE pgs.team_id   = :team_id
-          AND g.season       = :season
-          AND g.season_type  = 'Regular Season'
-        """,
-        conn,
-        params={"team_id": team_id, "season": season},
-    )
-    conn.close()
+    try:
+        df = pd.read_sql_query(
+            """
+            SELECT
+                SUM(pgs.tov)                AS total_tov,
+                COUNT(DISTINCT pgs.game_id) AS n_games
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE pgs.team_id   = :team_id
+              AND g.season       = :season
+              AND g.season_type  = 'Regular Season'
+            """,
+            conn,
+            params={"team_id": team_id, "season": season},
+        )
+    finally:
+        conn.close()
     if df.empty:
         return _LEAGUE_AVG
     row = df.iloc[0]
@@ -739,21 +743,23 @@ def get_team_rim_attempt_rate(team_id: int, season: str,
     """
     _LEAGUE_AVG = 56.0  # non-3pt FGA per game, 2024-25 league average
     conn = get_conn(db_path)
-    df = pd.read_sql_query(
-        """
-        SELECT
-            SUM(pgs.fga  - pgs.fg3a)    AS total_non3_fga,
-            COUNT(DISTINCT pgs.game_id) AS n_games
-        FROM player_game_stats pgs
-        JOIN games g ON g.game_id = pgs.game_id
-        WHERE pgs.team_id   = :team_id
-          AND g.season       = :season
-          AND g.season_type  = 'Regular Season'
-        """,
-        conn,
-        params={"team_id": team_id, "season": season},
-    )
-    conn.close()
+    try:
+        df = pd.read_sql_query(
+            """
+            SELECT
+                SUM(pgs.fga  - pgs.fg3a)    AS total_non3_fga,
+                COUNT(DISTINCT pgs.game_id) AS n_games
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE pgs.team_id   = :team_id
+              AND g.season       = :season
+              AND g.season_type  = 'Regular Season'
+            """,
+            conn,
+            params={"team_id": team_id, "season": season},
+        )
+    finally:
+        conn.close()
     if df.empty:
         return _LEAGUE_AVG
     row = df.iloc[0]
@@ -777,23 +783,25 @@ def get_team_avg_fga(team_id: int, before_date: str,
     must not contaminate regular-season averages.
     """
     conn = get_conn(db_path)
-    row = conn.execute(
-        """
-        SELECT AVG(team_fga) FROM (
-            SELECT SUM(pgs.fga) AS team_fga
-            FROM player_game_stats pgs
-            JOIN games g ON g.game_id = pgs.game_id
-            WHERE pgs.team_id = ? AND g.season = ?
-              AND g.season_type = ?
-              AND g.game_date < ?
-            GROUP BY pgs.game_id
-            ORDER BY g.game_date DESC
-            LIMIT ?
-        )
-        """,
-        (team_id, season, season_type, before_date, n_games)
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            """
+            SELECT AVG(team_fga) FROM (
+                SELECT SUM(pgs.fga) AS team_fga
+                FROM player_game_stats pgs
+                JOIN games g ON g.game_id = pgs.game_id
+                WHERE pgs.team_id = ? AND g.season = ?
+                  AND g.season_type = ?
+                  AND g.game_date < ?
+                GROUP BY pgs.game_id
+                ORDER BY g.game_date DESC
+                LIMIT ?
+            )
+            """,
+            (team_id, season, season_type, before_date, n_games)
+        ).fetchone()
+    finally:
+        conn.close()
     return float(row[0]) if row and row[0] else 85.0  # league-avg fallback
 
 
@@ -998,12 +1006,14 @@ def get_player_season_game_count(player_id: int, season: str,
     params: list = [player_id, season]
     if team_id:
         params.append(team_id)
-    row = conn.execute(
-        f"SELECT COUNT(*) FROM player_game_stats pgs"
-        f" JOIN games g ON g.game_id=pgs.game_id"
-        f" WHERE pgs.player_id=? AND g.season=? AND pgs.min>=5 {tc}",
-        params).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM player_game_stats pgs"
+            f" JOIN games g ON g.game_id=pgs.game_id"
+            f" WHERE pgs.player_id=? AND g.season=? AND pgs.min>=5 {tc}",
+            params).fetchone()
+    finally:
+        conn.close()
     return int(row[0]) if row else 0
 
 
@@ -1093,17 +1103,19 @@ def get_team_typical_mpg(
     absence inflates/deflates the target player's rate estimates.
     """
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT pgs.player_id, AVG(pgs.min) AS avg_min"
-        " FROM player_game_stats pgs"
-        " JOIN games g ON g.game_id = pgs.game_id"
-        " WHERE pgs.team_id = ? AND g.season = ? AND g.game_date < ?"
-        " AND pgs.min >= 5"
-        " GROUP BY pgs.player_id"
-        " HAVING COUNT(*) >= 5 AND AVG(pgs.min) >= ?",
-        (team_id, season, before_date, min_mpg_threshold),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT pgs.player_id, AVG(pgs.min) AS avg_min"
+            " FROM player_game_stats pgs"
+            " JOIN games g ON g.game_id = pgs.game_id"
+            " WHERE pgs.team_id = ? AND g.season = ? AND g.game_date < ?"
+            " AND pgs.min >= 5"
+            " GROUP BY pgs.player_id"
+            " HAVING COUNT(*) >= 5 AND AVG(pgs.min) >= ?",
+            (team_id, season, before_date, min_mpg_threshold),
+        ).fetchall()
+    finally:
+        conn.close()
     return {int(r[0]): float(r[1]) for r in rows}
 
 
@@ -1122,13 +1134,15 @@ def get_team_game_participants(
         return {}
     conn = get_conn(db_path)
     placeholders = ",".join("?" * len(game_ids))
-    rows = conn.execute(
-        f"SELECT pgs.game_id, pgs.player_id FROM player_game_stats pgs"
-        f" WHERE pgs.team_id = ? AND pgs.game_id IN ({placeholders})"
-        f" AND pgs.min >= 5",
-        (team_id, *game_ids),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            f"SELECT pgs.game_id, pgs.player_id FROM player_game_stats pgs"
+            f" WHERE pgs.team_id = ? AND pgs.game_id IN ({placeholders})"
+            f" AND pgs.min >= 5",
+            (team_id, *game_ids),
+        ).fetchall()
+    finally:
+        conn.close()
     result: Dict[str, set] = {gid: set() for gid in game_ids}
     for gid, pid in rows:
         result[str(gid)].add(int(pid))
@@ -1144,11 +1158,13 @@ def get_team_pace(team_id: int, season: str,
                   db_path: Path = DB_PATH) -> float:
     """Team pace (possessions/48). Falls back to _LEAGUE_AVG_PACE_FALLBACK if not found."""
     conn = get_conn(db_path)
-    row = conn.execute(
-        "SELECT pace FROM team_season_stats"
-        " WHERE team_id=? AND season=? AND season_type=?",
-        (team_id, season, season_type)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT pace FROM team_season_stats"
+            " WHERE team_id=? AND season=? AND season_type=?",
+            (team_id, season, season_type)).fetchone()
+    finally:
+        conn.close()
     return float(row[0]) if row and row[0] else _LEAGUE_AVG_PACE_FALLBACK
 
 
@@ -1157,11 +1173,13 @@ def get_team_def_ratio(opp_team_id: int, position_group: str,
                         db_path: Path = DB_PATH) -> float:
     """Matchup factor [0.80, 1.20]. 1.0 = neutral (fallback)."""
     conn = get_conn(db_path)
-    row = conn.execute(
-        "SELECT ratio FROM team_def_splits"
-        " WHERE team_id=? AND season=? AND position_group=? AND stat=?",
-        (opp_team_id, season, position_group, stat)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT ratio FROM team_def_splits"
+            " WHERE team_id=? AND season=? AND position_group=? AND stat=?",
+            (opp_team_id, season, position_group, stat)).fetchone()
+    finally:
+        conn.close()
     return float(row[0]) if row and row[0] else 1.0
 
 
@@ -1171,13 +1189,15 @@ def get_player_b2b_context(player_id: int, game_date,
     if not isinstance(game_date, str):
         game_date = str(game_date)
     conn = get_conn(db_path)
-    row = conn.execute(
-        "SELECT g.game_date,pgs.min FROM player_game_stats pgs"
-        " JOIN games g ON g.game_id=pgs.game_id"
-        " WHERE pgs.player_id=? AND g.game_date<? AND pgs.min>=5"
-        " ORDER BY g.game_date DESC LIMIT 1",
-        (player_id, game_date)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT g.game_date,pgs.min FROM player_game_stats pgs"
+            " JOIN games g ON g.game_id=pgs.game_id"
+            " WHERE pgs.player_id=? AND g.game_date<? AND pgs.min>=5"
+            " ORDER BY g.game_date DESC LIMIT 1",
+            (player_id, game_date)).fetchone()
+    finally:
+        conn.close()
     if not row:
         return {"is_b2b": False, "days_rest": 7,
                 "last_game_date": None, "last_game_min": 0.0}
@@ -1204,16 +1224,18 @@ def get_all_active_players(before_date: str, min_recent_games: int = 3,
     """
     conn = get_conn(db_path)
     sc = "AND g.season = :season" if season else ""
-    df = pd.read_sql_query(
-        "SELECT p.player_id,p.name,p.name_key,p.position,p.team_id"
-        " FROM players p"
-        " WHERE (SELECT COUNT(*) FROM player_game_stats pgs"
-        "        JOIN games g ON g.game_id=pgs.game_id"
-        "        WHERE pgs.player_id=p.player_id"
-        f"        AND g.game_date<:before AND pgs.min>=5 {sc}) >= :mg",
-        conn, params={"before": before_date, "mg": min_recent_games,
-                      "season": season or ""})
-    conn.close()
+    try:
+        df = pd.read_sql_query(
+            "SELECT p.player_id,p.name,p.name_key,p.position,p.team_id"
+            " FROM players p"
+            " WHERE (SELECT COUNT(*) FROM player_game_stats pgs"
+            "        JOIN games g ON g.game_id=pgs.game_id"
+            "        WHERE pgs.player_id=p.player_id"
+            f"        AND g.game_date<:before AND pgs.min>=5 {sc}) >= :mg",
+            conn, params={"before": before_date, "mg": min_recent_games,
+                          "season": season or ""})
+    finally:
+        conn.close()
     return df
 
 
@@ -1324,6 +1346,17 @@ def seed_scheduled_games(
                 log.debug("seed_scheduled_games: unmatched teams '%s'/'%s'",
                           home_name, away_name)
                 continue
+            # Skip seeding if a real NBA API row already exists for this matchup
+            # (real IDs look like "002250xxxx"; SCHED IDs start with "SCHED").
+            # Coexisting rows for the same game break get_games_for_date dedup.
+            existing = conn.execute(
+                "SELECT game_id FROM games WHERE game_date=? AND home_team_id=? AND away_team_id=?",
+                (target, home_tid, away_tid),
+            ).fetchone()
+            if existing and not existing[0].startswith("SCHED"):
+                log.debug("seed_scheduled_games: real game row exists for %s %d vs %d — skipping SCHED insert",
+                          target, home_tid, away_tid)
+                continue
             # Stable synthetic game_id — unique per date+matchup
             gid = f"SCHED{target.replace('-', '')}{home_tid}{away_tid}"
             cur = conn.execute(
@@ -1348,17 +1381,31 @@ def seed_scheduled_games(
 
 
 def get_games_for_date(game_date: str, db_path: Path = DB_PATH) -> pd.DataFrame:
-    """All games on date with team abbreviations."""
+    """All games on date with team abbreviations.
+
+    Deduplicates by (home_team_id, away_team_id): real NBA API rows (non-SCHED
+    game_id) take priority over synthetic SCHED rows so stored projections always
+    join correctly against player_game_stats.
+    """
     conn = get_conn(db_path)
-    df = pd.read_sql_query(
-        "SELECT g.game_id,g.game_date,g.home_team_id,g.away_team_id,"
-        " th.abbreviation AS home_abbr,ta.abbreviation AS away_abbr,g.season,g.season_type"
-        " FROM games g"
-        " JOIN teams th ON th.team_id=g.home_team_id"
-        " JOIN teams ta ON ta.team_id=g.away_team_id"
-        " WHERE g.game_date=?",
-        conn, params=(game_date,))
-    conn.close()
+    try:
+        df = pd.read_sql_query(
+            "SELECT g.game_id,g.game_date,g.home_team_id,g.away_team_id,"
+            " th.abbreviation AS home_abbr,ta.abbreviation AS away_abbr,g.season,g.season_type"
+            " FROM games g"
+            " JOIN teams th ON th.team_id=g.home_team_id"
+            " JOIN teams ta ON ta.team_id=g.away_team_id"
+            " WHERE g.game_date=?",
+            conn, params=(game_date,))
+    finally:
+        conn.close()
+    if df.empty:
+        return df
+    # Prefer real rows over SCHED rows for the same matchup
+    df["_is_sched"] = df["game_id"].str.startswith("SCHED")
+    df = df.sort_values("_is_sched").drop_duplicates(
+        subset=["home_team_id", "away_team_id"], keep="first"
+    ).drop(columns=["_is_sched"]).reset_index(drop=True)
     return df
 
 
@@ -1413,50 +1460,50 @@ def upsert_projection(conn, proj: dict) -> None:
 def print_status(db_path: str = DB_PATH) -> None:
     """Print row counts and pull log summary."""
     conn = get_conn(db_path)
-    cur = conn.cursor()
-    tables = ["players", "teams", "games", "player_game_stats",
-              "team_season_stats", "team_def_splits", "projections", "pull_log"]
-    print(f"\n{'Table':<25} {'Rows':>8}")
-    print("-" * 35)
-    for t in tables:
-        try:
-            n = cur.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-        except Exception:
-            n = "ERR"
-        print(f"{t:<25} {n:>8}")
+    try:
+        cur = conn.cursor()
+        tables = ["players", "teams", "games", "player_game_stats",
+                  "team_season_stats", "team_def_splits", "projections", "pull_log"]
+        print(f"\n{'Table':<25} {'Rows':>8}")
+        print("-" * 35)
+        for t in tables:
+            try:
+                n = cur.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            except Exception:
+                n = "ERR"
+            print(f"{t:<25} {n:>8}")
 
-    # Season breakdown from games
-    print("\nGames by season:")
-    rows = cur.execute(
-        "SELECT season, season_type, COUNT(*) as n FROM games "
-        "GROUP BY season, season_type ORDER BY season, season_type"
-    ).fetchall()
-    for r in rows:
-        print(f"  {r[0]} {r[1]}: {r[2]} games")
+        # Season breakdown from games
+        print("\nGames by season:")
+        rows = cur.execute(
+            "SELECT season, season_type, COUNT(*) as n FROM games "
+            "GROUP BY season, season_type ORDER BY season, season_type"
+        ).fetchall()
+        for r in rows:
+            print(f"  {r[0]} {r[1]}: {r[2]} games")
 
-    # Era weights check
-    ew = cur.execute(
-        "SELECT DISTINCT era_weight FROM games ORDER BY era_weight"
-    ).fetchall()
-    weights = [r[0] for r in ew]
-    print(f"\nDistinct era_weights: {weights}")
+        # Era weights check
+        ew = cur.execute(
+            "SELECT DISTINCT era_weight FROM games ORDER BY era_weight"
+        ).fetchall()
+        weights = [r[0] for r in ew]
+        print(f"\nDistinct era_weights: {weights}")
 
-    # Pull log tail
-    print("\nPull log (last 10):")
-    rows = cur.execute(
-        "SELECT season, endpoint, pulled_at, rows_upserted, status "
-        "FROM pull_log ORDER BY id DESC LIMIT 10"
-    ).fetchall()
-    for r in rows:
-        print(f"  {r[0]} | {r[1]:<35} | {r[2][:16]} | {r[3]:>6} rows | {r[4]}")
-
-    conn.close()
+        # Pull log tail
+        print("\nPull log (last 10):")
+        rows = cur.execute(
+            "SELECT season, endpoint, pulled_at, rows_upserted, status "
+            "FROM pull_log ORDER BY id DESC LIMIT 10"
+        ).fetchall()
+        for r in rows:
+            print(f"  {r[0]} | {r[1]:<35} | {r[2][:16]} | {r[3]:>6} rows | {r[4]}")
+    finally:
+        conn.close()
 
 
 def verify(db_path: str = DB_PATH) -> bool:
     """Run sanity checks. Returns True if all pass."""
     conn = get_conn(db_path)
-    cur = conn.cursor()
     checks = []
 
     def chk(label: str, expr: bool) -> None:
@@ -1465,38 +1512,40 @@ def verify(db_path: str = DB_PATH) -> bool:
         print(f"  [{status}] {label}")
 
     print("\nVerification checks:")
+    try:
+        cur = conn.cursor()
 
-    n_players = cur.execute("SELECT COUNT(*) FROM players").fetchone()[0]
-    chk("players > 0", n_players > 0)
+        n_players = cur.execute("SELECT COUNT(*) FROM players").fetchone()[0]
+        chk("players > 0", n_players > 0)
 
-    n_teams = cur.execute("SELECT COUNT(*) FROM teams").fetchone()[0]
-    chk("teams seeded (>= 30)", n_teams >= 30)
+        n_teams = cur.execute("SELECT COUNT(*) FROM teams").fetchone()[0]
+        chk("teams seeded (>= 30)", n_teams >= 30)
 
-    n_games = cur.execute("SELECT COUNT(*) FROM games").fetchone()[0]
-    chk("games > 0", n_games > 0)
+        n_games = cur.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+        chk("games > 0", n_games > 0)
 
-    n_stats = cur.execute("SELECT COUNT(*) FROM player_game_stats").fetchone()[0]
-    chk("player_game_stats > 0", n_stats > 0)
+        n_stats = cur.execute("SELECT COUNT(*) FROM player_game_stats").fetchone()[0]
+        chk("player_game_stats > 0", n_stats > 0)
 
-    n_seasons = cur.execute("SELECT COUNT(DISTINCT season) FROM games").fetchone()[0]
-    n_weights = cur.execute(
-        "SELECT COUNT(DISTINCT era_weight) FROM games"
-    ).fetchone()[0]
-    # Only require multiple weights when multiple seasons are loaded
-    chk("era_weights set", n_weights >= 1 if n_seasons <= 1 else n_weights >= 2)
+        n_seasons = cur.execute("SELECT COUNT(DISTINCT season) FROM games").fetchone()[0]
+        n_weights = cur.execute(
+            "SELECT COUNT(DISTINCT era_weight) FROM games"
+        ).fetchone()[0]
+        # Only require multiple weights when multiple seasons are loaded
+        chk("era_weights set", n_weights >= 1 if n_seasons <= 1 else n_weights >= 2)
 
-    n_starters = cur.execute(
-        "SELECT COUNT(*) FROM player_game_stats WHERE starter_flag=1"
-    ).fetchone()[0]
-    chk("starter_flag populated (> 0)", n_starters > 0)
+        n_starters = cur.execute(
+            "SELECT COUNT(*) FROM player_game_stats WHERE starter_flag=1"
+        ).fetchone()[0]
+        chk("starter_flag populated (> 0)", n_starters > 0)
 
-    n_splits = cur.execute("SELECT COUNT(*) FROM team_def_splits").fetchone()[0]
-    chk("team_def_splits populated", n_splits > 0)
+        n_splits = cur.execute("SELECT COUNT(*) FROM team_def_splits").fetchone()[0]
+        chk("team_def_splits populated", n_splits > 0)
 
-    n_pace = cur.execute("SELECT COUNT(*) FROM team_season_stats").fetchone()[0]
-    chk("team_season_stats populated", n_pace > 0)
-
-    conn.close()
+        n_pace = cur.execute("SELECT COUNT(*) FROM team_season_stats").fetchone()[0]
+        chk("team_season_stats populated", n_pace > 0)
+    finally:
+        conn.close()
     passed = sum(1 for _, s in checks if s == "PASS")
     total = len(checks)
     print(f"\n{passed}/{total} checks passed.")

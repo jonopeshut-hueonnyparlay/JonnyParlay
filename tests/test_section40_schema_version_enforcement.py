@@ -333,10 +333,10 @@ def test_sidecar_written_by_capture_clv_write_closing_odds(tmp_path, monkeypatch
         w.writerow(row)
 
     # Fire the real writer with a matching update. The writer keys rows by
-    # ``(player.lower(), stat, line, direction.lower())`` and expects a
-    # float clv that it formats with ``:.4f``, so match that shape.
+    # ``(date, player.lower(), stat, line, direction.lower())`` — C1 fix added
+    # date as the first key component to prevent cross-date key collisions.
     updates = {
-        ("test player", "PTS", "20.5", "over"): {
+        ("2026-04-20", "test player", "PTS", "20.5", "over"): {
             "closing_odds": -108,
             "clv": 0.005,
         }

@@ -108,8 +108,8 @@ def test_summary_partial_coverage():
     assert s["captured"] == 2
     assert s["missing"] == 2
     assert s["coverage_pct"] == pytest.approx(50.0, abs=1e-6)
-    # (2.0 + -1.0) / 2 = 0.5 — NOT 0.25 (which would be avg'd over all 4)
-    assert s["avg_clv"] == pytest.approx(0.5, abs=1e-6)
+    # (0.02 + -0.01) / 2 = 0.005 — stored as decimal; display sites multiply by 100 (M8)
+    assert s["avg_clv"] == pytest.approx(0.005, abs=1e-6)
     assert s["beat_close"] == 1
     assert s["beat_close_pct"] == pytest.approx(50.0, abs=1e-6)
 
@@ -125,7 +125,7 @@ def test_summary_zero_captured_clv_is_counted():
     assert s["captured"] == 2
     assert s["coverage_pct"] == 100.0
     assert s["beat_close"] == 1  # only the 0.02 beats close; 0.0 is neutral
-    assert s["avg_clv"] == pytest.approx(1.0, abs=1e-6)   # (0 + 2) / 2
+    assert s["avg_clv"] == pytest.approx(0.01, abs=1e-6)   # (0.0 + 0.02) / 2 = 0.01 decimal (M8)
 
 
 def test_summary_best_worst_drawn_from_captured_only():

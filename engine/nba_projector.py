@@ -860,7 +860,7 @@ def compute_shooting_rates(df) -> dict:
         pl_num   = d["fga"]   + 0.44 * d["fta"]   + d["tov"]
         usg_raw  = np.where(
             (d["min"] > 0) & (tm_denom > 0),
-            100.0 * pl_num * (d["tm_min"] / 5.0) / (d["min"] * tm_denom),
+            100.0 * pl_num * (d["tm_min"].clip(upper=240.0) / 5.0) / (d["min"] * tm_denom),
             np.nan,
         )
         usg_vals = pd.Series(usg_raw).ffill().fillna(20.0)
@@ -1021,6 +1021,11 @@ def project_player(
         log.debug("R7 cold_start: player_id=%s subtype=%s n_career=%d cap=%.1f career_avg=%s",
                   player_id, cold_start_subtype, n_career_games, cold_start_min_cap or 0,
                   f"{career_avg_min_raw:.1f}" if career_avg_min_raw else "None")
+        # H5: get_player_career_avg_minutes requires >=10 career games (HAVING clause)
+        # but get_player_career_game_count has no threshold. Use career_avg_min_raw as
+        # fallback so players with 1-9 career games still get a real prior, not flat 16 MPG.
+        if career_min_prior is None and career_avg_min_raw is not None:
+            career_min_prior = career_avg_min_raw
     else:
         role = classify_role(df)
 
@@ -1047,15 +1052,17 @@ def project_player(
                                injury_minutes_override=injury_minutes_override,
                                minutes_prior_override=career_min_prior)
     if proj_min < 1.0:
+        log.debug("project_player: proj_min %.2f < 1.0 — skipping player_id=%s", proj_min, player_id)
         return None
 
     is_playoff  = season_type == "Playoffs"
-    if is_playoff:
-        proj_min = round(proj_min * PLAYOFF_MINUTES_SCALAR.get(role, 1.0), 2)
-    else:
-        _rs_scalar = REGULAR_SEASON_MINUTES_SCALAR.get(role, 1.0)
-        if role == "spot": _rs_scalar = max(_rs_scalar, 1.200)  # §7.5: floor -- spot CI [1.57,1.83], protects future refits
-        proj_min = round(proj_min * _rs_scalar, 2)
+    if injury_minutes_override is None:
+        if is_playoff:
+            proj_min = round(proj_min * PLAYOFF_MINUTES_SCALAR.get(role, 1.0), 2)
+        else:
+            _rs_scalar = REGULAR_SEASON_MINUTES_SCALAR.get(role, 1.0)
+            if role == "spot": _rs_scalar = max(_rs_scalar, 1.200)  # §7.5: floor -- spot CI [1.57,1.83], protects future refits
+            proj_min = round(proj_min * _rs_scalar, 2)
     # R7 Brief 7: apply cold_start per-subtype minutes ceiling after scaling.
     # Prevents extreme over-projection for unknown/returning/new-team cold_start players.
     if cold_start_min_cap is not None and proj_min > cold_start_min_cap:

@@ -949,6 +949,8 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
                 if best_over["stat"] in PITCHER_STATS:
                     pitcher_game_dir_count[(new_game, best_over["direction"])] += 1
                 used.add(id(best_over))
+                over_count += 1
+                has_over = True
             else:
                 # No valid over found — restore old_pick's contributions
                 game_count[old_game] += 1
@@ -5024,6 +5026,10 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
             batter_prop_counts[p["player"]] += 1
     max_batter_corr = max(batter_prop_counts.values()) if batter_prop_counts else 0
 
+    # M7: include KILLSHOT units in daily cap validation (premium only was under-counting)
+    ks_u = sum(p.get("size", 0) for p in killshots)
+    total_u_all = total_u + ks_u
+
     checks = [
         (f"Premium card: {n_prem} picks generated", n_prem == 5 or n_prem == 0),
         (f"Safest 5 generated", len(safest5) >= 5 or len(safest5) == 0),
@@ -5037,7 +5043,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"G11 enforced: Max pitcher props per pitcher = {max_pitcher_props}", max_pitcher_props <= 1),
         (f"G11b enforced: Max batter corr props per batter = {max_batter_corr}", max_batter_corr <= 1),
         (f"All sizes ≤ 1.25u", all(p.get("size",0) <= 1.25 for p in all_qualified)),
-        (f"Daily cap: {total_u:.2f}u ≤ 12u", total_u <= 12.0),
+        (f"Daily cap (premium {total_u:.2f}u + KILLSHOT {ks_u:.2f}u = {total_u_all:.2f}u) ≤ 12u", total_u_all <= 12.0),
     ]
     for label, ok in checks:
         mark = "✓" if ok else "✗"

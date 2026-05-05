@@ -60,8 +60,14 @@ log = logging.getLogger("generate_projections")
 # ---------------------------------------------------------------------------
 # T5: Vegas team-total constraint
 # ---------------------------------------------------------------------------
-_CONSTRAINT_SCALE_KEYS = ["proj_pts", "proj_reb", "proj_ast", "proj_fg3m",
-                           "proj_blk", "proj_stl", "proj_tov"]
+_CONSTRAINT_SCALE_KEYS = [
+    "proj_pts",  "proj_pts_p25",  "proj_pts_p75",
+    "proj_reb",  "proj_reb_p25",  "proj_reb_p75",
+    "proj_ast",  "proj_ast_p25",  "proj_ast_p75",
+    "proj_fg3m", "proj_fg3m_p25", "proj_fg3m_p75",
+    "proj_blk", "proj_stl", "proj_tov",
+    "proj_min", "dk_std",
+]
 _CONSTRAINT_MIN = 0.80
 _CONSTRAINT_MAX = 1.20
 
@@ -205,6 +211,7 @@ def _fetch_spreads(game_date: str, db_path: str = DB_PATH) -> dict:
         home_tid = name_to_tid.get(home_name)
         away_tid = name_to_tid.get(away_name)
         if not home_tid or not away_tid:
+            log.warning("_fetch_spreads: unmatched team name(s) '%s'/'%s' — spread skipped, team totals will use equal split", home_name, away_name)
             continue
         gid = matchup_to_gid.get((int(home_tid), int(away_tid)))
         if not gid:

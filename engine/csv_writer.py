@@ -541,6 +541,19 @@ def generate_daily_csv(
         log.warning("No projections generated for %s", game_date)
         return None
 
+    # M5: apply team-total constraint when team_totals available.
+    # generate_projections.py also derives team totals from spread when API
+    # returns none — that derivation is not replicated here; use
+    # generate_projections.py for production runs.
+    if team_totals:
+        try:
+            from generate_projections import constrain_team_totals
+            projections = constrain_team_totals(projections, team_totals)
+        except ImportError:
+            log.warning("generate_daily_csv: constrain_team_totals unavailable — team-total constraint skipped")
+    else:
+        log.warning("generate_daily_csv: no team_totals — team-total constraint skipped; use generate_projections.py for production")
+
     csv_path = write_nba_csv(
         projections=projections,
         game_date=game_date,
