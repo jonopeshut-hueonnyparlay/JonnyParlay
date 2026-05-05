@@ -92,7 +92,8 @@ EWMA_SPAN_STAT = {
     "tov":  10,   # moderate
 }
 EWMA_SPAN_SHOOTING = 10  # shooting efficiency rates (FG%, FT%, FG3A rate, USG%) — stable
-EWMA_SPAN_MIN      = 6   # minutes — coach-reactive; was 5, brief says 6 optimal
+EWMA_SPAN_MIN      = 8   # minutes — was 6; increased to 8 (2026-05-04 accuracy overhaul)
+                         # span=6 over-reacted to 1-2 blowout/injury games; 8 is more stable
 # Task #4 (Research Brief 6, 2026-05-02): cap raw minutes before EWMA so OT games
 # (player played 44+ min) don't inflate the minutes baseline for future games.
 # Regulation max is ~42 min; anything ≥ 44 is almost certainly OT.
@@ -290,18 +291,26 @@ BLEND_BIAS_CORRECTION = 0.0    # no additive correction — fix root causes stru
 # Model OREB and DREB separately via available-rebound denominators.
 # OREB: player OREB / (team_misses * min/48). Stabilises ~200-250 possessions (~20 games).
 # DREB: player DREB / (opp_misses * min/48).  Stabilises ~250-300 possessions (~28 games).
-# Positional priors calibrated from 2024-25 DB (min>=10, Regular Season) — P15 2026-05-01.
 # Denominator: (tm_fga - tm_fgm + 0.44*tm_fta) * min/48 — matches compute_reb_rates().
-_REB_POS_OREB_PRIOR = {"G": 0.02154, "F": 0.02701, "C": 0.05681}  # OREB per team miss/48 — R6 Brief 7 (scaled proportionally to _REB_RATE_PRIOR update)
-_REB_POS_DREB_PRIOR = {"G": 0.08527, "F": 0.08792, "C": 0.13836}  # DREB per opp miss/48 — R6 Brief 7
+#
+# Season-conditional priors (2026-05-04 accuracy overhaul):
+# Regular season: calibrated from 2024-25 DB (min>=10, Regular Season) — P15 2026-05-01.
+# Playoff: R6 Brief 7 values — tighter rotations, fewer possessions, lower F/C reb rates.
+# R6 changed priors proportionally: G×1.054, F×0.832, C×0.806.  RS values = PO / scale.
+_REB_POS_OREB_PRIOR_RS = {"G": 0.02042, "F": 0.03248, "C": 0.07047}  # RS: OREB per team miss/48 — pre-R6 empirical
+_REB_POS_DREB_PRIOR_RS = {"G": 0.08086, "F": 0.10572, "C": 0.17163}  # RS: DREB per opp miss/48 — pre-R6 empirical
+_REB_POS_OREB_PRIOR_PO = {"G": 0.02154, "F": 0.02701, "C": 0.05681}  # PO: OREB per team miss/48 — R6 Brief 7
+_REB_POS_DREB_PRIOR_PO = {"G": 0.08527, "F": 0.08792, "C": 0.13836}  # PO: DREB per opp miss/48 — R6 Brief 7
 _REB_PRIOR_N_OREB   = 12   # M6: standardised to 12 (matches _REB_RATE_PRIOR_N); Research Brief 5: REB k=12-15
 _REB_PRIOR_N_DREB   = 12   # M6: standardised to 12 (matches _REB_RATE_PRIOR_N); was 28 (overshrunken)
 REB_ALPHA           = 0.45  # weight on decomposed path (lean baseline until rates stabilise)
-# T6 (Research Brief 6, 2026-05-02): positional prior for the per-minute baseline REB path.
-# Calibrated from 2024-25 DB (min>=10, Regular Season): G=0.055, F=0.095, C=0.165 reb/min.
-# Applies Bayesian shrinkage to the EWMA reb/min rate — fixes cold_start baseline of 0.0.
-_REB_RATE_PRIOR   = {"G": 0.058, "F": 0.079, "C": 0.133}  # total reb/min — R6 Brief 7 empirical (was G=0.055,F=0.095,C=0.165)
-_REB_RATE_PRIOR_N = 12   # equivalent games of prior weight (same order of magnitude as reb EWMA span)
+# Per-minute baseline REB path priors (T6, Research Brief 6, 2026-05-02).
+# Bayesian shrinkage of EWMA reb/min rate — fixes cold_start baseline of 0.0.
+# RS: calibrated from 2024-25 DB (min>=10, Regular Season): G=0.055, F=0.095, C=0.165 reb/min.
+# PO: R6 Brief 7 empirical playoff values (tighter rotations).
+_REB_RATE_PRIOR_RS = {"G": 0.055, "F": 0.095, "C": 0.165}  # RS total reb/min — pre-R6 empirical
+_REB_RATE_PRIOR_PO = {"G": 0.058, "F": 0.079, "C": 0.133}  # PO total reb/min — R6 Brief 7
+_REB_RATE_PRIOR_N  = 12   # equivalent games of prior weight (same order of magnitude as reb EWMA span)
 
 # AST decomposition constants (Brief P3, Sec. 3 — 2026-05-01)
 # AST rate per team possession: normalises for pace naturally; avoids per-FGA over-normalisation.
@@ -540,7 +549,8 @@ def compute_reb_rates(df_clean: pd.DataFrame,
                       avail_oreb_per_game: float,
                       avail_dreb_per_game: float,
                       pos_group: str,
-                      avail_weights: Optional[pd.Series] = None) -> tuple[float, float]:
+                      avail_weights: Optional[pd.Series] = None,
+                      is_playoff: bool = False) -> tuple[float, float]:
     """Bayesian-shrunk OREB and DREB rates per available rebound.
 
     avail_oreb_per_game: team_FGA/g * (1 - team_FG%) — OREB pool (own misses).
@@ -551,10 +561,13 @@ def compute_reb_rates(df_clean: pd.DataFrame,
         dreb_rate[i] = player_dreb[i] / (avail_dreb_per_game * min[i] / 48)
 
     EWMA (span=10) then Bayesian shrinkage to positional priors.
+    is_playoff: selects playoff-calibrated priors (tighter rotations, lower F/C rates).
     Returns (oreb_rate, dreb_rate) — both in units of [rebounds per available rebound].
     """
-    oreb_prior = _REB_POS_OREB_PRIOR.get(pos_group, 0.044)
-    dreb_prior = _REB_POS_DREB_PRIOR.get(pos_group, 0.133)
+    _oreb_prior_dict = _REB_POS_OREB_PRIOR_PO if is_playoff else _REB_POS_OREB_PRIOR_RS
+    _dreb_prior_dict = _REB_POS_DREB_PRIOR_PO if is_playoff else _REB_POS_DREB_PRIOR_RS
+    oreb_prior = _oreb_prior_dict.get(pos_group, 0.044)
+    dreb_prior = _dreb_prior_dict.get(pos_group, 0.133)
 
     if df_clean.empty or "oreb" not in df_clean.columns or "dreb" not in df_clean.columns:
         return oreb_prior, dreb_prior
@@ -1199,7 +1212,7 @@ def project_player(
     # Separate rates for OREB and DREB — different stabilisation timescales
     # and different contextual drivers (OREB = own-miss recovery; DREB = opp-miss recovery).
     oreb_rate, dreb_rate = compute_reb_rates(df_clean, avail_oreb_pg, avail_dreb_pg, pg,
-                                             avail_weights=avail_weights)
+                                             avail_weights=avail_weights, is_playoff=is_playoff)
     proj_oreb       = oreb_rate * avail_oreb_pg * (proj_min / 48.0) * pace_reb
     proj_dreb       = dreb_rate * avail_dreb_pg * (proj_min / 48.0) * pace_reb
     proj_reb_custom = (proj_oreb + proj_dreb) * matchup_reb   # DvP [0.80, 1.20]
@@ -1211,7 +1224,8 @@ def project_player(
     _reb_n_games   = len(df_clean) if df_clean is not None and not df_clean.empty else 0
     _reb_rate_raw  = rates.get("reb", 0.0)
     if _reb_n_games == 0:
-        _reb_rate_prior  = _REB_RATE_PRIOR.get(pg, 0.090)
+        _reb_rate_prior_dict = _REB_RATE_PRIOR_PO if is_playoff else _REB_RATE_PRIOR_RS
+        _reb_rate_prior  = _reb_rate_prior_dict.get(pg, 0.090)
         _reb_rate_shrunk = (
             (_reb_n_games * _reb_rate_raw + _REB_RATE_PRIOR_N * _reb_rate_prior)
             / max(1, _reb_n_games + _REB_RATE_PRIOR_N)
