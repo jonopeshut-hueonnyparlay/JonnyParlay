@@ -1063,6 +1063,17 @@ def project_player(
         log.debug("R7: cold_start min cap %.1f → %.1f (subtype=%s player_id=%s)",
                   proj_min, cold_start_min_cap, cold_start_subtype, player_id)
         proj_min = round(cold_start_min_cap, 2)
+
+    # Q/GTD probability weighting — applied in live runs only (backtest uses status="").
+    # All stats scale linearly with proj_min, so this is a clean expected-value reduction.
+    # Do not weight if injury_minutes_override set (that represents a specific allocation).
+    _PLAY_PROB = {"Q": 0.50, "GTD": 0.65, "P": 0.85}
+    if injury_status in _PLAY_PROB and injury_minutes_override is None:
+        _prob = _PLAY_PROB[injury_status]
+        log.debug("Q/GTD weighting: %s status=%s prob=%.2f proj_min %.1f→%.1f",
+                  player_name, injury_status, _prob, proj_min, proj_min * _prob)
+        proj_min = round(proj_min * _prob, 2)
+
     # Always use Regular Season pace data (reliable); playoff pace DB entries
     # are often missing, causing the fallback (100.22) to inflate projections.  # L1: was stale 99.5
     # §7.6 playoff pace override: scale game_pace to playoff baseline before

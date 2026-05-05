@@ -46,11 +46,14 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+import json
+
 from paths import DATA_DIR, PROJECT_ROOT
 from projections_db import DB_PATH, seed_scheduled_games
 from nba_projector import run_projections, CURRENT_SEASON
 from csv_writer import write_nba_csv, fetch_nba_implied_totals, make_team_total_key, _odds_api_get
 from injury_parser import get_injury_context
+from name_utils import fold_name
 
 log = logging.getLogger("generate_projections")
 
@@ -224,6 +227,114 @@ def _fetch_spreads(game_date: str, db_path: str = DB_PATH) -> dict:
     return spreads
 
 
+def _derive_team_totals(
+    implied_totals: dict,
+    spreads: dict,
+    game_date: str,
+    db_path: str = DB_PATH,
+) -> dict:
+    """Derive team totals from game total ± spread/2 when Odds API team_totals absent.
+
+    Math (spread is home-team perspective; spread < 0 = home favoured):
+        home_total = (game_total - spread) / 2
+        away_total = (game_total + spread) / 2
+
+    Falls back to game_total / 2 per team when no spread is available.
+    Returns {"{game_id}:{team_id}": team_total} — same key format as
+    fetch_nba_implied_totals() so constrain_team_totals() consumes it unchanged.
+    """
+    if not implied_totals:
+        return {}
+
+    try:
+        import sqlite3
+        con = sqlite3.connect(db_path)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            "SELECT game_id, home_team_id, away_team_id FROM games WHERE game_date = ?",
+            (game_date,),
+        ).fetchall()
+        con.close()
+    except Exception as exc:
+        log.warning("_derive_team_totals: DB error — %s", exc)
+        return {}
+
+    derived: dict = {}
+    for row in rows:
+        gid      = str(row["game_id"])
+        home_tid = int(row["home_team_id"])
+        away_tid = int(row["away_team_id"])
+
+        game_total = implied_totals.get(gid)
+        if not game_total or game_total <= 0:
+            continue
+
+        spread = spreads.get(gid)  # home spread; None if unavailable
+        if spread is None:
+            home_total = round(game_total / 2.0, 1)
+            away_total = round(game_total / 2.0, 1)
+        else:
+            home_total = round((game_total - spread) / 2.0, 1)
+            away_total = round((game_total + spread) / 2.0, 1)
+
+        derived[make_team_total_key(gid, home_tid)] = home_total
+        derived[make_team_total_key(gid, away_tid)] = away_total
+        log.debug(
+            "_derive_team_totals: game=%s total=%.1f spread=%s → home=%.1f away=%.1f",
+            gid, game_total, spread, home_total, away_total,
+        )
+
+    log.info("_derive_team_totals: derived %d team totals from %d game totals",
+             len(derived), len(implied_totals))
+    return derived
+
+
+_INACTIVES_OVERRIDE_PATH = DATA_DIR / "inactives_override.json"
+
+
+def _load_inactives_override(game_date: str, db_path: str = DB_PATH) -> dict:
+    """Load data/inactives_override.json and return {player_id: status_code} for game_date.
+
+    Override file format:
+        { "2026-05-04": { "Dillon Brooks": "O", "Kevin Durant": "Q" } }
+
+    Player names are matched via fold_name() against the players table.
+    Override takes precedence over the injury PDF parser output.
+    """
+    if not _INACTIVES_OVERRIDE_PATH.exists():
+        return {}
+    try:
+        overrides = json.loads(_INACTIVES_OVERRIDE_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("Failed to load inactives_override.json: %s", exc)
+        return {}
+
+    day_overrides = overrides.get(game_date, {})
+    if not day_overrides:
+        return {}
+
+    import sqlite3
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.row_factory = sqlite3.Row
+        rows = con.execute("SELECT player_id, name_key FROM players").fetchall()
+        con.close()
+    except Exception as exc:
+        log.warning("_load_inactives_override: DB error — %s", exc)
+        return {}
+
+    nk_map = {r["name_key"]: r["player_id"] for r in rows}
+    result = {}
+    for name, status in day_overrides.items():
+        pid = nk_map.get(fold_name(name))
+        if pid:
+            result[pid] = status.upper()
+            log.info("Manual inactive override: %s → %s (player_id=%s)", name, status.upper(), pid)
+        else:
+            log.warning("Manual inactive override: player '%s' not found in DB", name)
+    return result
+
+
 def run(
     game_date: str,
     season: str = CURRENT_SEASON,
@@ -278,11 +389,30 @@ def run(
     log.info("Fetching spreads...")
     spreads = _fetch_spreads(game_date, db_path)
 
+    # 2b. If Odds API returned 0 explicit team totals, derive from game total ± spread/2.
+    #     This ensures constrain_team_totals() always fires — the API rarely returns the
+    #     team_totals market during playoffs but always returns game totals + spreads.
+    if not team_totals and implied_totals:
+        log.info("No explicit team totals from API — deriving from game total ± spread/2")
+        team_totals = _derive_team_totals(implied_totals, spreads, game_date, db_path)
+
     # 3. Injury context
     log.info("Fetching injury context...")
     injury_statuses, injury_minutes_overrides = get_injury_context(game_date, season, db_path)
     log.info("  injuries: %d statuses, %d minute overrides",
              len(injury_statuses), len(injury_minutes_overrides))
+
+    if len(injury_statuses) == 0:
+        log.warning(
+            "⚠  0 injury statuses returned — nbainjuries PDF may be unavailable or empty. "
+            "All players will be projected as active. Check manually for key DNPs."
+        )
+
+    # Apply manual inactive override (data/inactives_override.json) — takes precedence.
+    _manual = _load_inactives_override(game_date, db_path)
+    if _manual:
+        injury_statuses.update(_manual)
+        log.info("  applied %d manual override(s) from inactives_override.json", len(_manual))
 
     # 4. Run projections
     log.info("Running projections...")

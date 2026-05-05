@@ -14,6 +14,7 @@ import datetime
 import logging
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -105,22 +106,29 @@ def fetch_injury_report(date: Optional[datetime.date] = None) -> pd.DataFrame:
     if date is None:
         date = datetime.date.today()
 
-    timestamps = _build_timestamps(date)
+    timestamps = list(reversed(_build_timestamps(date)))  # try latest first
     last_err = None
 
-    for ts in reversed(timestamps):  # try latest first
-        try:
-            if not check_reportvalid(ts):
-                continue
-            df_raw = get_reportdata(ts, return_df=True)
-            if df_raw is not None and not df_raw.empty:
-                log.info("Injury report fetched for %s (ts=%s)", date, ts.strftime("%I:%M %p"))
-                return _normalise_report(df_raw)
-        except (KeyError, ValueError, TypeError, AttributeError, RuntimeError,
-                URLRetrievalError, OSError) as exc:
-            # M15: catch expected parse/network errors only; let unexpected bugs propagate
-            last_err = exc
-            continue
+    for idx, ts in enumerate(timestamps):
+        # Retry the 3 most recent timestamps once on transient failure (10s delay).
+        max_attempts = 2 if idx < 3 else 1
+        for attempt in range(max_attempts):
+            try:
+                if not check_reportvalid(ts):
+                    break  # timestamp not valid; skip to next
+                df_raw = get_reportdata(ts, return_df=True)
+                if df_raw is not None and not df_raw.empty:
+                    log.info("Injury report fetched for %s (ts=%s)", date, ts.strftime("%I:%M %p"))
+                    return _normalise_report(df_raw)
+                break  # valid timestamp but empty — move on
+            except (KeyError, ValueError, TypeError, AttributeError, RuntimeError,
+                    URLRetrievalError, OSError) as exc:
+                # M15: catch expected parse/network errors only; let unexpected bugs propagate
+                last_err = exc
+                if attempt + 1 < max_attempts:
+                    log.debug("Injury report fetch failed (attempt %d/%d) for ts=%s: %s — retrying in 10s",
+                              attempt + 1, max_attempts, ts.strftime("%I:%M %p"), exc)
+                    time.sleep(10)
 
     if last_err:
         log.warning("Could not fetch injury report for %s: %s", date, last_err)
