@@ -113,7 +113,10 @@ TEAM_MIN_TARGET = 240.0
 TEAM_MIN_FLOOR  = 180.0   # below this, roster is incomplete — do not scale
 MIN_GAMES_FOR_TIER = 10   # raised from 5 (task #2, 2026-05-02): more games needed
                           # before EWMA rates are stable; players with 5-9 games
-                          # now use career-history prior minutes instead of flat 16 MPG
+                          # now use career-history prior minutes instead of flat 16 MPG.
+                          # Strict-less-than: a player with exactly 10 games is NOT
+                          # cold_start (10 games is enough for classify_role to pick a
+                          # tier). Audit B4 (2026-05-06) — clarification only.
 
 # L4 — Availability weighting constants (Research Brief 5, 2026-05-02).
 # "Key" teammate threshold: players averaging ≥ 12 MPG whose absence inflates
@@ -249,7 +252,14 @@ PLAYOFF_MINUTES_SCALAR = {
     "sixth_man":  0.960,   # was 0.909 (+0.051); n=861,  fit 21.24/22.13
     "rotation":   0.924,   # was 0.550 (+0.374); n=986,  fit 14.60/15.81 — major correction
     "spot":       0.948,   # was 0.350 (+0.598); n=109,  fit 10.00/10.55 — major correction
-    "cold_start": 0.400,   # unchanged — filtered out of H2 refit; sub-type caps handle
+    "cold_start": 0.400,   # filtered out of the H2 refit (n too small to fit). Applied
+                           # multiplicatively to baseline proj_min for cold_start
+                           # players in playoffs *before* the per-subtype cap at
+                           # nba_projector.py:1139. The cap is a ceiling, not a
+                           # replacement: 0.400 * 16 ≈ 6.4 stays below all subtype
+                           # caps (taxi=12, returner=min(career,22)) so the scalar
+                           # dominates in practice. Audit E4 (2026-05-06) — comment
+                           # corrected; prior wording implied the cap superseded.
 }
 
 # 1b. REGULAR_SEASON_MINUTES_SCALAR (Research Brief 6, 2026-05-02):
