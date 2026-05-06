@@ -1120,6 +1120,11 @@ def project_player(
                 role = "starter"
         elif injury_minutes_override is not None and not df.empty:
             # Legacy path: kept for the rare known-exact-minutes case.
+            # M2 (audit 2026-05-06): this EWMA is recomputed inside
+            # project_minutes() — intentional. Threading a baseline hint
+            # through would save sub-ms on the ~5-15 override-bearing
+            # players per slate; not worth the optional-param surface
+            # area.  Closed as wontfix-perf.
             ewma_baseline = float(
                 df.sort_values("game_date")["min"]
                   .ewm(span=EWMA_SPAN_MIN, min_periods=1).mean().iloc[-1]
