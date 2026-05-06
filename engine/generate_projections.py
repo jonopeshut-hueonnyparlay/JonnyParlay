@@ -54,6 +54,7 @@ from nba_projector import run_projections, CURRENT_SEASON
 from csv_writer import write_nba_csv, fetch_nba_implied_totals, make_team_total_key, _odds_api_get
 from injury_parser import get_injury_context
 from name_utils import fold_name
+import diagnostics
 
 log = logging.getLogger("generate_projections")
 
@@ -88,6 +89,12 @@ def constrain_team_totals(
       5. Apply scale to all _CONSTRAINT_SCALE_KEYS for every player on that team.
 
     T5 (Research Brief 6, 2026-05-02).
+
+    H1 diag (audit 2026-05-06): when JONNYPARLAY_DIAG_VEGAS_VS_240=1, captures
+    pre/post per-team snapshots via diagnostics.record_team_pre_vegas /
+    record_team_post_vegas so the audit's adversarial pattern (top-5 minutes
+    deflated by Vegas after 240-min protection) can be quantified. Hooks are
+    no-ops when the env var is unset.
     """
     from collections import defaultdict as _dd
 
@@ -125,15 +132,28 @@ def constrain_team_totals(
                 raw_scale, clipped, team_id, vegas_total, denom
             )
 
-        if abs(clipped - 1.0) < 1e-4:
-            continue  # No meaningful adjustment
+        # H1 diag: snapshot before any mutation. Cheap deepcopy of fields only.
+        team_id_for_diag = tprojs[0].get("team_id") if tprojs else None
+        if team_id_for_diag is not None:
+            diagnostics.record_team_pre_vegas(team_id_for_diag, tprojs)
 
-        for p in tprojs:
-            for k in _CONSTRAINT_SCALE_KEYS:
-                if k in p and p[k] is not None:
-                    p[k] = round(p[k] * clipped, 2)
-        log.debug("constrain_team_totals: key=%s  vegas=%.1f  proj=%.1f  scale=%.4f  n=%d",
-                  key, vegas_total, denom, clipped, len(tprojs))
+        if abs(clipped - 1.0) >= 1e-4:
+            for p in tprojs:
+                for k in _CONSTRAINT_SCALE_KEYS:
+                    if k in p and p[k] is not None:
+                        p[k] = round(p[k] * clipped, 2)
+            log.debug("constrain_team_totals: key=%s  vegas=%.1f  proj=%.1f  scale=%.4f  n=%d",
+                      key, vegas_total, denom, clipped, len(tprojs))
+
+        # H1 diag: snapshot after (no-)mutation — capture short-circuited cases too.
+        if team_id_for_diag is not None:
+            diagnostics.record_team_post_vegas(
+                team_id_for_diag,
+                raw_scale=raw_scale,
+                clipped_scale=clipped,
+                vegas_total=vegas_total,
+                projections=tprojs,
+            )
 
     return projections
 if not log.handlers:
@@ -476,6 +496,8 @@ def run(
     # T5: Constrain team totals to Vegas lines
     if not no_constraint:
         projections = constrain_team_totals(projections, team_totals)
+        # H1 diag: flush the vegas-vs-240 sidecar (no-op if env var unset).
+        diagnostics.flush_vegas(game_date)
 
     # 5. Write CSV
     log.info("Writing SaberSim-schema CSV...")
