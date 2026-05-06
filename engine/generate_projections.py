@@ -67,8 +67,15 @@ _CONSTRAINT_SCALE_KEYS = [
     "proj_ast",  "proj_ast_p25",  "proj_ast_p75",
     "proj_fg3m", "proj_fg3m_p25", "proj_fg3m_p75",
     "proj_blk", "proj_stl", "proj_tov",
-    "proj_min", "dk_std",
+    "dk_std",
 ]
+# H1 fix (audit 2026-05-06): proj_min intentionally excluded. Total team
+# minutes is a physical invariant (240/regulation), set by the lineup-
+# protected 240-min constraint upstream. Scaling proj_min by Vegas was a
+# category error — Vegas anchors points (sum of proj_pts), not minutes.
+# Diagnostic over 12 team-games (3 May-2026 playoff dates) showed top-5
+# minutes deflated > 5% in 83% of player-observations under the prior
+# behavior; mean star deflation 2.6 min, p95 4.1 min off a 36-min reference.
 _CONSTRAINT_MIN = 0.80
 _CONSTRAINT_MAX = 1.20
 
@@ -90,11 +97,16 @@ def constrain_team_totals(
 
     T5 (Research Brief 6, 2026-05-02).
 
-    H1 diag (audit 2026-05-06): when JONNYPARLAY_DIAG_VEGAS_VS_240=1, captures
-    pre/post per-team snapshots via diagnostics.record_team_pre_vegas /
-    record_team_post_vegas so the audit's adversarial pattern (top-5 minutes
-    deflated by Vegas after 240-min protection) can be quantified. Hooks are
-    no-ops when the env var is unset.
+    H1 fix (audit 2026-05-06): proj_min is no longer in _CONSTRAINT_SCALE_KEYS.
+    Vegas anchors points (sum of proj_pts equals vegas_total after scaling);
+    minutes are a separate invariant set by the lineup-protected 240-min
+    constraint upstream and must not be deflated to match a points anchor.
+    Stats still scale uniformly by `clipped` so per-minute production absorbs
+    the Vegas signal without disturbing minute allocation.
+
+    H1 diag: when JONNYPARLAY_DIAG_VEGAS_VS_240=1, captures pre/post per-team
+    snapshots via diagnostics.record_team_pre_vegas / record_team_post_vegas.
+    Hooks are no-ops when the env var is unset.
     """
     from collections import defaultdict as _dd
 
