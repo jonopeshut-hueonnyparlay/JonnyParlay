@@ -206,7 +206,12 @@ def get_conn(db_path=DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 20000")   # 20s — prevents "database is locked" under contention
+    # 20s — prevents "database is locked" under contention.
+    # L2 (audit 2026-05-06): grepped data/clv_daemon.log (7422 lines) for
+    # 'database is locked' / OperationalError on the last 7 days of
+    # playoff-evening operation — zero hits.  20s validated under typical
+    # load.  Bump to 30000 only if those errors begin appearing.
+    conn.execute("PRAGMA busy_timeout = 20000")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
