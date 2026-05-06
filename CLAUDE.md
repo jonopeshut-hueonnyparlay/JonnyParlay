@@ -18,7 +18,17 @@ Read-only deep audit of the NBA projection chain. Findings: **0 CRIT / 5 HIGH / 
 - **P4 (diagnostic-script layout):** moved 6 one-shot scripts (`diag_blowout_buckets.py`, `diag_h6_pool.py`, `diag_h6_backtest.py`, `diag_h1_constraint_chain.py`, `analyze_playoff_scalars.py`, `_check_dvp.py`) from `engine/` to `engine/tools/`. Destination is `engine/tools/` (not `engine/diagnostics/`) because `engine/diagnostics.py` already exists as a production module. None of the moved scripts are imported by production code (verified by grep). Each script's `sys.path` setup updated to insert `engine/`; docstring "Run:" lines updated. Commit: `6e4c878`.
 - **M4 (11-min Odds API cache subsystem):** CLAUDE.md `engine/run_picks.py` row updated to clarify the 11-min cache is owned by the picks pipeline, *not* the projection pipeline. The projection pipeline's `_odds_api_get` in `csv_writer.py` has retry/429 handling but no time-keyed cache. `--no-cache` only affects the picks pipeline. Doc-only. Commit: `b2ddbd9`.
 
-**Test progression:** 903 → 919 (post first batch, +16) → 941 (post H1, +22) → 941 (post doc-sweep, no behavior change). Final: 941 passed, 0 failed.
+**Closed in third fix batch (2026-05-06, shadow-mode + remaining audit items):**
+- **A1 (`--research --no-cap` truncated to ~4 picks/day):** `apply_caps()` at `engine/run_picks.py:5518` was running before the no-cap log-substitution at line 5549, so the qualified pool was already capped by NBA's 8u sport cap / per-stat 2 / 12u total before the bypass branch saw it. Wrapped `apply_caps()` in `if not getattr(args, "no_cap", False)`. Safety preserved (existing `--no-cap requires --no-discord` guard at line ~5190). Tests: `tests/test_no_cap_bypasses_apply_caps.py` (3 tests). Commit: `773a5d6`.
+- **A2 (shadow log dedup blocked same-day re-runs):** `log_picks` dedup at `run_picks.py:3220-3235` was path-agnostic, so a `--shadow` re-fire silently no-op'd against rows from the morning run. Added `is_shadow_log = log_path.name != "pick_log.csv"` and gated the `existing_keys` population on it. Schema-rewrite path and intra-run dedup both preserved. Live `pick_log.csv` behavior unchanged. Tests: `tests/test_shadow_log_dedup.py` (4 tests). Commit: `828fa72`.
+- **A3 / N3 (shadow observability — zero-row writes silent):** added `logger.warning` at the end of `log_picks` in `run_picks.py:3344` distinguishing `qualified_in>0 dedup_skipped=N` (re-run blocked) from `qualified_in=0` (upstream gate filtered everything). Pairs with the A2 fix so a same-day shadow no-op is now both impossible and observable. Tests: `tests/test_log_picks_zero_row_warning.py` (3 tests; the test fixture attaches caplog directly to the `jonnyparlay` logger because it sets `propagate=False`). Commit: `46e3652`.
+- **B2 (role-tier threshold provenance):** docstring added to `classify_role()` at `nba_projector.py:427` noting the 26/20/12/5 MPG cutoffs and 0.60 starter_rate are inherited from the initial 2026-04-30 build and have not been empirically refit alongside Brief 7 R3 / H2 2026-05-06 scalar work. Flagged as a candidate for a binned MAE-by-role check at the next calibration session. Comment-only. Commit: `33c8fdb`.
+- **E5 (scalar freeze policy):** new doc at `docs/calibration/scalar-freeze-policy.md` declares which scalars are eligible for refit at any session (RS/PO minutes scalars, RS stat scalar, home/away delta, REB priors, playoff rate deflators, DK_STD_FLOOR, blowout sigmoid, EWMA span, PTS_BLEND_ALPHA) vs frozen (`PLATT_A`/`PLATT_B` gated on H3 `over_p_raw` accumulation; `LEAGUE_AVG_PACE`/`LEAGUE_AVG_PACE_PO` gated on season boundary). Refit thresholds (n_pairs ≥300 stats / ≥500 minutes, |bias| ≥0.05 std, OOS validation on held-out season) and refit-record checklist included. New file only. Commit: `c063589`.
+- **L2 (`busy_timeout=20000` validation):** grepped `data/clv_daemon.log` (7422 lines) for `database is locked` / `OperationalError` across the last 7 days of playoff-evening operation — zero hits. Documented inline at `engine/projections_db.py:209` so a future auditor doesn't re-investigate; bump trigger pinned to evidence in `clv_daemon.log` rather than gut feel. Comment-only. Commit: `3f8b60e`.
+- **M1 (down-grade race-condition runbook):** new runbook at `docs/runbooks/injury-status-changes.md` documents symptom, detection, mitigation via `--late-run`, and live/shadow/research invocation patterns. Caveats noted: Vegas totals not refreshed under `--late-run`; KILLSHOT cap enforced across re-runs. New file only. Commit: `d122160`.
+- **M2 (legacy-override re-EWMA — perf):** closed as wontfix-perf with a comment at `nba_projector.py:1112`. The override path's separate `ewma_baseline` recompute is intentionally redundant with `project_minutes()`'s internal EWMA; threading a baseline hint through would save sub-ms on the ~5-15 override-bearing players per slate — not worth the optional-param surface area. Comment-only. Commit: `a4da963`.
+
+**Test progression:** 903 → 919 (post first batch, +16) → 941 (post H1, +22) → 941 (post doc-sweep, no behavior change) → 951 (post third batch, +10: A1 ×3, A2 ×4, A3 ×3). Final: 951 passed, 0 failed.
 
 **Source of truth for active scalars — `engine/nba_projector.py`:**
 - `PLAYOFF_MINUTES_SCALAR` (line 242) — H2 refit 2026-05-06 (3925 matched pairs across 2023-24 / 2024-25 / 2025-26): starter=1.075, sixth_man=0.960, rotation=0.924, spot=0.948, cold_start=0.400 (filtered out, sub-type caps handle). **Supersedes** Brief 7 R3 (rotation 0.550, spot 0.350) referenced below.
@@ -26,13 +36,9 @@ Read-only deep audit of the NBA projection chain. Findings: **0 CRIT / 5 HIGH / 
 - `REGULAR_SEASON_STAT_SCALAR` (line 276): pts=1.0019, ast=1.0120, reb=1.0264, fg3m=1.0231, blk=1.0608, stl=1.0017, tov=1.000. **Supersedes** the OOS-trimmed values (ast 1.005, blk 1.043) recorded below — refit after REB-prior fix + EWMA span 6→8.
 
 **Open items (queued for follow-up sessions):**
-- H3 (Platt refit) — gated on accumulating ~300+ post-v4 `over_p_raw` rows.
-- M1 (down-grade race condition — operator awareness only; mitigated by `--late-run`).
-- M2 (`injury_minutes_override` legacy path re-EWMA — perf, not correctness).
-- B2 (role-tier boundary thresholds — undocumented basis; comment / refit gate).
-- E5 (declare scalar freeze policy — frozen vs active list, freeze threshold).
-- L2 (`busy_timeout=20000` calibration — bump to 30s only if logs show timeouts).
-- N3 (shadow CLV pipeline observability — add `log.info` at shadow-write location).
+- **H3 (Platt refit)** — gated on accumulating ~300+ post-v4 `over_p_raw` rows. Run `SELECT COUNT(*) FROM ... WHERE over_p_raw != ''` against `data/pick_log.csv` periodically; trigger refit when the count clears 300 and the `_REB_RATE_PRIOR` / `REGULAR_SEASON_STAT_SCALAR` haven't drifted between fits.
+
+**Audit 2026-05-06 — ALL ITEMS CLOSED** except H3 (data-gated, not code-gated).
 
 ## Audit 2026-05-05 — Status (injury system + deep audit)
 Full-system audit spawned 2026-05-05 after computer crash + injury system diagnosis. Key fixes:
