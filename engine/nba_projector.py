@@ -40,6 +40,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+import diagnostics
 from projections_db import (
     DB_PATH, get_player_recent_games, get_player_season_game_count,
     get_player_career_avg_minutes,
@@ -153,6 +154,22 @@ _ROLE_MIN_MINUTES = {
     "spot": 8.0,  "cold_start": 5.0,
 }
 
+# P0-B (2026-05-05): per-role-tier minutes cap, applied AFTER all scalars + any
+# redistribution bump.  Replaces the prior hardcoded 42/38 cap which was too
+# loose for bench tiers and let redistribution recipients project at sixth-man
+# levels (38 min) on a rotation/spot baseline.
+# Values are empirical 1.4-1.5x of ROLE_MINUTE_PRIOR + headroom for primary-
+# backup absorption when a starter is OUT.
+# starter cap stays at 42 — needed for legitimate primary-backup absorption
+# (Reaves with Luka OUT projects ~40-42 min, and that's correct).
+ROLE_MAX_MIN = {
+    "starter":    42.0,
+    "sixth_man":  32.0,
+    "rotation":   28.0,
+    "spot":       18.0,
+    "cold_start": 16.0,
+}
+
 # Blowout minutes reduction: sigmoid centred at spread=12, max reduction 20%.
 # Replaces flat 0.80x at |spread|>12 (over-reduces 12-15, under-reduces 18+).
 # Formula: factor = 1 - 0.20 / (1 + exp(-0.4 * (|spread| - 12)))
@@ -210,11 +227,16 @@ DK_STD_FLOOR = {
 #    coaches tighten to 8-9 man rotations.
 #    Methodology: scalar = mean(actual_min) / mean(proj_min) per role_tier.
 PLAYOFF_MINUTES_SCALAR = {
-    "starter":    1.068,   # 31.6 → 33.8 actual (+6.8%)
-    "sixth_man":  0.909,   # 23.3 → 21.2 actual (-9.1%)
-    "rotation":   0.550,   # 535 matched pairs Apr 18-29: projects 18.5 min vs 10.2 actual; R3 Brief 7
-    "spot":       0.350,   # 535 matched pairs Apr 18-29: projects 13.9 min vs 4.9 actual; R3 Brief 7
-    "cold_start": 0.400,   # FIX-P2: cold_start was defaulting to 1.0 — fringe players rarely get PO mins
+    # H2 refit 2026-05-06: 3925 matched playoff player-games across 2023-24,
+    # 2024-25, 2025-26. Prior values (rotation=0.550, spot=0.350) were calibrated
+    # on 535 pairs from a single 12-day window of 2025-26 R1 and dramatically
+    # over-deflated bench projections — bench-tier players play 92-95% of their
+    # EWMA baseline in playoffs, not 35-55%. See docs/research/playoff_scalar_refit.md.
+    "starter":    1.075,   # was 1.068 (+0.007); n=1969, fit 34.42/32.02
+    "sixth_man":  0.960,   # was 0.909 (+0.051); n=861,  fit 21.24/22.13
+    "rotation":   0.924,   # was 0.550 (+0.374); n=986,  fit 14.60/15.81 — major correction
+    "spot":       0.948,   # was 0.350 (+0.598); n=109,  fit 10.00/10.55 — major correction
+    "cold_start": 0.400,   # unchanged — filtered out of H2 refit; sub-type caps handle
 }
 
 # 1b. REGULAR_SEASON_MINUTES_SCALAR (Research Brief 6, 2026-05-02):
@@ -913,11 +935,15 @@ def _compute_days_rest_reduction(days_rest: int, role: str) -> float:
 
 def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None,
                     minutes_prior_override=None):
-    """Project minutes for a player.
+    """Project minutes for a player (baseline — before playoff/RS scalars).
 
-    minutes_prior_override: when supplied (task #2 career-history prior), replaces
-        the flat ROLE_MINUTE_PRIOR for cold_start players.  Has no effect for other
-        roles (override is None for starter/rotation/etc).
+    injury_minutes_override: known-exactly minutes (e.g. publicly announced
+        return-from-injury restriction).  Replaces the EWMA + rest + blowout
+        chain verbatim.  After P0-B (2026-05-05) this dict is empty by default —
+        redistribution writes to a separate `redistrib_bump` channel applied in
+        project_player() after all scalars.
+
+    minutes_prior_override: career-history prior for cold_start players (task #2).
     """
     if injury_minutes_override is not None:
         return float(injury_minutes_override)
@@ -948,6 +974,10 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None,
         )
         proj_min *= (1.0 - reduction)
     proj_min = max(proj_min, 0.0)
+    # Loose baseline cap — playoff/RS scalars + role-tier cap are applied in
+    # project_player() after this function returns.  Keep 42/38 here to handle
+    # the legitimate primary-backup absorption case where EWMA + redistribution
+    # role-promotion can produce a starter-tier baseline >38 min.
     proj_min = min(proj_min, 42.0 if role == "starter" else 38.0)
     return proj_min
 
@@ -969,7 +999,8 @@ def project_player(
     game_id, game_date, season=CURRENT_SEASON,
     season_type="Regular Season",
     implied_total=None, spread=None, injury_status="",
-    injury_minutes_override=None, is_home=None, db_path=DB_PATH,
+    injury_minutes_override=None, injury_minutes_redistrib_bump=None,
+    is_home=None, db_path=DB_PATH,
 ):
     if injury_status in ("O", "OUT"):
         return None
@@ -1043,7 +1074,19 @@ def project_player(
 
         # Injury role promotion: backup absorbing star minutes gets promoted so
         # the min_minutes filter and prior both reflect the elevated duty.
-        if injury_minutes_override is not None and not df.empty:
+        # P0-B (2026-05-05): trigger is now the redistribution bump magnitude,
+        # not the override delta.  Bump represents the absolute incremental
+        # minutes from the OUT player's vacated load, which is the right
+        # promotion signal.
+        if injury_minutes_redistrib_bump is not None and not df.empty:
+            if injury_minutes_redistrib_bump >= 6.0 and role == "spot":
+                role = "rotation"
+            elif injury_minutes_redistrib_bump >= 6.0 and role == "rotation":
+                role = "sixth_man"
+            elif injury_minutes_redistrib_bump >= 8.0 and role == "sixth_man":
+                role = "starter"
+        elif injury_minutes_override is not None and not df.empty:
+            # Legacy path: kept for the rare known-exact-minutes case.
             ewma_baseline = float(
                 df.sort_values("game_date")["min"]
                   .ewm(span=EWMA_SPAN_MIN, min_periods=1).mean().iloc[-1]
@@ -1091,6 +1134,20 @@ def project_player(
         log.debug("Q/GTD weighting: %s status=%s prob=%.2f proj_min %.1f→%.1f",
                   player_name, injury_status, _prob, proj_min, proj_min * _prob)
         proj_min = round(proj_min * _prob, 2)
+
+    # P0-B (2026-05-05): apply redistribution bump AFTER all scalars (playoff/RS,
+    # cold_start cap, Q/GTD weighting).  The bump is in absolute-minutes space —
+    # it represents minutes vacated by the OUT player's projection.  Adding
+    # post-scalar ensures the recipient gets correct natural projection + bump,
+    # rather than the previous override path that bypassed scalars and inflated
+    # bench projections by 50-100% on playoff days.
+    # Skipped when injury_minutes_override is set (override is authoritative).
+    if injury_minutes_redistrib_bump and injury_minutes_override is None:
+        proj_min = round(proj_min + float(injury_minutes_redistrib_bump), 2)
+
+    # P0-B: final role-tier cap.  Replaces the prior 42/38 cap inside
+    # project_minutes() — applied here after everything (scalars, Q/GTD, bump).
+    proj_min = min(proj_min, ROLE_MAX_MIN.get(role, 38.0))
 
     # Always use Regular Season pace data (reliable); playoff pace DB entries
     # are often missing, causing the fallback (100.22) to inflate projections.  # L1: was stale 99.5
@@ -1382,12 +1439,14 @@ def run_projections(
     game_date, season=CURRENT_SEASON,
     implied_totals=None, spreads=None,
     injury_statuses=None, injury_minutes_overrides=None,
+    injury_minutes_redistrib_bumps=None,
     db_path=DB_PATH, persist=True,
 ):
-    implied_totals           = implied_totals or {}
-    spreads                  = spreads or {}
-    injury_statuses          = injury_statuses or {}
-    injury_minutes_overrides = injury_minutes_overrides or {}
+    implied_totals                  = implied_totals or {}
+    spreads                         = spreads or {}
+    injury_statuses                 = injury_statuses or {}
+    injury_minutes_overrides        = injury_minutes_overrides or {}
+    injury_minutes_redistrib_bumps  = injury_minutes_redistrib_bumps or {}
 
     games = get_games_for_date(game_date, db_path)
     if games.empty:
@@ -1460,6 +1519,7 @@ def run_projections(
                 spread=game_spread.get(game_id),
                 injury_status=status,
                 injury_minutes_override=injury_minutes_overrides.get(pid),
+                injury_minutes_redistrib_bump=injury_minutes_redistrib_bumps.get(pid),
                 is_home=(team_id in home_team_ids),
                 db_path=db_path,
             )
@@ -1504,9 +1564,38 @@ def run_projections(
     _by_team = _dd(list)
     for p in results:
         _by_team[p.get("team_id")].append(p)
+
+    # D1: pre-constraint diagnostics — capture ewma_only vs recipient_proj split,
+    # plus the core/bench partition.  After P0-B (2026-05-05), recipients project
+    # via EWMA × scalars + bump (not the pre-fix override path that bypassed
+    # scalars).  ewma_only_sum here means "sum of proj_min for non-recipients";
+    # override_sum is repurposed to mean "sum of proj_min for redistribution
+    # recipients (post-bump)" so the field name maps to total team minutes
+    # contribution from the redistribution-affected subset.
+    # No-op when JONNYPARLAY_DIAG_REDISTRIB is unset.
+    if diagnostics.enabled():
+        for _tid, _tprojs in _by_team.items():
+            _sorted = sorted(_tprojs, key=lambda x: x.get("proj_min", 0.0), reverse=True)
+            _core_total  = sum(p.get("proj_min", 0.0) for p in _sorted[:5])
+            _bench_total = sum(p.get("proj_min", 0.0) for p in _sorted[5:])
+            _ewma_only = sum(p.get("proj_min", 0.0) for p in _tprojs
+                             if p.get("player_id") not in injury_minutes_redistrib_bumps)
+            _recipient_proj = sum(p.get("proj_min", 0.0) for p in _tprojs
+                                  if p.get("player_id") in injury_minutes_redistrib_bumps)
+            diagnostics.record_team_pre_constraint(
+                _tid,
+                ewma_only_sum=_ewma_only,
+                override_sum=_recipient_proj,
+                pre_constraint_total=_ewma_only + _recipient_proj,
+                core_total=_core_total,
+                bench_total=_bench_total,
+            )
+
     for tid, tprojs in _by_team.items():
         total_min = sum(p.get("proj_min", 0.0) for p in tprojs)
         if total_min < TEAM_MIN_FLOOR or total_min <= TEAM_MIN_TARGET:
+            # Constraint did not fire — record post == pre, scale = 1.0.
+            diagnostics.record_team_post_constraint(tid, 1.0, total_min)
             continue
         # Sort descending: highest-minute players first
         sorted_desc = sorted(tprojs, key=lambda x: x.get("proj_min", 0.0), reverse=True)
@@ -1514,6 +1603,7 @@ def run_projections(
         bench = sorted_desc[5:]   # all other players absorb the excess
         core_total  = sum(p.get("proj_min", 0.0) for p in core)
         bench_total = sum(p.get("proj_min", 0.0) for p in bench)
+        final_bench_scale = 1.0
         if core_total >= TEAM_MIN_TARGET:
             # Extreme edge case: even the top-5 exceed 240 min (shouldn't happen
             # in practice; only possible if injury redistribution gives 5 players
@@ -1529,6 +1619,7 @@ def run_projections(
                 for k in _SCALE_KEYS:
                     if k in p:
                         p[k] = 0.0
+            final_bench_scale = 0.0
         elif bench_total > 0:
             bench_budget = TEAM_MIN_TARGET - core_total
             bench_scale  = bench_budget / bench_total
@@ -1537,7 +1628,9 @@ def run_projections(
                 for k in _SCALE_KEYS:
                     if k in p:
                         p[k] = round(p[k] * bench_scale, 2)
+            final_bench_scale = bench_scale
         new_total = sum(p.get("proj_min", 0.0) for p in tprojs)
+        diagnostics.record_team_post_constraint(tid, final_bench_scale, new_total)
         log.debug(
             "Team %s: lineup-protected 240-min constraint: %d players "
             "(%.1f -> %.1f min, core=%.1f bench_scale=%.4f)",
@@ -1546,6 +1639,7 @@ def run_projections(
             (TEAM_MIN_TARGET - core_total) / bench_total if bench_total > 0 else 1.0,
         )
 
+    diagnostics.flush(game_date)
     log.info("Projections complete: %d players", len(results))
     return results
 

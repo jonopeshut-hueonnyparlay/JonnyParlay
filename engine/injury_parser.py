@@ -24,6 +24,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+import diagnostics
 from name_utils import fold_name
 from projections_db import DB_PATH, get_conn, get_player_recent_games
 
@@ -290,12 +291,19 @@ def redistribute_minutes(
     team_id: int,
     before_date: str,
     season: str,
-    existing_overrides: Dict[int, float],
+    existing_bumps: Dict[int, float],
     db_path: str = DB_PATH,
 ) -> Dict[int, float]:
     """Position-aware redistribution of an OUT player's minutes (P13).
 
-    Three-tier logic:
+    P0-B (2026-05-05): writes ADDITIVE bumps into ``existing_bumps`` instead of
+    absolute overrides into ``existing_overrides``.  Old semantics
+    (``avg_min + bump``) bypassed playoff/RS scalars in project_minutes() and
+    inflated bench projections by 50-100% on playoff days.  New semantics: just
+    accumulate bump values; project_player() applies them after all scalars +
+    a role-tier cap (ROLE_MAX_MIN).
+
+    Three-tier logic (unchanged):
       1. Minutes pool is apportioned to G/F/C groups via _POS_FLOW.
       2. Within each group the primary backup (highest avg_min) receives
          REDISTRIB_PRIMARY_SHARE of the group pool; the residual is split
@@ -303,19 +311,20 @@ def redistribute_minutes(
       3. All bumps are scaled by REDISTRIB_EFFICIENCY (0.90) to discount
          above-optimal usage efficiency.
 
-    Players are eligible only if avg_min >= REDISTRIB_MIN_ELIGIBLE and they
-    are not the absent player.  Each recipient is capped at REDISTRIB_MAX_MIN.
+    Eligible players: avg_min >= REDISTRIB_MIN_ELIGIBLE and not the absent player.
+    No cap applied here — ROLE_MAX_MIN cap lives in project_player() after the
+    bump is added to scaled-down minutes.
     """
     rotation = _get_team_rotation(team_id, before_date, season, db_path)
     if rotation.empty:
-        return existing_overrides
+        return existing_bumps
 
     eligible = rotation[
         (rotation["player_id"] != out_player_id) &
         (rotation["avg_min"] >= REDISTRIB_MIN_ELIGIBLE)
     ].copy()
     if eligible.empty:
-        return existing_overrides
+        return existing_bumps
 
     eligible["norm_pos"] = eligible["position"].apply(_normalise_position)
     out_pos   = _normalise_position(out_player_position)
@@ -333,10 +342,17 @@ def redistribute_minutes(
         primary = group.iloc[0]
         primary_bump = pool * REDISTRIB_PRIMARY_SHARE * REDISTRIB_EFFICIENCY
         pid = int(primary["player_id"])
-        current = existing_overrides.get(pid, primary["avg_min"])
-        existing_overrides[pid] = min(current + primary_bump, REDISTRIB_MAX_MIN)
-        log.debug("  [%s primary] %s: +%.1f min → %.1f",
-                  pos_group, primary["name"], primary_bump, existing_overrides[pid])
+        prior_bump = existing_bumps.get(pid, 0.0)
+        existing_bumps[pid] = prior_bump + primary_bump
+        log.debug("  [%s primary] %s: +%.2f min bump (total %.2f)",
+                  pos_group, primary["name"], primary_bump, existing_bumps[pid])
+        diagnostics.record_recipient(
+            team_id=team_id, pid=pid, pos_group=pos_group,
+            avg_min=float(primary["avg_min"]), bump=primary_bump,
+            pre_override=prior_bump if prior_bump > 0 else None,
+            post_override=existing_bumps[pid],
+            hit_cap=False,  # cap moved to project_player ROLE_MAX_MIN
+        )
 
         # Secondary players: proportional by avg_min
         secondary = group.iloc[1:]
@@ -347,12 +363,19 @@ def redistribute_minutes(
         for _, row in secondary.iterrows():
             bump = sec_pool * (row["avg_min"] / total_sec)
             pid  = int(row["player_id"])
-            current = existing_overrides.get(pid, row["avg_min"])
-            existing_overrides[pid] = min(current + bump, REDISTRIB_MAX_MIN)
-            log.debug("  [%s secondary] %s: +%.1f min → %.1f",
-                      pos_group, row["name"], bump, existing_overrides[pid])
+            prior_bump = existing_bumps.get(pid, 0.0)
+            existing_bumps[pid] = prior_bump + bump
+            log.debug("  [%s secondary] %s: +%.2f min bump (total %.2f)",
+                      pos_group, row["name"], bump, existing_bumps[pid])
+            diagnostics.record_recipient(
+                team_id=team_id, pid=pid, pos_group=pos_group,
+                avg_min=float(row["avg_min"]), bump=bump,
+                pre_override=prior_bump if prior_bump > 0 else None,
+                post_override=existing_bumps[pid],
+                hit_cap=False,
+            )
 
-    return existing_overrides
+    return existing_bumps
 
 
 # ---------------------------------------------------------------------------
@@ -363,8 +386,13 @@ def get_injury_context(
     game_date: Optional[str] = None,
     season: str = "2025-26",
     db_path: str = DB_PATH,
-) -> Tuple[Dict[int, str], Dict[int, float]]:
-    """Fetch injury report and compute status + minutes overrides.
+) -> Tuple[Dict[int, str], Dict[int, float], Dict[int, float]]:
+    """Fetch injury report and compute status + minutes overrides + redistribution bumps.
+
+    P0-B (2026-05-05): split former 2-tuple return into 3-tuple.  Redistribution
+    now writes into a separate `injury_minutes_redistrib_bumps` channel applied
+    additively in project_player() after all scalars + role-tier cap, instead of
+    overwriting EWMA × scalars via injury_minutes_overrides.
 
     Args:
         game_date: "YYYY-MM-DD" (default: today)
@@ -372,9 +400,14 @@ def get_injury_context(
         db_path: SQLite DB path
 
     Returns:
-        (injury_statuses, injury_minutes_overrides)
-        - injury_statuses:          {player_id: status_code}
-        - injury_minutes_overrides: {player_id: adjusted_minutes}
+        (injury_statuses, injury_minutes_overrides, injury_minutes_redistrib_bumps)
+        - injury_statuses:                {player_id: status_code}
+        - injury_minutes_overrides:       {player_id: known-exact-minutes}
+                                          Currently always empty — reserved for
+                                          publicly announced minutes restrictions.
+        - injury_minutes_redistrib_bumps: {player_id: additive_bump_min}
+                                          Populated by redistribute_minutes when
+                                          a starter is OUT.
     """
     date = datetime.date.fromisoformat(game_date) if game_date else datetime.date.today()
     date_str = str(date)
@@ -392,11 +425,11 @@ def get_injury_context(
     injury_df = fetch_injury_report(date)
     if injury_df.empty:
         log.info("No injury data -- proceeding with no adjustments")
-        return {}, {}
+        return {}, {}, {}
 
     injury_df = resolve_player_ids(injury_df, db_path)
     if injury_df.empty:
-        return {}, {}
+        return {}, {}, {}
 
     if not active_team_ids:
         log.warning("get_injury_context: no active games found for %s — "
@@ -415,10 +448,11 @@ def get_injury_context(
         ]
         if injury_df.empty:
             log.warning("get_injury_context: no injury report players matched active-game teams for %s", date_str)
-            return {}, {}
+            return {}, {}, {}
 
     injury_statuses: Dict[int, str] = {}
     injury_minutes_overrides: Dict[int, float] = {}
+    injury_minutes_redistrib_bumps: Dict[int, float] = {}
 
     out_players: List[Tuple[int, int, str]] = []  # (player_id, team_id, position)
 
@@ -465,6 +499,9 @@ def get_injury_context(
             continue   # bench players -- not worth redistributing
         log.info("Redistributing %.1f min from OUT player (id=%d, pos=%s) to team %d",
                  avg_min, out_pid, out_pos or "?", team_id)
+        diagnostics.record_out_player(
+            team_id=team_id, pid=out_pid, pos=out_pos or "", avg_min=avg_min,
+        )
         redistribute_minutes(
             out_player_id=out_pid,
             out_player_avg_min=avg_min,
@@ -472,19 +509,28 @@ def get_injury_context(
             team_id=team_id,
             before_date=date_str,
             season=season,
-            existing_overrides=injury_minutes_overrides,
+            existing_bumps=injury_minutes_redistrib_bumps,
             db_path=db_path,
         )
 
-    # M16: clamp overrides to [0, 48] (NBA); log any that were out-of-range
+    # M16: clamp overrides to [0, 48] (NBA); log any that were out-of-range.
+    # Applies to both injury_minutes_overrides (known-exact) and
+    # injury_minutes_redistrib_bumps (bumps shouldn't exceed 48 either, though
+    # in practice they're 0-15 min).  Bump clamp guards against pathological
+    # cases (e.g. multiple stars OUT all redistributing to same backup).
     _MAX_OVERRIDE = 48.0
     for pid, mins in list(injury_minutes_overrides.items()):
         clamped = max(0.0, min(_MAX_OVERRIDE, mins))
         if clamped != mins:
             log.warning("M16: minute override for player_id=%s clamped %s → %s", pid, mins, clamped)
             injury_minutes_overrides[pid] = clamped
+    for pid, bump in list(injury_minutes_redistrib_bumps.items()):
+        clamped = max(0.0, min(_MAX_OVERRIDE, bump))
+        if clamped != bump:
+            log.warning("M16: redistrib bump for player_id=%s clamped %s → %s", pid, bump, clamped)
+            injury_minutes_redistrib_bumps[pid] = clamped
 
-    return injury_statuses, injury_minutes_overrides
+    return injury_statuses, injury_minutes_overrides, injury_minutes_redistrib_bumps
 
 
 # ---------------------------------------------------------------------------

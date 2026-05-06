@@ -524,8 +524,8 @@ def generate_daily_csv(
     from nba_projector import run_projections
     from injury_parser import get_injury_context
 
-    injury_statuses, injury_minutes_overrides = get_injury_context(
-        game_date=game_date, season=season, db_path=db_path)
+    injury_statuses, injury_minutes_overrides, injury_minutes_redistrib_bumps = \
+        get_injury_context(game_date=game_date, season=season, db_path=db_path)
 
     projections = run_projections(
         game_date=game_date,
@@ -533,6 +533,7 @@ def generate_daily_csv(
         implied_totals=implied_totals,
         injury_statuses=injury_statuses,
         injury_minutes_overrides=injury_minutes_overrides,
+        injury_minutes_redistrib_bumps=injury_minutes_redistrib_bumps,
         db_path=db_path,
         persist=True,
     )

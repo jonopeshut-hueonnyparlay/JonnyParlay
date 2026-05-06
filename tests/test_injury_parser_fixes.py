@@ -139,7 +139,7 @@ class TestGetInjuryContextActiveTeamFilter:
                 conn_inst.execute.side_effect = [active_result, players_result]
                 mc2.return_value = conn_inst
 
-                statuses, overrides = get_injury_context(
+                statuses, overrides, bumps = get_injury_context(
                     game_date="2026-05-05",
                     season="2025-26",
                     db_path=":memory:",
@@ -148,6 +148,7 @@ class TestGetInjuryContextActiveTeamFilter:
         # No players on active teams → empty dicts
         assert statuses == {}
         assert overrides == {}
+        assert bumps == {}
 
     def test_active_team_players_included(self):
         """Players whose team_id matches active teams should be processed."""
@@ -174,7 +175,7 @@ class TestGetInjuryContextActiveTeamFilter:
             # Player 1 (team 10) is on an active team — should be included in statuses
             # We need the full processing to run — patch at the per-player DB queries too
             with patch("injury_parser._get_team_rotation", return_value=pd.DataFrame()):
-                statuses, overrides = get_injury_context(
+                statuses, overrides, bumps = get_injury_context(
                     game_date="2026-05-05",
                     season="2025-26",
                     db_path=":memory:",

@@ -422,9 +422,11 @@ def run(
 
     # 3. Injury context
     log.info("Fetching injury context...")
-    injury_statuses, injury_minutes_overrides = get_injury_context(game_date, season, db_path)
-    log.info("  injuries: %d statuses, %d minute overrides",
-             len(injury_statuses), len(injury_minutes_overrides))
+    injury_statuses, injury_minutes_overrides, injury_minutes_redistrib_bumps = \
+        get_injury_context(game_date, season, db_path)
+    log.info("  injuries: %d statuses, %d minute overrides, %d redistribution bumps",
+             len(injury_statuses), len(injury_minutes_overrides),
+             len(injury_minutes_redistrib_bumps))
 
     if len(injury_statuses) == 0:
         log.warning(
@@ -447,6 +449,7 @@ def run(
         spreads=spreads,
         injury_statuses=injury_statuses,
         injury_minutes_overrides=injury_minutes_overrides,
+        injury_minutes_redistrib_bumps=injury_minutes_redistrib_bumps,
         db_path=db_path,
         persist=persist,
     )
