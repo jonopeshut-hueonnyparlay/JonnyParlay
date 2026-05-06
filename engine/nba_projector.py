@@ -59,7 +59,13 @@ if not log.handlers:
         format="%(asctime)s  %(levelname)-8s [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S")
 
-LEAGUE_AVG_PACE   = 100.22  # R5 Brief 7: updated from 99.5 (2024-25 full season official NBA pace)
+LEAGUE_AVG_PACE   = 100.22  # 2025-26 season-to-date (team_season_stats RS avg, n=30)
+# H4 (Audit 2026-05-06): provenance corrected.  R5 Brief 7 introduced 100.22
+# claiming "2024-25 full season"; team_season_stats actually reports
+# 2024-25 RS=99.58, 2025-26 RS=100.22 (n=30 each).  Value retained — current
+# scalars (REGULAR_SEASON_MINUTES/STAT, PLAYOFF_MINUTES) are calibrated against
+# this basis; refits should re-aggregate from team_season_stats and document
+# the season they used so the basis stays consistent.
 LEAGUE_AVG_TOTAL  = 222.0
 # Playoffs run slower / lower-scoring — separate baselines
 LEAGUE_AVG_PACE_PO  = 96.5
