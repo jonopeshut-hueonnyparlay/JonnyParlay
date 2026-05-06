@@ -3341,6 +3341,19 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
     else:
         print(f"\n  📝 Logged {len(new_picks)} picks to {log_path}")
 
+    # A3 / N3 (audit 2026-05-06): structured warning when a write produces
+    # no new rows so a shadow daemon / scheduled-task review can spot a
+    # silent no-op.  qualified_in distinguishes "input was empty (gates
+    # filtered everything)" from "all dedup'd against earlier run".
+    if len(new_picks) == 0:
+        logger.warning(
+            "log_picks: 0 new rows written to %s "
+            "(qualified_in=%d, dedup_skipped=%d). "
+            "If qualified_in>0 this is dedup blocking a re-run; "
+            "if qualified_in=0 the upstream gate filtered everything.",
+            log_path, len(qualified), skipped,
+        )
+
     # M-13: refresh the schema sidecar on every successful write. Cheap
     # (< 1ms) and lets future readers verify the on-disk schema version
     # without sniffing column names.
