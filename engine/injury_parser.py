@@ -111,19 +111,35 @@ def fetch_injury_report(date: Optional[datetime.date] = None) -> pd.DataFrame:
     if date is None:
         date = datetime.date.today()
 
-    timestamps = list(reversed(_build_timestamps(date)))  # try latest first
+    # NBA posts next-day game injuries in the previous day's 5:00 PM / 6:30 PM report.
+    # When no same-day reports exist yet (early morning or date is tomorrow), try the
+    # previous day's late reports as a fallback so we still capture known DNPs.
+    prev_day = date - datetime.timedelta(days=1)
+    prev_late = [
+        datetime.datetime(prev_day.year, prev_day.month, prev_day.day, 18, 30),
+        datetime.datetime(prev_day.year, prev_day.month, prev_day.day, 17, 0),
+    ]
+    timestamps = list(reversed(_build_timestamps(date))) + prev_late
     last_err = None
+    used_fallback = False
 
     for idx, ts in enumerate(timestamps):
-        # Retry the 3 most recent timestamps once on transient failure (10s delay).
-        max_attempts = 2 if idx < 3 else 1
+        is_fallback = ts.date() < date
+        # Retry the 3 most recent same-day timestamps once on transient failure (10s delay).
+        max_attempts = 2 if (idx < 3 and not is_fallback) else 1
         for attempt in range(max_attempts):
             try:
                 if not check_reportvalid(ts):
                     break  # timestamp not valid; skip to next
                 df_raw = get_reportdata(ts, return_df=True)
                 if df_raw is not None and not df_raw.empty:
-                    log.info("Injury report fetched for %s (ts=%s)", date, ts.strftime("%I:%M %p"))
+                    if is_fallback:
+                        log.info(
+                            "Injury report: no %s PDF yet — using previous-day report (ts=%s)",
+                            date, ts.strftime("%Y-%m-%d %I:%M %p"),
+                        )
+                    else:
+                        log.info("Injury report fetched for %s (ts=%s)", date, ts.strftime("%I:%M %p"))
                     return _normalise_report(df_raw)
                 break  # valid timestamp but empty — move on
             except (KeyError, ValueError, TypeError, AttributeError, RuntimeError,
