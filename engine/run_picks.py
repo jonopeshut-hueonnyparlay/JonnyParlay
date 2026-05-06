@@ -4133,6 +4133,28 @@ def post_card_announcement(premium, mode, today, suppress_ping=False):
         _discord_release_post(guard_key)
 
 
+def _card_guard_should_block_logging(card_was_up: bool, no_discord: bool, force_card: bool) -> bool:
+    """Return True iff the premium-card guard should suppress log_picks.
+
+    The card guard exists for *Discord* dedup — preventing a duplicate
+    premium-card post when the day's card has already shipped.  Two flags
+    bypass it because they decouple logging from the Discord post:
+
+    * ``--no-discord`` (shadow / research / dry-run): no Discord post will
+      ever happen, so the guard has no purpose.  Without this bypass the
+      shadow scheduled task silently logs zero rows whenever the live
+      SaberSim card has already fired earlier in the day — the original
+      symptom that motivated audit item A4 (2026-05-06).
+    * ``--force-card``: explicit operator override (existing behavior;
+      kept here for clarity and so the helper covers both paths).
+    """
+    if not card_was_up:
+        return False
+    if no_discord or force_card:
+        return False
+    return True
+
+
 def _card_already_posted_today(today_str):
     """Return True if the premium card has already been posted to Discord today.
 
@@ -5577,8 +5599,23 @@ def main():
     # weren't present in the earlier run — dedup in log_picks prevents duplicates.
     today_str_log = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     _card_was_already_up = _card_already_posted_today(today_str_log)
-    if getattr(args, "force_card", False) and _card_was_already_up:
-        print("  [Discord] --force-card: overriding card guard — will repost premium card with fresh picks.")
+    # A4 (audit 2026-05-06): the card guard suppresses log_picks for
+    # the entire run when today's premium card has already shipped.
+    # That's correct for live re-runs (avoids double-logging the
+    # production ledger) but wrong for shadow/research runs that pass
+    # --no-discord — those have no Discord post to deduplicate against
+    # and were silently dropping every pick whenever SaberSim's live
+    # run fired earlier in the day.  _card_guard_should_block_logging
+    # bypasses the guard for --no-discord and --force-card.
+    if _card_was_already_up and not _card_guard_should_block_logging(
+        card_was_up=True,
+        no_discord=args.no_discord,
+        force_card=getattr(args, "force_card", False),
+    ):
+        if getattr(args, "force_card", False):
+            print("  [Discord] --force-card: overriding card guard — will repost premium card with fresh picks.")
+        else:
+            print("  [--no-discord] Card guard bypassed: log-only run, no Discord risk.")
         _card_was_already_up = False
     if not args.no_save and not _card_was_already_up:
         if getattr(args, "no_cap", False):
