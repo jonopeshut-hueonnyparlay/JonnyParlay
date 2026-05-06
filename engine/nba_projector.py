@@ -1085,7 +1085,7 @@ def project_player(
     # Q/GTD probability weighting — applied in live runs only (backtest uses status="").
     # All stats scale linearly with proj_min, so this is a clean expected-value reduction.
     # Do not weight if injury_minutes_override set (that represents a specific allocation).
-    _PLAY_PROB = {"Q": 0.50, "GTD": 0.65, "P": 0.85}
+    _PLAY_PROB = {"Q": 0.65, "GTD": 0.65, "P": 0.85}
     if injury_status in _PLAY_PROB and injury_minutes_override is None:
         _prob = _PLAY_PROB[injury_status]
         log.debug("Q/GTD weighting: %s status=%s prob=%.2f proj_min %.1f→%.1f",
@@ -1476,9 +1476,22 @@ def run_projections(
     if persist and conn is not None:
         conn.commit(); conn.close()
 
-    # Task #5: 240-minute team constraint — scale team proj_min totals to ≤ 240.
-    # M7: also scale p25/p75 percentile keys and dk_std — they are proportional
-    # to the median projections so the same scale factor applies.
+    # Task #5 / FIX-P3: 240-minute team constraint — lineup-protected constraint.
+    #
+    # Only 5 players can be on the court at once. The algorithm:
+    #   1. Sort all players descending by proj_min.
+    #   2. Protect the top 5 (the actual on-court lineup) — their minutes are
+    #      never scaled down by this constraint.
+    #   3. Scale all other players (bench) uniformly so that the team total
+    #      equals 240 min.
+    #   4. Edge case: if the top 5 alone exceed 240 (e.g. 5×50 min via extreme
+    #      injury redistribution), scale only those 5 proportionally.
+    #
+    # This replaces a uniform scale-all approach that crushed star players
+    # equally alongside deep bench depth when large active rosters were present,
+    # and a role-floor approach whose fallback still hit the highest-minute star
+    # when a team had 6+ starter-tier players (e.g. LAL after Luka OUT).
+    # M7: also scale p25/p75 percentile keys and dk_std (proportional to median).
     _SCALE_KEYS = [
         "proj_pts",  "proj_pts_p25",  "proj_pts_p75",
         "proj_reb",  "proj_reb_p25",  "proj_reb_p75",
@@ -1495,14 +1508,43 @@ def run_projections(
         total_min = sum(p.get("proj_min", 0.0) for p in tprojs)
         if total_min < TEAM_MIN_FLOOR or total_min <= TEAM_MIN_TARGET:
             continue
-        scale = TEAM_MIN_TARGET / total_min
-        for p in tprojs:
-            p["proj_min"] = round(p.get("proj_min", 0.0) * scale, 2)
-            for k in _SCALE_KEYS:
-                if k in p:
-                    p[k] = round(p[k] * scale, 2)
-        log.debug("Team %s: 240-min constraint scaled %d players "
-                  "(%.1f -> 240.0 min, factor=%.4f)", tid, len(tprojs), total_min, scale)
+        # Sort descending: highest-minute players first
+        sorted_desc = sorted(tprojs, key=lambda x: x.get("proj_min", 0.0), reverse=True)
+        core  = sorted_desc[:5]   # protected on-court lineup
+        bench = sorted_desc[5:]   # all other players absorb the excess
+        core_total  = sum(p.get("proj_min", 0.0) for p in core)
+        bench_total = sum(p.get("proj_min", 0.0) for p in bench)
+        if core_total >= TEAM_MIN_TARGET:
+            # Extreme edge case: even the top-5 exceed 240 min (shouldn't happen
+            # in practice; only possible if injury redistribution gives 5 players
+            # 50+ min each).  Scale core proportionally; bench gets zeroed.
+            core_scale = TEAM_MIN_TARGET / core_total
+            for p in core:
+                p["proj_min"] = round(p.get("proj_min", 0.0) * core_scale, 2)
+                for k in _SCALE_KEYS:
+                    if k in p:
+                        p[k] = round(p[k] * core_scale, 2)
+            for p in bench:
+                p["proj_min"] = 0.0
+                for k in _SCALE_KEYS:
+                    if k in p:
+                        p[k] = 0.0
+        elif bench_total > 0:
+            bench_budget = TEAM_MIN_TARGET - core_total
+            bench_scale  = bench_budget / bench_total
+            for p in bench:
+                p["proj_min"] = round(p.get("proj_min", 0.0) * bench_scale, 2)
+                for k in _SCALE_KEYS:
+                    if k in p:
+                        p[k] = round(p[k] * bench_scale, 2)
+        new_total = sum(p.get("proj_min", 0.0) for p in tprojs)
+        log.debug(
+            "Team %s: lineup-protected 240-min constraint: %d players "
+            "(%.1f -> %.1f min, core=%.1f bench_scale=%.4f)",
+            tid, len(tprojs), total_min, new_total,
+            core_total,
+            (TEAM_MIN_TARGET - core_total) / bench_total if bench_total > 0 else 1.0,
+        )
 
     log.info("Projections complete: %d players", len(results))
     return results
