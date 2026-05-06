@@ -413,6 +413,20 @@ def run(
     log.info("Fetching spreads...")
     spreads = _fetch_spreads(game_date, db_path)
 
+    # M3 (Audit 2026-05-06): full Odds API blackout — projections will not be
+    # anchored to Vegas if both the totals and spreads pulls come back empty.
+    # Per-game warnings above only fire when *some* totals are present; this
+    # surfaces the blanket-failure case (key revoked, network outage, quota
+    # exhausted) at error level so it shows up in operator review.
+    if not implied_totals and not spreads:
+        log.error(
+            "Odds API blackout for %s: 0 implied totals AND 0 spreads — "
+            "projections will run un-anchored to Vegas (constrain_team_totals "
+            "and the playoff pace bypass cannot fire). Verify ODDS_API_KEY, "
+            "network connectivity, and X-Requests-Remaining; consider rerunning "
+            "with --late-run after the API recovers.", game_date,
+        )
+
     # 2b. If Odds API returned 0 explicit team totals, derive from game total ± spread/2.
     #     This ensures constrain_team_totals() always fires — the API rarely returns the
     #     team_totals market during playoffs but always returns game totals + spreads.
