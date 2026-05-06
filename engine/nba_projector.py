@@ -425,6 +425,16 @@ def cold_start_rates(position):
     return dict(_ARCHETYPE_PER36[_pos_group(position)])
 
 def classify_role(df):
+    """Classify a player's role from the most recent 10 games.
+
+    Thresholds (starter_rate ≥0.60 AND ≥26 MPG / sixth_man ≥20 MPG /
+    rotation ≥12 MPG / spot ≥5 MPG / else cold_start) are inherited from
+    the initial 2026-04-30 build and have not been empirically refit
+    alongside the recent scalar work (Brief 7 R3, H2 2026-05-06).  Audit
+    B2 (2026-05-06) flagged them as a candidate for a binned MAE-by-role
+    check at the next calibration session — see
+    docs/audits/AUDIT_2026-05-06_projection_deep_dive.md §B2.
+    """
     if df.empty: return "cold_start"
     recent = df.head(10)
     avg_min = recent["min"].mean()
