@@ -5527,8 +5527,19 @@ def main():
     # Base sizing for qualifying picks (Full Card)
     qualified = size_picks_base(qualified) if qualified else []
 
-    # Apply caps
-    qualified = apply_caps(qualified, {}, max_per_game=args.max_per_game) if qualified else []
+    # Apply caps.
+    # A1 (audit 2026-05-06): --no-cap bypasses apply_caps entirely so
+    # research mode can log all gate-passing picks for fast CLV
+    # accumulation.  apply_caps would otherwise truncate the qualified
+    # pool via STAT_CAP / max_per_game / SPORT_UNIT_CAP / 12u-total —
+    # those caps are the right behavior for the live card but defeat the
+    # docstring intent of --research --no-cap (~25-50/day vs 8-13).
+    # Safety: --no-cap requires --no-discord (guard at line ~5190), so
+    # this never affects live Discord flow.  The premium card at line
+    # ~5529 still selects top-5 via apply_soft_rules_premium, so the
+    # front-channel UX is unchanged regardless.
+    if qualified and not getattr(args, "no_cap", False):
+        qualified = apply_caps(qualified, {}, max_per_game=args.max_per_game)
 
     # ── KILLSHOT selection (runs BEFORE premium build) ───────────────────────
     # KILLSHOTs are excluded from the premium card — they get their own dedicated
