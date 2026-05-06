@@ -1132,15 +1132,15 @@ def project_player(
                   proj_min, cold_start_min_cap, cold_start_subtype, player_id)
         proj_min = round(cold_start_min_cap, 2)
 
-    # Q/GTD probability weighting — applied in live runs only (backtest uses status="").
-    # All stats scale linearly with proj_min, so this is a clean expected-value reduction.
-    # Do not weight if injury_minutes_override set (that represents a specific allocation).
-    _PLAY_PROB = {"Q": 0.65, "GTD": 0.65, "P": 0.85}
-    if injury_status in _PLAY_PROB and injury_minutes_override is None:
-        _prob = _PLAY_PROB[injury_status]
-        log.debug("Q/GTD weighting: %s status=%s prob=%.2f proj_min %.1f→%.1f",
-                  player_name, injury_status, _prob, proj_min, proj_min * _prob)
-        proj_min = round(proj_min * _prob, 2)
+    # Binary in/out design (2026-05-06): no probabilistic weighting for
+    # Q/GTD/P statuses.  Props void on DNP at all major CO books (DK/FD/MGM
+    # minimum), so probabilistic averaging generates structurally -EV picks
+    # against Q-listed players (LOSE if they play, PUSH if they sit).
+    # By projecting at full healthy level we capture upside when they play;
+    # the void clause handles downside when they sit.  See injury_parser.py
+    # _STATUS_MAP for the full rationale.  Trigger --late-run to refresh
+    # projections when statuses change (O/D get excluded; Q→active gets
+    # full projection on next run).
 
     # P0-B (2026-05-05): apply redistribution bump AFTER all scalars (playoff/RS,
     # cold_start cap, Q/GTD weighting).  The bump is in absolute-minutes space —

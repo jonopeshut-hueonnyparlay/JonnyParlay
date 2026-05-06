@@ -38,17 +38,22 @@ if not log.handlers:
 # Status mapping
 # ---------------------------------------------------------------------------
 # Official NBA report status -> internal code + play probability
+#
+# Binary in/out design (2026-05-06): Q/GTD/P/Healthy all project as if the
+# player is healthy.  Rationale: NBA player props at all major CO books
+# (DK/FD/MGM minimum) VOID on DNP — bets are graded only conditional on
+# the player taking the floor.  Probabilistic averaging (e.g. proj × 0.65)
+# generates UNDER picks against Q-listed players that LOSE if they play
+# normally and only PUSH (refund) if they sit — a structurally -EV bet.
+# By projecting at full healthy level, we let the market void clause work
+# in our favor: WIN if they play (we got the right price), PUSH if they sit.
+# Trigger a re-run via --late-run when statuses change.
 _STATUS_MAP: Dict[str, Tuple[str, float]] = {
-    "out":           ("O",   0.00),
-    "doubtful":      ("O",   0.10),   # treat doubtful as effectively out
-    # Q→65%: published play-through rates are 50-70%; star players resolve active
-    # at a higher rate. 50% was systematically under-projecting Q-listed players.
-    # Source: Research Brief 8 / Fantasy Injury Report Authority.
-    "questionable":  ("Q",   0.65),
-    # GTD: already tuned to 0.65 in commit 66226db — "game time decision" typically
-    # indicates a player expected to play, decision delayed for strategic reasons.
-    "game time decision": ("GTD", 0.65),
-    "probable":      ("P",   0.85),
+    "out":                ("O",   0.00),
+    "doubtful":           ("O",   0.10),   # status_code "O" → excluded by project_player
+    "questionable":       ("Q",   1.00),   # was 0.65 — see binary in/out rationale above
+    "game time decision": ("GTD", 1.00),   # was 0.65
+    "probable":           ("P",   1.00),   # was 0.85
 }
 
 # ---------------------------------------------------------------------------
