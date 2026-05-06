@@ -1,9 +1,11 @@
 # Project: Custom Projection Engine
 
 ## Status
-**Fresh start — Apr 30 2026.** Previous build wiped (engine files + projections.db deleted). Starting clean from scratch in a single session.
+**Built May 2–6 2026.** Engine, DB, injury parser, csv writer, and daily orchestrator are all live; daily shadow run is automated via Windows Task Scheduler (commit `1ff9bcf`). Calibration covers Briefs 5–8 plus the 2026-05-06 deep audit.
 
-**Research report preserved:** `memory/projects/custom-projection-engine-research-report.md` — the architectural bible. Architecture A+ verdict. Read before building anything.
+**Go-live gate (single remaining blocker):** ~300+ post-schema-v4 rows of shadow-CLV observations to (a) confirm custom CLV ≥ SaberSim CLV and (b) populate `over_p_raw` for the H3 Platt refit (Brief 7 R1 unblocker). Run `python engine/generate_projections.py --shadow` daily to accumulate.
+
+**Research report preserved:** `memory/projects/custom-projection-engine-research-report.md` — the architectural bible. Read before structural changes.
 
 **SaberSim stays live as the data source until custom projector is proven.** Parallel run, not a cutover.
 
