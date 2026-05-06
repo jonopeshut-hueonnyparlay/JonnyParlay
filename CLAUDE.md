@@ -11,7 +11,14 @@ Read-only deep audit of the NBA projection chain. Findings: **0 CRIT / 5 HIGH / 
 - **O1 (pick_log schema doc):** updated to schema_version=4 / 29 cols / last col `over_p_raw` (matching `engine/pick_log_schema.py`). Commit: `da9b54b`.
 - **O2/O3/O4 (CLAUDE.md scalar source-of-truth + memory refresh):** new "Audit 2026-05-06 — Status" block with current scalars (supersedes stale historical entries below); `memory/projects/custom-projection-engine.md` lead refreshed. Commit: `29474ac`.
 
-**Test progression:** 903 → 919 (post first batch, +16) → 941 (post H1, +22). Final: 941 passed, 0 failed.
+**Closed in second fix batch (2026-05-06, doc-sweep):**
+- **B4 (`MIN_GAMES_FOR_TIER` strict-less-than clarity):** comment expanded at `nba_projector.py:114` — exactly-10-games is *not* cold_start (audit prior-day reading was overaggressive). Comment-only. Commit: `540ea13`.
+- **E4 (`PLAYOFF_MINUTES_SCALAR["cold_start"] = 0.400` semantics):** corrected misleading "filtered out, sub-type caps handle" comment at `nba_projector.py:252`. Audit's "unreachable" claim was wrong — verified at line 1129 that 0.400 is multiplied first; the per-subtype cap is a *ceiling*, not a replacement, and 0.400 × baseline (≈6–7 min) typically stays below the cap so the scalar dominates in practice. Comment-only. Commit: `540ea13`.
+- **F5 (asymmetric `_SCALE_KEYS` cross-references):** added 1-line cross-pointers in `nba_projector.py:1583` (240-min `_SCALE_KEYS`) and `generate_projections.py:64` (Vegas `_CONSTRAINT_SCALE_KEYS`) so a future reader sees both lists exclude `proj_min` for different design reasons (240-min handles `proj_min` separately via core/bench scales; Vegas omits it because total team minutes is a physical invariant). Comment-only. Commit: `def608d`.
+- **P4 (diagnostic-script layout):** moved 6 one-shot scripts (`diag_blowout_buckets.py`, `diag_h6_pool.py`, `diag_h6_backtest.py`, `diag_h1_constraint_chain.py`, `analyze_playoff_scalars.py`, `_check_dvp.py`) from `engine/` to `engine/tools/`. Destination is `engine/tools/` (not `engine/diagnostics/`) because `engine/diagnostics.py` already exists as a production module. None of the moved scripts are imported by production code (verified by grep). Each script's `sys.path` setup updated to insert `engine/`; docstring "Run:" lines updated. Commit: `6e4c878`.
+- **M4 (11-min Odds API cache subsystem):** CLAUDE.md `engine/run_picks.py` row updated to clarify the 11-min cache is owned by the picks pipeline, *not* the projection pipeline. The projection pipeline's `_odds_api_get` in `csv_writer.py` has retry/429 handling but no time-keyed cache. `--no-cache` only affects the picks pipeline. Doc-only. Commit: `b2ddbd9`.
+
+**Test progression:** 903 → 919 (post first batch, +16) → 941 (post H1, +22) → 941 (post doc-sweep, no behavior change). Final: 941 passed, 0 failed.
 
 **Source of truth for active scalars — `engine/nba_projector.py`:**
 - `PLAYOFF_MINUTES_SCALAR` (line 242) — H2 refit 2026-05-06 (3925 matched pairs across 2023-24 / 2024-25 / 2025-26): starter=1.075, sixth_man=0.960, rotation=0.924, spot=0.948, cold_start=0.400 (filtered out, sub-type caps handle). **Supersedes** Brief 7 R3 (rotation 0.550, spot 0.350) referenced below.
@@ -20,9 +27,12 @@ Read-only deep audit of the NBA projection chain. Findings: **0 CRIT / 5 HIGH / 
 
 **Open items (queued for follow-up sessions):**
 - H3 (Platt refit) — gated on accumulating ~300+ post-v4 `over_p_raw` rows.
-- M1, M2, M4, B2, E5, L2, P4 — small / medium items.
-- O2/O3 closed via the source-of-truth note above (preferred to mass historical edits).
-- O4 — `memory/projects/custom-projection-engine.md` lead paragraph refreshed in the same fix batch.
+- M1 (down-grade race condition — operator awareness only; mitigated by `--late-run`).
+- M2 (`injury_minutes_override` legacy path re-EWMA — perf, not correctness).
+- B2 (role-tier boundary thresholds — undocumented basis; comment / refit gate).
+- E5 (declare scalar freeze policy — frozen vs active list, freeze threshold).
+- L2 (`busy_timeout=20000` calibration — bump to 30s only if logs show timeouts).
+- N3 (shadow CLV pipeline observability — add `log.info` at shadow-write location).
 
 ## Audit 2026-05-05 — Status (injury system + deep audit)
 Full-system audit spawned 2026-05-05 after computer crash + injury system diagnosis. Key fixes:
