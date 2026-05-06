@@ -1127,7 +1127,12 @@ def project_player(
             proj_min = round(proj_min * _rs_scalar, 2)
     # R7 Brief 7: apply cold_start per-subtype minutes ceiling after scaling.
     # Prevents extreme over-projection for unknown/returning/new-team cold_start players.
-    if cold_start_min_cap is not None and proj_min > cold_start_min_cap:
+    # H2 (2026-05-06): bypass cap when injury_minutes_override is set — override is
+    # authoritative (matches the line-1151 contract for the redistribution-bump path)
+    # and an authoritative announced minutes restriction must not be re-clamped below it.
+    if (injury_minutes_override is None
+            and cold_start_min_cap is not None
+            and proj_min > cold_start_min_cap):
         log.debug("R7: cold_start min cap %.1f → %.1f (subtype=%s player_id=%s)",
                   proj_min, cold_start_min_cap, cold_start_subtype, player_id)
         proj_min = round(cold_start_min_cap, 2)
