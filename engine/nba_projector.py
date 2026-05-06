@@ -1590,6 +1590,11 @@ def run_projections(
     # and a role-floor approach whose fallback still hit the highest-minute star
     # when a team had 6+ starter-tier players (e.g. LAL after Luka OUT).
     # M7: also scale p25/p75 percentile keys and dk_std (proportional to median).
+    # F5 (audit 2026-05-06): proj_min is intentionally absent here — it is
+    # scaled separately at lines 1641/1646/1655 via core_scale / bench_scale
+    # so the lineup-protection logic can handle the top-5 vs bench split.
+    # Compare with engine/generate_projections.py:64 _CONSTRAINT_SCALE_KEYS,
+    # which omits proj_min entirely (Vegas anchors points, not minutes).
     _SCALE_KEYS = [
         "proj_pts",  "proj_pts_p25",  "proj_pts_p75",
         "proj_reb",  "proj_reb_p25",  "proj_reb_p75",

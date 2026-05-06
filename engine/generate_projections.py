@@ -76,6 +76,12 @@ _CONSTRAINT_SCALE_KEYS = [
 # Diagnostic over 12 team-games (3 May-2026 playoff dates) showed top-5
 # minutes deflated > 5% in 83% of player-observations under the prior
 # behavior; mean star deflation 2.6 min, p95 4.1 min off a 36-min reference.
+#
+# F5 (audit 2026-05-06): this list intentionally differs from the
+# engine/nba_projector.py 240-min _SCALE_KEYS (which also omits proj_min,
+# but for a different reason — proj_min is scaled there via separate
+# core_scale / bench_scale paths so lineup protection can apply). Both
+# lists exclude proj_min; only the upstream 240-min constraint mutates it.
 _CONSTRAINT_MIN = 0.80
 _CONSTRAINT_MAX = 1.20
 
