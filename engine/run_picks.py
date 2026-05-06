@@ -3193,6 +3193,16 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
     run_date = _now_et.strftime("%Y-%m-%d")
     run_time = _now_et.strftime("%H:%M")
 
+    # A2 (audit 2026-05-06): shadow logs (e.g. pick_log_custom.csv,
+    # pick_log_mlb.csv) skip cross-run dedup so a same-day re-run
+    # appends fresh rows instead of silently no-op'ing.  The live
+    # pick_log.csv still dedups fully so re-running run_picks.py never
+    # double-logs to the production ledger.  Intra-run dedup (the
+    # `existing_keys.add(key)` at the bottom of the loop) keeps a
+    # single invocation from listing the same pick twice — only the
+    # cross-run path is bypassed for shadow logs.
+    is_shadow_log = log_path.name != "pick_log.csv"
+
     # Build card slot lookup: (player_lower, stat, line, direction) -> slot number
     card_slot_map = {}
     if premium_picks:
@@ -3223,6 +3233,12 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
                 old_header = reader.fieldnames or []
                 for row in reader:
                     existing_rows.append(row)
+                    # Skip cross-run dedup population for shadow logs (A2):
+                    # rows are still loaded so the schema-rewrite path
+                    # below works, but we don't seed existing_keys, which
+                    # means every incoming pick is treated as new.
+                    if is_shadow_log:
+                        continue
                     if row.get("date", "") == run_date:
                         # Dedup key is a tuple of date, player, stat, line, direction.
                         key = (
