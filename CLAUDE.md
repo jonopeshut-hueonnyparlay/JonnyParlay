@@ -4,10 +4,14 @@
 Read-only deep audit of the NBA projection chain. Findings: **0 CRIT / 5 HIGH / 8 MED / 5 LOW**. Full doc: `docs/audits/AUDIT_2026-05-06_projection_deep_dive.md`.
 
 **Closed in fix batch (2026-05-06):**
-- **H2 (cold_start cap clamps override):** added `injury_minutes_override is None and` guard at `nba_projector.py:1130`. Taxi cold_start with announced minutes restriction (e.g. 14-min cap) is no longer silently re-clamped to the sub-type cap (12). Note: the broader `ROLE_MAX_MIN["cold_start"]=16` ceiling at line 1162 still applies as a final safety. Tests: `tests/test_cold_start_override_bypass.py` (4 tests).
-- **M3 (Odds API blackout silent no-op):** added top-level `log.error` in `generate_projections.run()` when both `implied_totals` and `spreads` come back empty. Tests: `tests/test_odds_api_blackout_warning.py` (5 tests).
-- **H4 (`LEAGUE_AVG_PACE` provenance):** value 100.22 is **2025-26 season-to-date**, not "2024-25 full season" as Brief 7 R5 originally claimed. `team_season_stats` reports 2024-25 RS=99.58, 2025-26 RS=100.22. Value retained for calibration continuity; comment at `nba_projector.py:62` and the R5 entry below corrected.
-- **O1 (pick_log schema doc):** updated to schema_version=4 / 29 cols / last col `over_p_raw` (matching `engine/pick_log_schema.py`).
+- **H1 (Vegas team-total constraint vs 240-min lineup protection):** Path (b) — Vegas constraint now lineup-protected for `proj_min` (top-5 starters preserved; bench absorbs the scaling). Empirical validation: pre-fix 50/60 top-5 observations were outside ±5% of their lineup-protected baseline (mean star deflation 2.6 min); post-fix 0/20 outside ±5% (deflation 0.0 min). Vegas still actively anchors `proj_pts` for non-top-5. Two commits: `1c3a528` (instrumentation, 10 diag tests) + `1fda742` (Path (b) fix, 12 fix-validation tests).
+- **H2 (cold_start cap clamps override):** added `injury_minutes_override is None and` guard at `nba_projector.py:1130`. Taxi cold_start with announced minutes restriction (e.g. 14-min cap) is no longer silently re-clamped to the sub-type cap (12). Note: the broader `ROLE_MAX_MIN["cold_start"]=16` ceiling at line 1162 still applies as a final safety. Tests: `tests/test_cold_start_override_bypass.py` (4 tests). Commit: `e4911d9`.
+- **M3 (Odds API blackout silent no-op):** added top-level `log.error` in `generate_projections.run()` when both `implied_totals` and `spreads` come back empty. Tests: `tests/test_odds_api_blackout_warning.py` (5 tests). Commit: `1d00c07`.
+- **H4 (`LEAGUE_AVG_PACE` provenance):** value 100.22 is **2025-26 season-to-date**, not "2024-25 full season" as Brief 7 R5 originally claimed. `team_season_stats` reports 2024-25 RS=99.58, 2025-26 RS=100.22. Value retained for calibration continuity; comment at `nba_projector.py:62` and the R5 entry below corrected. Commit: `dceca67`.
+- **O1 (pick_log schema doc):** updated to schema_version=4 / 29 cols / last col `over_p_raw` (matching `engine/pick_log_schema.py`). Commit: `da9b54b`.
+- **O2/O3/O4 (CLAUDE.md scalar source-of-truth + memory refresh):** new "Audit 2026-05-06 — Status" block with current scalars (supersedes stale historical entries below); `memory/projects/custom-projection-engine.md` lead refreshed. Commit: `29474ac`.
+
+**Test progression:** 903 → 919 (post first batch, +16) → 941 (post H1, +22). Final: 941 passed, 0 failed.
 
 **Source of truth for active scalars — `engine/nba_projector.py`:**
 - `PLAYOFF_MINUTES_SCALAR` (line 242) — H2 refit 2026-05-06 (3925 matched pairs across 2023-24 / 2024-25 / 2025-26): starter=1.075, sixth_man=0.960, rotation=0.924, spot=0.948, cold_start=0.400 (filtered out, sub-type caps handle). **Supersedes** Brief 7 R3 (rotation 0.550, spot 0.350) referenced below.
@@ -15,7 +19,6 @@ Read-only deep audit of the NBA projection chain. Findings: **0 CRIT / 5 HIGH / 
 - `REGULAR_SEASON_STAT_SCALAR` (line 276): pts=1.0019, ast=1.0120, reb=1.0264, fg3m=1.0231, blk=1.0608, stl=1.0017, tov=1.000. **Supersedes** the OOS-trimmed values (ast 1.005, blk 1.043) recorded below — refit after REB-prior fix + EWMA span 6→8.
 
 **Open items (queued for follow-up sessions):**
-- H1 (Vegas team-total constraint vs 240-min lineup protection) — needs policy decision + simulation.
 - H3 (Platt refit) — gated on accumulating ~300+ post-v4 `over_p_raw` rows.
 - M1, M2, M4, B2, E5, L2, P4 — small / medium items.
 - O2/O3 closed via the source-of-truth note above (preferred to mass historical edits).
