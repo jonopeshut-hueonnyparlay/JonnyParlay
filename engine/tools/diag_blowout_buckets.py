@@ -8,16 +8,18 @@ Output:
   - data/diagnostics/blowout_starters.csv  (per-row: game_id, margin, player_id, starter_flag, min)
   - bucket summary table printed to stdout
 
-Run: python engine/diag_blowout_buckets.py
+Run: python engine/tools/diag_blowout_buckets.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+_HERE = Path(__file__).resolve().parent          # engine/tools/
+_ENGINE_DIR = _HERE.parent                       # engine/
+_REPO_ROOT = _ENGINE_DIR.parent
+if str(_ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_DIR))
 
 import math
 
@@ -25,7 +27,7 @@ import pandas as pd
 
 from projections_db import DB_PATH, get_conn
 
-OUT_PATH = _HERE.parent / "data" / "diagnostics" / "blowout_starters.csv"
+OUT_PATH = _REPO_ROOT / "data" / "diagnostics" / "blowout_starters.csv"
 BUCKETS = [
     ("0-5",   0,  5),
     ("5-10",  5, 10),

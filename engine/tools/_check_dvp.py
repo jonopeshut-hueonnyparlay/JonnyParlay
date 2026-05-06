@@ -1,7 +1,10 @@
-"""Quick diagnostic: check team_def_splits avg ratio for pts."""
+"""Quick diagnostic: check team_def_splits avg ratio for pts.
+
+Run: python engine/tools/_check_dvp.py
+"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # engine/
 from projections_db import get_conn
 
 conn = get_conn()

@@ -12,7 +12,7 @@ Output:
   - docs/research/playoff_scalar_refit.md       (markdown report with recommended values)
 
 Usage:
-    python engine/analyze_playoff_scalars.py
+    python engine/tools/analyze_playoff_scalars.py
 """
 from __future__ import annotations
 
@@ -23,9 +23,10 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import mean
 
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+_HERE = Path(__file__).resolve().parent          # engine/tools/
+_ENGINE_DIR = _HERE.parent                       # engine/
+if str(_ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_DIR))
 
 from nba_projector import (
     classify_role, project_minutes,

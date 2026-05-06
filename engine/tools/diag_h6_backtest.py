@@ -4,16 +4,17 @@ For each completed 2025-26 playoff game, simulate the filter as of that game's
 date, then check whether any player who actually played >= 15 min in the game
 would have been excluded from the projection pool.
 
-Run: python engine/diag_h6_backtest.py
+Run: python engine/tools/diag_h6_backtest.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+_HERE = Path(__file__).resolve().parent          # engine/tools/
+_ENGINE_DIR = _HERE.parent                       # engine/
+if str(_ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_DIR))
 
 import pandas as pd
 

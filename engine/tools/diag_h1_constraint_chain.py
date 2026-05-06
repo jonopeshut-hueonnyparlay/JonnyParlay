@@ -14,13 +14,13 @@ Outputs a single stdout summary covering:
   - Sum-of-minutes deflation per team-game
 
 Usage:
-    python engine/diag_h1_constraint_chain.py [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--no-rerun]
+    python engine/tools/diag_h1_constraint_chain.py [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--no-rerun]
 
 The driver does not modify any persistent state — generate_projections.run()
 is called with persist=False so the projections DB is untouched. The only
 side effects are JSON sidecars under data/diagnostics/.
 
-Pattern matches engine/diag_h6_pool.py / engine/diag_blowout_buckets.py.
+Pattern matches engine/tools/diag_h6_pool.py / engine/tools/diag_blowout_buckets.py.
 """
 from __future__ import annotations
 
@@ -32,9 +32,10 @@ import sys
 from pathlib import Path
 from statistics import mean, median
 
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+_HERE = Path(__file__).resolve().parent          # engine/tools/
+_ENGINE_DIR = _HERE.parent                       # engine/
+if str(_ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_DIR))
 
 from paths import DATA_DIR
 

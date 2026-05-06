@@ -3,16 +3,17 @@
 Identifies which players pass max_days_inactive=14 but have a DNP-heavy recent
 pattern that suggests they aren't really in the active rotation.
 
-Run: python engine/diag_h6_pool.py
+Run: python engine/tools/diag_h6_pool.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+_HERE = Path(__file__).resolve().parent          # engine/tools/
+_ENGINE_DIR = _HERE.parent                       # engine/
+if str(_ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_DIR))
 
 import pandas as pd
 
