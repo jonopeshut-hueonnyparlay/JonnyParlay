@@ -210,10 +210,11 @@ DK_STD_FLOOR = {
 #    coaches tighten to 8-9 man rotations.
 #    Methodology: scalar = mean(actual_min) / mean(proj_min) per role_tier.
 PLAYOFF_MINUTES_SCALAR = {
-    "starter":   1.068,   # 31.6 → 33.8 actual (+6.8%)
-    "sixth_man": 0.909,   # 23.3 → 21.2 actual (-9.1%)
-    "rotation":  0.550,   # 535 matched pairs Apr 18-29: projects 18.5 min vs 10.2 actual; R3 Brief 7
-    "spot":      0.350,   # 535 matched pairs Apr 18-29: projects 13.9 min vs 4.9 actual; R3 Brief 7
+    "starter":    1.068,   # 31.6 → 33.8 actual (+6.8%)
+    "sixth_man":  0.909,   # 23.3 → 21.2 actual (-9.1%)
+    "rotation":   0.550,   # 535 matched pairs Apr 18-29: projects 18.5 min vs 10.2 actual; R3 Brief 7
+    "spot":       0.350,   # 535 matched pairs Apr 18-29: projects 13.9 min vs 4.9 actual; R3 Brief 7
+    "cold_start": 0.400,   # FIX-P2: cold_start was defaulting to 1.0 — fringe players rarely get PO mins
 }
 
 # 1b. REGULAR_SEASON_MINUTES_SCALAR (Research Brief 6, 2026-05-02):
@@ -300,8 +301,8 @@ _REB_POS_OREB_PRIOR_RS = {"G": 0.02042, "F": 0.03248, "C": 0.07047}  # RS: OREB 
 _REB_POS_DREB_PRIOR_RS = {"G": 0.08086, "F": 0.10572, "C": 0.17163}  # RS: DREB per opp miss/48 — pre-R6 empirical
 _REB_POS_OREB_PRIOR_PO = {"G": 0.02154, "F": 0.02701, "C": 0.05681}  # PO: OREB per team miss/48 — R6 Brief 7
 _REB_POS_DREB_PRIOR_PO = {"G": 0.08527, "F": 0.08792, "C": 0.13836}  # PO: DREB per opp miss/48 — R6 Brief 7
-_REB_PRIOR_N_OREB   = 12   # M6: standardised to 12 (matches _REB_RATE_PRIOR_N); Research Brief 5: REB k=12-15
-_REB_PRIOR_N_DREB   = 12   # M6: standardised to 12 (matches _REB_RATE_PRIOR_N); was 28 (overshrunken)
+_REB_PRIOR_N_OREB   = 5    # prior worth ~5 pseudogames; 12 was too aggressive (50% prior weight at n=12)
+_REB_PRIOR_N_DREB   = 5    # same — positional prior has low info vs individual game data for established players
 REB_ALPHA           = 0.45  # weight on decomposed path (lean baseline until rates stabilise)
 # Per-minute baseline REB path priors (T6, Research Brief 6, 2026-05-02).
 # Bayesian shrinkage of EWMA reb/min rate — fixes cold_start baseline of 0.0.
@@ -753,7 +754,7 @@ def compute_tov_rate(df_clean: pd.DataFrame,
     return float(tov_rate)
 
 
-def compute_shooting_rates(df) -> dict:
+def compute_shooting_rates(df, is_playoff: bool = False) -> dict:
     """Compute EWMA shooting efficiency rates for FGA/FTA PTS decomposition.
 
     Returns dict with keys:
@@ -854,17 +855,28 @@ def compute_shooting_rates(df) -> dict:
     # ------------------------------------------------------------------ #
     # USG%                                                                 #
     # ------------------------------------------------------------------ #
+    # Playoff mode: if ≥3 playoff games exist use only those rows for USG%.
+    # USG% is role-driven (changes when a player's role expands in playoffs);
+    # shooting efficiency is a stable player trait — full window stays for those.
+    _MIN_PO_GAMES_FOR_USG = 3
     has_team = all(c in d.columns for c in ("tm_fga", "tm_fta", "tm_tov", "tm_min"))
     if has_team:
-        tm_denom = d["tm_fga"] + 0.44 * d["tm_fta"] + d["tm_tov"]
-        pl_num   = d["fga"]   + 0.44 * d["fta"]   + d["tov"]
-        usg_raw  = np.where(
-            (d["min"] > 0) & (tm_denom > 0),
-            100.0 * pl_num * (d["tm_min"].clip(upper=240.0) / 5.0) / (d["min"] * tm_denom),
-            np.nan,
-        )
-        usg_vals = pd.Series(usg_raw).ffill().fillna(20.0)
-        usg_pct  = float(usg_vals.ewm(span=EWMA_SPAN_SHOOTING, min_periods=1).mean().iloc[-1])
+        def _compute_usg(rows: pd.DataFrame) -> float:
+            tm_denom = rows["tm_fga"] + 0.44 * rows["tm_fta"] + rows["tm_tov"]
+            pl_num   = rows["fga"]   + 0.44 * rows["fta"]   + rows["tov"]
+            usg_raw  = np.where(
+                (rows["min"] > 0) & (tm_denom > 0),
+                100.0 * pl_num * (rows["tm_min"].clip(upper=240.0) / 5.0) / (rows["min"] * tm_denom),
+                np.nan,
+            )
+            vals = pd.Series(usg_raw).ffill().fillna(20.0)
+            return float(vals.ewm(span=EWMA_SPAN_SHOOTING, min_periods=1).mean().iloc[-1])
+
+        usg_pct = _compute_usg(d)
+        if is_playoff and "season_type" in d.columns:
+            d_po = d[d["season_type"] == "Playoffs"]
+            if len(d_po) >= _MIN_PO_GAMES_FOR_USG:
+                usg_pct = _compute_usg(d_po)
     else:
         usg_pct = 20.0
     usg_pct = float(np.clip(usg_pct, 5.0, 45.0))
@@ -1162,7 +1174,7 @@ def project_player(
     avail_dreb_pg = opp_shoot["fga_per_game"]  * (1.0 - opp_shoot["fg_pct"])
 
     # --- Shooting efficiency rates for 2P%/3P% decomposition ---
-    shoot         = compute_shooting_rates(df_clean)
+    shoot         = compute_shooting_rates(df_clean, is_playoff=is_playoff)
     fg2_pct       = shoot["fg2_pct"]
     fg3_pct       = shoot["fg3_pct"]
     fg3a_rate     = shoot["fg3a_rate"]        # fraction of FGA that are 3PA
@@ -1405,9 +1417,24 @@ def run_projections(
     # per team.  Both the 240-min team constraint and the Vegas team-total
     # constraint then scale everyone's projections down by ~0.40, turning
     # starters' lines into bench-player numbers (e.g. Embiid 30 PTS → 12 PTS).
+    #
+    # FIX-P2 (2026-05-05): for playoff games apply a 14-day recency filter.
+    # Players absent 14+ days (long-term injury, released) still have a valid
+    # team_id and season game count, so FIX-P1 doesn't remove them.  They
+    # inflate the 240-min team budget, causing the constraint to scale all
+    # starters down by 20-30% (e.g. Mitchell 23 PTS → 17 PTS).
+    any_playoff = any(
+        v == "Playoffs" for v in game_season_type.values()
+    )
+    _max_inactive = 14 if any_playoff else 0
     active = get_all_active_players(game_date, min_recent_games=5,
-                                    season=season, db_path=db_path)
+                                    season=season,
+                                    max_days_inactive=_max_inactive,
+                                    db_path=db_path)
     active = active[active["team_id"].isin(team_to_game.keys())]
+    if _max_inactive > 0:
+        log.info("Playoff recency filter (max_days_inactive=%d): %d players",
+                 _max_inactive, len(active))
 
     log.info("Projecting %d players for %s ...", len(active), game_date)
     results = []

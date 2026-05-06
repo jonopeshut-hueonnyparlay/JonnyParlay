@@ -267,11 +267,11 @@ def _log_pull(conn, season: str, ep: str, rows: int, status: str = "ok"):
 
 def _safe_int(v) -> Optional[int]:
     try: return int(v) if pd.notna(v) else None
-    except: return None
+    except (TypeError, ValueError, OverflowError): return None
 
 def _safe_float(v) -> Optional[float]:
     try: return float(v) if pd.notna(v) else None
-    except: return None
+    except (TypeError, ValueError, OverflowError): return None
 
 
 # ---------------------------------------------------------------------------
@@ -589,7 +589,7 @@ def get_player_recent_games(player_id: int, before_date: str,
     # compute_availability_weights() for the blowout-proxy garbage-time filter.
     try:
         df = pd.read_sql_query(
-            f"SELECT pgs.game_id,g.game_date,g.season,g.era_weight,"
+            f"SELECT pgs.game_id,g.game_date,g.season,g.season_type,g.era_weight,"
             f" pgs.team_id,pgs.min,pgs.pts,pgs.reb,pgs.ast,pgs.fg3m,"
             f" pgs.stl,pgs.blk,pgs.tov,pgs.fgm,pgs.fga,pgs.fg3a,"
             f" pgs.ftm,pgs.fta,pgs.oreb,pgs.dreb,"
@@ -669,10 +669,12 @@ def get_team_shooting_stats(team_id: int, season: str,
         "dreb_per_game": 33.5,
     }
     if df.empty:
+        log.warning("get_team_shooting_stats: no data for team_id=%s season=%s — using league-avg defaults", team_id, season)
         return dict(_DEFAULTS)
     row = df.iloc[0]
     n = int(row["n_games"] or 0)
     if n < 5:
+        log.warning("get_team_shooting_stats: only %d games for team_id=%s season=%s — using league-avg defaults", n, team_id, season)
         return dict(_DEFAULTS)
     fga = float(row["fga"] or 0)
     fgm = float(row["fgm"] or 0)
@@ -712,14 +714,17 @@ def get_team_tov_rate(team_id: int, season: str,
     finally:
         conn.close()
     if df.empty:
+        log.warning("get_team_tov_rate: no data for team_id=%s season=%s — using league-avg %.3f", team_id, season, _LEAGUE_AVG)
         return _LEAGUE_AVG
     row = df.iloc[0]
     n = int(row["n_games"] or 0)
     if n < 5:
+        log.warning("get_team_tov_rate: only %d games for team_id=%s season=%s — using league-avg %.3f", n, team_id, season, _LEAGUE_AVG)
         return _LEAGUE_AVG
     tov_per_game = float(row["total_tov"] or 0) / n
     pace = get_team_pace(team_id, season, "Regular Season", db_path)
     if pace <= 0:
+        log.warning("get_team_tov_rate: pace<=0 for team_id=%s season=%s — using league-avg %.3f", team_id, season, _LEAGUE_AVG)
         return _LEAGUE_AVG
     return float(max(0.05, min(0.30, tov_per_game / pace)))
 
@@ -761,13 +766,14 @@ def get_team_rim_attempt_rate(team_id: int, season: str,
     finally:
         conn.close()
     if df.empty:
+        log.warning("get_team_rim_attempt_rate: no data for team_id=%s season=%s — using league-avg %.1f", team_id, season, _LEAGUE_AVG)
         return _LEAGUE_AVG
     row = df.iloc[0]
     n = int(row["n_games"] or 0)
     if n < 5:
+        log.warning("get_team_rim_attempt_rate: only %d games for team_id=%s season=%s — using league-avg %.1f", n, team_id, season, _LEAGUE_AVG)
         return _LEAGUE_AVG
     non3_fga_per_game = float(row["total_non3_fga"] or 0) / n
-    # Sanity clip: no team averages below 35 or above 80 non-3pt FGA/game
     return float(max(35.0, min(80.0, non3_fga_per_game)))
 
 
@@ -802,7 +808,10 @@ def get_team_avg_fga(team_id: int, before_date: str,
         ).fetchone()
     finally:
         conn.close()
-    return float(row[0]) if row and row[0] else 85.0  # league-avg fallback
+    if not (row and row[0]):
+        log.warning("get_team_avg_fga: no data for team_id=%s before=%s — using league-avg 85.0", team_id, before_date)
+        return 85.0
+    return float(row[0])
 
 
 def get_player_career_avg_minutes(
@@ -1212,6 +1221,7 @@ def get_player_b2b_context(player_id: int, game_date,
 
 def get_all_active_players(before_date: str, min_recent_games: int = 3,
                             season: Optional[str] = None,
+                            max_days_inactive: int = 0,
                             db_path: Path = DB_PATH) -> pd.DataFrame:
     """Players with recent history — projection candidate pool.
 
@@ -1221,9 +1231,31 @@ def get_all_active_players(before_date: str, min_recent_games: int = 3,
     team from inflating the pool.  Without this filter the team total
     constraint (constrain_team_totals) divides the Vegas total over far too
     many players and crushes every individual projection.
+
+    ``max_days_inactive``: when > 0, exclude players whose last qualifying game
+    is more than this many days before before_date.  Set to 14 for playoff games
+    to remove players who clearly will not play (long-term injured, released)
+    and would otherwise inflate the 240-min team constraint, causing starters
+    to be scaled down significantly.
     """
+    import datetime as _dt
     conn = get_conn(db_path)
     sc = "AND g.season = :season" if season else ""
+    # Build optional recency clause: player's last game must be within cutoff
+    if max_days_inactive > 0:
+        cutoff = (
+            _dt.date.fromisoformat(before_date)
+            - _dt.timedelta(days=max_days_inactive)
+        ).isoformat()
+        rc = (
+            " AND (SELECT MAX(g2.game_date) FROM player_game_stats pgs2"
+            "      JOIN games g2 ON g2.game_id=pgs2.game_id"
+            "      WHERE pgs2.player_id=p.player_id AND pgs2.min>=5"
+            "      AND g2.game_date<:before) >= :cutoff"
+        )
+    else:
+        cutoff = ""
+        rc = ""
     try:
         df = pd.read_sql_query(
             "SELECT p.player_id,p.name,p.name_key,p.position,p.team_id"
@@ -1231,9 +1263,10 @@ def get_all_active_players(before_date: str, min_recent_games: int = 3,
             " WHERE (SELECT COUNT(*) FROM player_game_stats pgs"
             "        JOIN games g ON g.game_id=pgs.game_id"
             "        WHERE pgs.player_id=p.player_id"
-            f"        AND g.game_date<:before AND pgs.min>=5 {sc}) >= :mg",
+            f"        AND g.game_date<:before AND pgs.min>=5 {sc}) >= :mg"
+            f"{rc}",
             conn, params={"before": before_date, "mg": min_recent_games,
-                          "season": season or ""})
+                          "season": season or "", "cutoff": cutoff})
     finally:
         conn.close()
     return df
@@ -1553,21 +1586,38 @@ def verify(db_path: str = DB_PATH) -> bool:
 
 def pull_player_positions(conn: sqlite3.Connection,
                           season: str = "2025-26") -> int:
-    """Infer position (G/F/C) from player height and update players table.
+    """Update player positions using the NBA API's official POSITION field.
 
-    Uses LeagueDashPlayerBioStats (1 API call) + height thresholds:
-      <= 76" -> G  |  77-80" -> F  |  >= 81" -> C
+    Primary source: PlayerIndex endpoint (1 API call, all active players).
+    POSITION field contains values like "Guard", "Forward", "Center",
+    "Guard-Forward", etc. — mapped to G/F/C via _position_group().
+
+    Fallback (RB8 / Research Brief 8): height-based inference is used for any
+    player whose POSITION field is blank or missing in the API response.
+    This fixes the 15-25% misclassification rate caused by pure height inference
+    (Bam Adebayo, Draymond Green, etc. were classified as C/F by height alone).
     """
-    from nba_api.stats.endpoints import LeagueDashPlayerBioStats
-    log.info("Pulling player positions via height inference (%s) ...", season)
-    df = _nba_api_call(LeagueDashPlayerBioStats,
-                      season=season,
-                      season_type_all_star="Regular Season")
-    if df.empty:
-        log.warning("No bio data returned")
-        return 0
+    from nba_api.stats.endpoints import PlayerIndex, LeagueDashPlayerBioStats
+    log.info("Pulling player positions via NBA API POSITION field (%s) ...", season)
 
-    def _infer_pos(height_inches) -> str:
+    # --- Primary: PlayerIndex gives official position for all active players ---
+    api_positions: dict[int, str] = {}
+    try:
+        idx_df = _nba_api_call(PlayerIndex, season=season, league_id="00")
+        if not idx_df.empty and "POSITION" in idx_df.columns:
+            for _, row in idx_df.iterrows():
+                pid = int(row["PERSON_ID"])
+                pos_raw = str(row.get("POSITION", "")).strip()
+                if pos_raw and pos_raw.upper() not in ("", "NONE"):
+                    api_positions[pid] = _position_group(pos_raw)
+            log.info("  API POSITION field: %d players mapped", len(api_positions))
+        else:
+            log.warning("PlayerIndex returned no POSITION data — falling back to height")
+    except Exception as e:
+        log.warning("PlayerIndex failed (%s) — falling back to height inference", e)
+
+    # --- Fallback: height inference for players not in API POSITION response ---
+    def _infer_pos_from_height(height_inches) -> str:
         try:
             h = float(height_inches)
         except (TypeError, ValueError):
@@ -1578,15 +1628,32 @@ def pull_player_positions(conn: sqlite3.Connection,
             return "F"
         return "C"
 
+    height_positions: dict[int, str] = {}
+    try:
+        bio_df = _nba_api_call(LeagueDashPlayerBioStats,
+                               season=season,
+                               season_type_all_star="Regular Season")
+        if not bio_df.empty:
+            for _, row in bio_df.iterrows():
+                pid = int(row["PLAYER_ID"])
+                if pid not in api_positions:
+                    height_positions[pid] = _infer_pos_from_height(
+                        row.get("PLAYER_HEIGHT_INCHES"))
+    except Exception as e:
+        log.warning("LeagueDashPlayerBioStats failed (%s) — height fallback unavailable", e)
+
+    all_positions = {**height_positions, **api_positions}  # API wins on conflict
+    if not all_positions:
+        log.warning("No position data from either source")
+        return 0
+
     updated = 0
-    for _, row in df.iterrows():
-        pos = _infer_pos(row.get("PLAYER_HEIGHT_INCHES"))
-        conn.execute(
-            "UPDATE players SET position=? WHERE player_id=?",
-            (pos, int(row["PLAYER_ID"])))
+    for pid, pos in all_positions.items():
+        conn.execute("UPDATE players SET position=? WHERE player_id=?", (pos, pid))
         updated += 1
     conn.commit()
-    log.info("  Player positions updated: %d", updated)
+    log.info("  Player positions updated: %d (%d from API, %d height fallback)",
+             updated, len(api_positions), len(height_positions))
     return updated
 
 # ---------------------------------------------------------------------------
