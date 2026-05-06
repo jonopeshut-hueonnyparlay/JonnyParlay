@@ -170,8 +170,8 @@ Discord bot display name: **PicksByJonny**
 | `engine/analyze_picks.py` | Backtest analysis dashboard. Usage: `python analyze_picks.py [--sport X] [--since YYYY-MM-DD] [--stat X] [--shadow] [--export]` |
 | `engine/weekly_recap.py` | Weekly P&L recap posted to #announcements every Sunday. |
 | `engine/morning_preview.py` | Posts daily card teaser to #announcements after run_picks.py runs. |
-| `data/pick_log.csv` | Model-generated ledger (primary / bonus / daily_lay / sgp / longshot). Starts Apr 14 2026. **28-column** header (schema_version=3, last col is `legs` JSON for parlays). |
-| `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 28-column schema. Graded alongside main log but never posted to Discord recap. Excluded from CLV daemon. |
+| `data/pick_log.csv` | Model-generated ledger (primary / bonus / daily_lay / sgp / longshot). Starts Apr 14 2026. **29-column** header (schema_version=4, last col is `over_p_raw` — pre-Platt over probability, RB8 IMMEDIATE 1; `legs` JSON for parlays is now col 28). |
+| `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 29-column schema. Graded alongside main log but never posted to Discord recap. Excluded from CLV daemon. |
 | `data/pick_log_mlb.csv` | Shadow log for MLB (still in SHADOW_SPORTS). Include in analyze with --shadow flag. |
 | `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. Same-Game Parlay builder. Runs after every pick run. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
 | `start_clv_daemon.bat` | Launcher for CLV daemon — called by Task Scheduler. Requires `PYTHONUNBUFFERED=1` + `python -u` (S4U logon). **Must contain ASCII only** — non-ASCII chars (em-dash, box-drawing, ×) cause cmd.exe to crash with exit code 255. |
@@ -226,8 +226,10 @@ ARCHIVE: (collapsed)
 - **Apr 28 2026 — Parlay sharpness overhaul:** SGP redesigned 6→3-4 legs (+200–450), daily lay per-leg gates + Kelly sizing, longshot per-game cap of 2. All committed. engine/sgp_builder.py synced (H1 closed).
 - **Audit 2026-04-28 — 52 findings, ALL items closed Apr 28–30 2026.** CRIT+HIGH closed Apr 28–29; all MED + all LOW closed Apr 29–30. See `docs/audits/AUDIT_2026-04-28.md`.
 
-## pick_log.csv Schema (current — schema_version 3, 28 columns)
-`date, run_time, run_type, sport, player, team, stat, line, direction, proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode, result, closing_odds, clv, card_slot, is_home, context_verdict, context_reason, context_score, legs`
+## pick_log.csv Schema (current — schema_version 4, 29 columns)
+`date, run_time, run_type, sport, player, team, stat, line, direction, proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode, result, closing_odds, clv, card_slot, is_home, context_verdict, context_reason, context_score, legs, over_p_raw`
+
+Authoritative source: `engine/pick_log_schema.py` (`SCHEMA_VERSION` + `CANONICAL_HEADER`). Updated to v4 by RB8 IMMEDIATE 1 (2026-05-05).
 
 - `run_type`: primary | bonus | manual | daily_lay | sgp | longshot
 - `tier`: T1 | T1B | T2 | T3 | KILLSHOT | DAILY_LAY | SGP | LONGSHOT | MANUAL
@@ -235,7 +237,8 @@ ARCHIVE: (collapsed)
 - `is_home`: True/False for SPREAD/ML/F5/TEAM_TOTAL picks; blank for props (canonical: `normalize_is_home`)
 - `clv`: closing_implied_prob − your_implied_prob (positive = beat the close); filled by capture_clv.py
 - `context_verdict`: supports | neutral | conflicts | skipped | disabled — blank on normal runs (context disabled by default)
-- `legs`: JSON array for parlay rows. **SGP populates ✓** | longshot populates ✓ | **daily_lay populates ✓** (H9 closed Apr 28 — `_daily_lay_legs_json()` added; grader reads JSON-first with game-string fallback for 9 legacy rows). primary/bonus/manual leave it blank. pick_log_mlb.csv 282 short rows normalized to 28 cols (M1 closed Apr 29).
+- `legs`: JSON array for parlay rows. **SGP populates ✓** | longshot populates ✓ | **daily_lay populates ✓** (H9 closed Apr 28 — `_daily_lay_legs_json()` added; grader reads JSON-first with game-string fallback for 9 legacy rows). primary/bonus/manual leave it blank. pick_log_mlb.csv 282 short rows normalized to 29 cols.
+- `over_p_raw`: pre-Platt over-probability for prop picks (RB8 IMMEDIATE 1, 2026-05-05). Blank for non-props and for legacy v1–v3 rows where it was never recorded; `recover_over_p()` in `calibrate_platt.py` falls back via direction recovery for those. Populating this column for ~300+ post-v4 rows is the single unblocker for the H3 Platt refit (Brief 7 R1).
 
 ## Sizing Caps (L12/L17)
 - **Daily total cap: 12u** (`G12` check in run_picks.py) — hard ceiling across all run_types per session.
