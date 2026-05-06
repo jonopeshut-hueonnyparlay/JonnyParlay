@@ -2,7 +2,9 @@
 data/*.csv
 data/*.log
 data/*.json
+data/*.txt
 data/picks/
+data/projections/
 
 # Generated artefacts
 results_graphics/
@@ -10,6 +12,9 @@ projections/*.csv
 *.png
 *.jpg
 *.jpeg
+
+# Research input notes (binary)
+*.docx
 
 # Python
 __pycache__/
@@ -25,6 +30,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Claude Code session state
+.claude/
 
 # Large retired / archive folders
 archive/
