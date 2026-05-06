@@ -170,13 +170,20 @@ ROLE_MAX_MIN = {
     "cold_start": 16.0,
 }
 
-# Blowout minutes reduction: sigmoid centred at spread=12, max reduction 20%.
-# Replaces flat 0.80x at |spread|>12 (over-reduces 12-15, under-reduces 18+).
-# Formula: factor = 1 - 0.20 / (1 + exp(-0.4 * (|spread| - 12)))
-# At |spread|=12: factor≈0.90; 15: 0.875; 18: 0.838; 22+: ~0.80.
-BLOWOUT_SIGMOID_K        = 0.40   # steepness
-BLOWOUT_SIGMOID_MID      = 12.0   # inflection point (spread units)
-BLOWOUT_MAX_REDUCTION    = 0.20   # max minutes reduction (20%)
+# Blowout minutes reduction: empirical sigmoid fit (P1-A, 2026-05-06).
+# Refit on 24,600 starter rows × 2460 RS games (2024-25 + 2025-26).  Prior
+# params (k=0.40, mid=12.0) were calibrated from ~3 games of NBA literature
+# and over-reduced in the typical close-game range (10-20 spread).
+# Empirical bucket reductions (vs 0-5 baseline 33.3 min):
+#   margin 10-15: 4.2%   |  prior model said 10% → over-reduced by 6pp
+#   margin 15-20: 8.4%   |  prior 15% → over-reduced by 7pp
+#   margin 20-25: 11.2%  |  prior 18% → over-reduced by 7pp
+#   margin 25-30: 13.8%  |  prior 19% → over-reduced by 5pp
+#   margin 35+:   18.9%  |  prior ~20% → ~unchanged
+# Fit MSE 0.00008.  Asymptotes match (~19-20%); sigmoid moved later + shallower.
+BLOWOUT_SIGMOID_K        = 0.15   # steepness (was 0.40)
+BLOWOUT_SIGMOID_MID      = 20.0   # inflection point in spread units (was 12.0)
+BLOWOUT_MAX_REDUCTION    = 0.19   # max minutes reduction at high spread (was 0.20)
 MATCHUP_CLIP             = (0.80, 1.20)
 
 # Days-rest reduction function (Brief P3, Sec. 6b — 2026-05-01).

@@ -123,30 +123,36 @@ def run_historical_backtest(
     season: str = "2024-25",
     db_path: Path = DB_PATH,
     verbose: bool = False,
+    explicit_dates: list[str] | None = None,
 ):
-    print(f"\nHistorical backtest: season={season}, n_dates={n_dates}, seed={seed}")
-    print(f"DB: {db_path}\n")
-
-    all_dates = get_regular_season_dates(season, db_path)
-    if not all_dates:
-        print(f"ERROR: No regular-season dates found for {season}")
-        return
-
-    print(f"Available regular-season dates: {len(all_dates)}  ({all_dates[0]} to {all_dates[-1]})")
-
-    # Sample evenly across the season (not just random, to avoid clustering)
-    rng = random.Random(seed)
-    if n_dates >= len(all_dates):
-        sampled_dates = all_dates
+    if explicit_dates:
+        sampled_dates = sorted(explicit_dates)
+        print(f"\nHistorical backtest: explicit dates ({len(sampled_dates)}): {sampled_dates[0]} to {sampled_dates[-1]}")
+        print(f"DB: {db_path}\n")
     else:
-        # Stratified: divide into n_dates buckets, pick one from each
-        bucket_size = len(all_dates) / n_dates
-        sampled_dates = sorted(
-            all_dates[int(rng.uniform(i * bucket_size, (i + 1) * bucket_size))]
-            for i in range(n_dates)
-        )
+        print(f"\nHistorical backtest: season={season}, n_dates={n_dates}, seed={seed}")
+        print(f"DB: {db_path}\n")
 
-    print(f"Sampled {len(sampled_dates)} dates: {sampled_dates[0]} to {sampled_dates[-1]}")
+        all_dates = get_regular_season_dates(season, db_path)
+        if not all_dates:
+            print(f"ERROR: No regular-season dates found for {season}")
+            return
+
+        print(f"Available regular-season dates: {len(all_dates)}  ({all_dates[0]} to {all_dates[-1]})")
+
+        # Sample evenly across the season (not just random, to avoid clustering)
+        rng = random.Random(seed)
+        if n_dates >= len(all_dates):
+            sampled_dates = all_dates
+        else:
+            # Stratified: divide into n_dates buckets, pick one from each
+            bucket_size = len(all_dates) / n_dates
+            sampled_dates = sorted(
+                all_dates[int(rng.uniform(i * bucket_size, (i + 1) * bucket_size))]
+                for i in range(n_dates)
+            )
+
+        print(f"Sampled {len(sampled_dates)} dates: {sampled_dates[0]} to {sampled_dates[-1]}")
 
     # Accumulators
     errors_by_stat = defaultdict(list)   # stat -> list of (error, is_cold_start, role, proj)
@@ -416,7 +422,12 @@ if __name__ == "__main__":
     parser.add_argument("--season",  default=CURRENT_SEASON)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--db",      default=None)
+    parser.add_argument("--dates",   default=None,
+                        help="Comma-separated explicit dates (YYYY-MM-DD). "
+                             "Bypasses sampling; works for playoff dates too.")
     args = parser.parse_args()
+
+    explicit = [d.strip() for d in args.dates.split(",")] if args.dates else None
 
     run_historical_backtest(
         n_dates=args.n_dates,
@@ -424,4 +435,5 @@ if __name__ == "__main__":
         season=args.season,
         verbose=args.verbose,
         db_path=Path(args.db) if args.db else DB_PATH,
+        explicit_dates=explicit,
     )
