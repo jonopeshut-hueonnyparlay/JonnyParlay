@@ -115,7 +115,8 @@ def test_env_var_wins_over_system_fallbacks(fresh_rg, monkeypatch):
     monkeypatch.setenv("JONNYPARLAY_FONTS", ttf)
     chain = fresh_rg._build_search_chain("bold")
     # Env var entry must appear before any system-fallback entry.
-    assert chain[0] == ttf
+    # Compare via Path to handle OS separator differences (/ vs \\ on Windows).
+    assert Path(chain[0]) == Path(ttf)
 
 
 def test_repo_fonts_dir_wins_over_system(fresh_rg, tmp_path, monkeypatch):

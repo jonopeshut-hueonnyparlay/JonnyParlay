@@ -691,13 +691,14 @@ def get_tier_min_edge(tier):
 # ============================================================
 
 def check_prop_gates(pick):
-    """Apply gates G1-G10. Returns (pass, gate_failed) tuple."""
+    """Apply gates G1-G10, G14. Returns (pass, gate_failed) tuple."""
     prob = pick["win_prob"]
     edge = pick["adj_edge"]
     odds = pick["odds"]
     line = pick["line"]
     stat = pick["stat"]
     direction = pick["direction"]
+    proj = pick.get("proj", 0.0)
 
     # G3: missing both sides
     if pick.get("missing_side"):
@@ -726,6 +727,22 @@ def check_prop_gates(pick):
     # G13: sub-50% win probability ban — proven 1-3 record, negative PS
     if prob < 0.50:
         return False, "G13"
+
+    # G14: projection clearance gate — ensures model has directional conviction
+    # Poisson stats at non-trivial lines (≥2.0): projection must land on correct side.
+    # Normal stats (SIGMA): projection must clear line by ≥0.10σ.
+    # NB stats (3PM) and low lines (<2.0) are exempt — distribution accurately captures edge.
+    if stat in POISSON_STATS and 2.0 <= line <= POISSON_CUTOFF:
+        if direction == "under" and proj > line:
+            return False, "G14"
+        if direction == "over" and proj < line:
+            return False, "G14"
+    elif stat in SIGMA and (stat not in POISSON_STATS or line > POISSON_CUTOFF):
+        _s = SIGMA[stat]
+        _sigma = max(proj * _s["mult"], _s["min"])
+        _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
+        if _z < 0.10:
+            return False, "G14"
 
     # G1: high prob + bad odds — but allow if edge is strong (FIX L2)
     if prob >= 0.70 and odds > -200 and edge < 0.05:
@@ -1852,6 +1869,10 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         # Calculate probabilities
         over_p, under_p = calc_prop_prob(proj, line, stat)
 
+        # v4: save raw over_p before Platt so calibrate_platt.py can fit on
+        # the actual model output without double-calibration bias.
+        over_p_raw = over_p
+
         # P9: Platt calibration — compress overconfident win_probs toward actual hit rate.
         # Calibrate over_p; derive under_p to preserve over+under=1.
         over_p = _platt_calibrate_prop(over_p)
@@ -1906,6 +1927,7 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 "direction": direction,
                 "proj": proj,
                 "win_prob": win_prob,
+                "over_p_raw": over_p_raw,  # v4: pre-Platt over_p for calibrate_platt.py
                 "raw_edge": raw_edge,
                 "adj_edge": adj_edge,
                 "conf": conf,
@@ -3307,6 +3329,8 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
                         p.get("context_reason", ""),
                         p.get("context_score", ""),
                         "",  # legs — blank for primary/bonus (F2.5: was missing, silently dropped)
+                        # v4: pre-Platt over_p; blank for non-prop picks (game lines, parlays).
+                        f"{p['over_p_raw']:.4f}" if p.get("over_p_raw") is not None else "",
                     ])
                 # Commit to disk before releasing the outer lock (audit H-5).
                 f.flush()
@@ -4291,6 +4315,8 @@ def _log_bonus_pick(pick, run_id, today_str, save=True):
                 "context_verdict":  pick.get("context_verdict", ""),
                 "context_reason":   pick.get("context_reason", ""),
                 "context_score":    pick.get("context_score", ""),
+                # v4: pre-Platt over_p; blank if not carried through (e.g. legacy pick dict).
+                "over_p_raw": f"{pick['over_p_raw']:.4f}" if pick.get("over_p_raw") is not None else "",
             })
             # Commit to disk before releasing the outer lock (audit H-5).
             f.flush()
@@ -4809,7 +4835,8 @@ def apply_context_sanity(qualified, today_str, skip=False, mode="Default"):
 
 
 def format_output(premium, safest5, all_qualified, all_picks, mode, today,
-                   safest6_parlay=None, alt_spread_parlay=None, max_per_game=2):
+                   safest6_parlay=None, alt_spread_parlay=None, max_per_game=2,
+                   killshots=None):
     """Format the full output (sections A-J + parlays)."""
     out = []
 
@@ -5011,6 +5038,15 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     has_reb_over = any(p["stat"] == "REB" and p["direction"] == "over" for p in all_qualified)
     has_g8_fail = any(p["stat"] in ("AST","REB","SOG","K","HA","HITS") and p["line"] <= 1.5 for p in all_qualified)
     has_heavy_juice = any(p["odds"] <= -150 for p in all_qualified)
+    def _g14_fail(p):
+        s, d, ln, pr = p["stat"], p["direction"], p["line"], p.get("proj", 0.0)
+        if s in POISSON_STATS and 2.0 <= ln <= POISSON_CUTOFF:
+            return (d == "under" and pr > ln) or (d == "over" and pr < ln)
+        if s in SIGMA and (s not in POISSON_STATS or ln > POISSON_CUTOFF):
+            _s = SIGMA[s]; _sig = max(pr * _s["mult"], _s["min"])
+            return ((ln - pr) / _sig if d == "under" else (pr - ln) / _sig) < 0.10
+        return False
+    has_g14_fail = any(_g14_fail(p) for p in all_qualified)
     max_game = max(defaultdict(int, {p["game"]: sum(1 for q in all_qualified if q["game"]==p["game"]) for p in all_qualified}).values()) if all_qualified else 0
 
     # G11 check: any pitcher with 2+ props across K/OUTS/HA/ER?
@@ -5027,6 +5063,8 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     max_batter_corr = max(batter_prop_counts.values()) if batter_prop_counts else 0
 
     # M7: include KILLSHOT units in daily cap validation (premium only was under-counting)
+    if killshots is None:
+        killshots = []
     ks_u = sum(p.get("size", 0) for p in killshots)
     total_u_all = total_u + ks_u
 
@@ -5038,6 +5076,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8 enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5", not has_g8_fail),
+        (f"G14 enforced: Projection clearance (Poisson correct side / normal z≥0.10)", not has_g14_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
         (f"R7 enforced: Max per game = {max_game} (cap: {max_per_game})", max_game <= max_per_game),
         (f"G11 enforced: Max pitcher props per pitcher = {max_pitcher_props}", max_pitcher_props <= 1),
@@ -5103,7 +5142,7 @@ def find_csvs(folder=None):
                 hdr = f.readline().lower()
             if any(k in hdr for k in ["saber", "ast", "rb", "sog", "pts", "win%", "make cut", "birdies"]):
                 result.append(c)
-        except:
+        except OSError:
             continue
     return result
 
@@ -5582,7 +5621,7 @@ def main():
     # Format full output
     output = format_output(premium, safest5, qualified, all_picks, args.mode, today,
                            safest6_parlay=safest6_parlay, alt_spread_parlay=alt_spread_parlay,
-                           max_per_game=args.max_per_game)
+                           max_per_game=args.max_per_game, killshots=killshots)
 
     # Print
     print("\n" + "=" * 60)

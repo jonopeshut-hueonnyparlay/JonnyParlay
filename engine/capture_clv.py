@@ -1078,7 +1078,27 @@ def run(run_date: str):
                 for lp in log_paths if lp.exists()
             )
             if any_logged:
-                # All logged picks already have CLV — done
+                # picks_needing_clv returned empty — but some picks may have been
+                # graded (W/L) before the daemon could capture their closing line.
+                # Detect these "graded-but-missed" picks and mark them STALE so
+                # the CLV report clearly shows STALE rather than misleading blank.
+                _terminal = {"W", "L", "P", "VOID"}
+                missed: list[tuple[Path, dict]] = []
+                for lp in log_paths:
+                    if not lp.exists():
+                        continue
+                    for p in load_picks(lp, run_date):
+                        if (
+                            p.get("result", "") in _terminal
+                            and not p.get("closing_odds", "").strip()
+                            and p.get("stat", "") not in SKIP_STATS
+                        ):
+                            missed.append((lp, p))
+                if missed:
+                    logger.warning(
+                        "%d pick(s) graded without CLV capture — marking STALE", len(missed)
+                    )
+                    _mark_picks_stale(missed)
                 print(f"  [{now.strftime('%H:%M')} UTC] All picks captured — done for today.")
                 break
             else:
@@ -1104,14 +1124,29 @@ def run(run_date: str):
                 continue
 
             events = fetch_events(sport_key)
-            if not events:
-                continue
 
-            # Group picks by game
+            # Group picks by game (done before events check so we can STALE
+            # games that are past their window when fetch_events returns empty)
             picks_by_game: dict[str, list[tuple[Path, dict]]] = {}
             for (log_path, p) in sport_picks:
                 game = p.get("game", "")
                 picks_by_game.setdefault(game, []).append((log_path, p))
+
+            if not events:
+                # API returned no events — bump attempt counters and STALE any
+                # games that are definitely past their window.
+                for game_str, game_picks in picks_by_game.items():
+                    if game_str in captured_games:
+                        continue
+                    attempts = _bump_attempt(game_str)
+                    if attempts >= MAX_FETCH_ATTEMPTS:
+                        logger.warning(
+                            "%s: fetch_events returned empty after %d attempts — marking STALE",
+                            game_str, attempts,
+                        )
+                        _mark_picks_stale(game_picks)
+                        _retire_game(game_str)
+                continue
 
             for game_str, game_picks in picks_by_game.items():
                 if game_str in captured_games:
@@ -1119,6 +1154,16 @@ def run(run_date: str):
 
                 event = find_event(game_str, events)
                 if not event:
+                    # Game not found in API — could be a name-matching miss.
+                    # Bump attempt and STALE if past the window.
+                    attempts = _bump_attempt(game_str)
+                    if attempts >= MAX_FETCH_ATTEMPTS:
+                        logger.warning(
+                            "%s: game not found in events after %d attempts — marking STALE",
+                            game_str, attempts,
+                        )
+                        _mark_picks_stale(game_picks)
+                        _retire_game(game_str)
                     continue
 
                 # Parse commence_time

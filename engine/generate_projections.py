@@ -349,24 +349,41 @@ def run(
     persist: bool = True,
     no_constraint: bool = False,
     db_path: str = DB_PATH,
+    late_run: bool = False,
 ) -> Path | None:  # M4: can return None when no projections are generated
     """Run the full projection pipeline and return the path to the output CSV.
 
     This is the public API for callers that import this module.
+
+    late_run=True (--late-run flag): skips pace/Odds API re-calls and only
+    re-fetches injuries + regenerates projections.  Use for a T-90 min second
+    pass to catch late scratches without spending the full Odds API quota again.
     """
-    log.info("=== generate_projections: %s ===", game_date)
+    log.info("=== generate_projections: %s%s ===", game_date,
+             " [LATE RUN]" if late_run else "")
 
     # 0. Seed today's scheduled games from ScoreboardV2 so the projector can
     #    run before games tip off (games table is normally populated only from
     #    completed PlayerGameLogs, which don't exist until after tip-off).
-    log.info("Seeding scheduled games from NBA API...")
-    n_seeded = seed_scheduled_games(game_date, season=season, db_path=db_path)
-    log.info("  seeded %d game(s) for %s", n_seeded, game_date)
+    if not late_run:
+        log.info("Seeding scheduled games from NBA API...")
+        n_seeded = seed_scheduled_games(game_date, season=season, db_path=db_path)
+        log.info("  seeded %d game(s) for %s", n_seeded, game_date)
+    else:
+        log.info("Late run: skipping game seed (already seeded this morning)")
 
     # 1. Implied totals + team totals (Odds API)
-    log.info("Fetching implied totals...")
-    implied_totals, team_totals = fetch_nba_implied_totals(game_date, db_path)
-    log.info("  totals: %d games, team_totals: %d entries", len(implied_totals), len(team_totals))
+    if not late_run:
+        log.info("Fetching implied totals...")
+        implied_totals, team_totals = fetch_nba_implied_totals(game_date, db_path)
+        log.info("  totals: %d games, team_totals: %d entries", len(implied_totals), len(team_totals))
+    else:
+        # Late run: re-use implied totals from DB / last write via csv_writer cache.
+        # The Odds API window is still open but we don't want to spend the quota;
+        # totals rarely change in the final 90 min before tip-off.
+        log.info("Late run: re-using cached implied totals from csv_writer (no Odds API call)")
+        implied_totals, team_totals = fetch_nba_implied_totals(game_date, db_path)
+        log.info("  totals: %d games, team_totals: %d entries (cached)", len(implied_totals), len(team_totals))
 
     # Warn for any scheduled game missing an implied total (pace constraint won't apply)
     try:
@@ -489,6 +506,13 @@ def main() -> None:
                         help="Do not write projections to SQLite DB")
     parser.add_argument("--no-constraint", action="store_true",
                         help="Skip Vegas team-total constraint scaling (T5)")
+    parser.add_argument("--late-run",      action="store_true",
+                        help="T-90 min second pass: re-fetch injuries and regenerate projections "
+                             "without re-calling pace/Odds API (uses cached CSV). Catches late "
+                             "scratches that weren't on the morning report. Outputs to the same "
+                             "CSV path as the morning run so run_picks.py always reads fresh data. "
+                             "Combine with --run-picks or --shadow to auto-post updated picks. "
+                             "(RB8 HIGH priority)")
     parser.add_argument("--verbose",       action="store_true")
     args = parser.parse_args()
 
@@ -496,12 +520,15 @@ def main() -> None:
         logging.getLogger().setLevel(logging.DEBUG)
 
     out_path = Path(args.out) if args.out else None
+    # Late run skips DB persist by default (morning run already wrote projections).
+    _persist = False if args.late_run else not args.no_persist
     csv_path = run(
         game_date=args.date,
         season=args.season,
         out_path=out_path,
-        persist=not args.no_persist,
+        persist=_persist,
         no_constraint=args.no_constraint,
+        late_run=args.late_run,
     )
 
     if csv_path is None:

@@ -34,22 +34,23 @@ sys.path.insert(0, str(HERE / "engine"))
 # Canonical invariants
 # ─────────────────────────────────────────────────────────────────
 
-def test_canonical_header_is_28_cols():
+def test_canonical_header_is_29_cols():
     from pick_log_schema import CANONICAL_HEADER
-    assert len(CANONICAL_HEADER) == 28, (
-        f"CANONICAL_HEADER length locked at 28 (v3); got {len(CANONICAL_HEADER)}. "
+    assert len(CANONICAL_HEADER) == 29, (
+        f"CANONICAL_HEADER length locked at 29 (v4); got {len(CANONICAL_HEADER)}. "
         "If adding a new column: bump SCHEMA_VERSION, update this test, and "
         "verify migrate_row() still produces canonical rows."
     )
 
 
-def test_canonical_header_legs_is_last():
-    """CRIT-6 (H-CRIT-002): legs must be the canonical 28th (final) column.
-    Tools that read legs by column index depend on this position being stable."""
+def test_canonical_header_over_p_raw_is_last():
+    """v4: over_p_raw must be the final column (index 28).
+    legs stays at index 27; over_p_raw appended after it per append-only contract."""
     from pick_log_schema import CANONICAL_HEADER
-    assert CANONICAL_HEADER[-1] == "legs", (
-        f"'legs' must be the last column (index 27); got {CANONICAL_HEADER[-1]!r}"
+    assert CANONICAL_HEADER[-1] == "over_p_raw", (
+        f"'over_p_raw' must be the last column (index 28); got {CANONICAL_HEADER[-1]!r}"
     )
+    assert list(CANONICAL_HEADER).index("over_p_raw") == 28
     assert list(CANONICAL_HEADER).index("legs") == 27
 
 
@@ -66,9 +67,9 @@ def test_canonical_header_contains_every_v2_only_column():
         assert col in CANONICAL_HEADER, f"v2 column '{col}' missing from canonical"
 
 
-def test_schema_version_is_3():
+def test_schema_version_is_4():
     from pick_log_schema import SCHEMA_VERSION
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION == 4
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -198,6 +199,20 @@ def test_detect_schema_version_v2():
     assert detect_schema_version(
         ["date", "player", "closing_odds"]
     ) == 2
+
+
+def test_detect_schema_version_v3():
+    from pick_log_schema import detect_schema_version
+    assert detect_schema_version(
+        ["date", "player", "closing_odds", "legs"]
+    ) == 3
+
+
+def test_detect_schema_version_v4():
+    from pick_log_schema import detect_schema_version
+    assert detect_schema_version(
+        ["date", "player", "closing_odds", "legs", "over_p_raw"]
+    ) == 4
 
 
 def test_detect_schema_version_empty_returns_zero():

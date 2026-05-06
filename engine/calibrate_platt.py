@@ -12,8 +12,10 @@ P9 Phase timeline:
     Phase 2 (300+ picks):   Isotonic regression (P19)
 
 Fitting basis:
-    over_p is recovered from the logged directional win_prob:
-        over bet  -> over_p = win_prob
+    over_p is read from the v4 pick_log column 'over_p_raw' (pre-Platt, stored
+    since schema v4 / Research Brief 8).  For legacy rows that predate v4, it
+    is recovered from the logged directional win_prob as a fallback:
+        over bet  -> over_p = win_prob   (= already-calibrated — biased)
         under bet -> over_p = 1 - win_prob
     Calibration: cal_over_p = sigmoid(a * over_p + b)
     under_p derived as 1 - cal_over_p (preserves complementarity).
@@ -50,12 +52,35 @@ def load_settled_props(log_path: Path, sport: str = "all") -> pd.DataFrame:
 
 
 def recover_over_p(df: pd.DataFrame) -> np.ndarray:
-    """Recover over_p from logged directional win_prob."""
-    over_p = np.where(
-        df["direction"].str.lower() == "over",
-        df["win_prob"].values,
-        1.0 - df["win_prob"].values,
-    )
+    """Return pre-Platt over_p for each row.
+
+    Prefers the v4 'over_p_raw' column (schema_version=4) which stores the
+    raw model output before Platt calibration.  Falls back to recovering
+    over_p from the directional win_prob for legacy rows (schema v1-v3) where
+    over_p_raw is blank — those rows carry already-calibrated win_probs, which
+    introduces a double-calibration bias, but we keep the fallback so the
+    script stays usable on old logs.
+    """
+    has_raw = "over_p_raw" in df.columns
+    if has_raw:
+        raw_vals = pd.to_numeric(df["over_p_raw"], errors="coerce")
+        has_value = raw_vals.notna()
+        legacy_over_p = np.where(
+            df["direction"].str.lower() == "over",
+            df["win_prob"].values.astype(float),
+            1.0 - df["win_prob"].values.astype(float),
+        )
+        over_p = np.where(has_value, raw_vals.values, legacy_over_p)
+        n_legacy = int((~has_value).sum())
+        if n_legacy > 0:
+            print(f"  NOTE: {n_legacy} legacy rows use win_prob fallback (pre-v4 schema) — "
+                  "refit accuracy improves once those rows age out.")
+    else:
+        over_p = np.where(
+            df["direction"].str.lower() == "over",
+            df["win_prob"].values,
+            1.0 - df["win_prob"].values,
+        )
     return over_p.astype(float)
 
 

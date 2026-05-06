@@ -40,7 +40,12 @@ if not log.handlers:
 _STATUS_MAP: Dict[str, Tuple[str, float]] = {
     "out":           ("O",   0.00),
     "doubtful":      ("O",   0.10),   # treat doubtful as effectively out
-    "questionable":  ("Q",   0.50),
+    # Q→65%: published play-through rates are 50-70%; star players resolve active
+    # at a higher rate. 50% was systematically under-projecting Q-listed players.
+    # Source: Research Brief 8 / Fantasy Injury Report Authority.
+    "questionable":  ("Q",   0.65),
+    # GTD: already tuned to 0.65 in commit 66226db — "game time decision" typically
+    # indicates a player expected to play, decision delayed for strategic reasons.
     "game time decision": ("GTD", 0.65),
     "probable":      ("P",   0.85),
 }

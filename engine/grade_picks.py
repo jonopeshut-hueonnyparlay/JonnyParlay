@@ -285,11 +285,13 @@ def fetch_nba_boxscore(date_str):
                             entry = {}
                             for our_key, espn_key in [("PTS","PTS"),("REB","REB"),("AST","AST")]:
                                 try: entry[our_key] = int(d[espn_key])
-                                except: pass
+                                except (KeyError, ValueError, TypeError) as _e:
+                                    logger.debug("ESPN stat parse failed %s/%s: %s", espn_key, name, _e)
                             # 3PT is "made-att" string e.g. "3-7"
                             if "3PT" in d:
                                 try: entry["3PM"] = int(str(d["3PT"]).split("-")[0])
-                                except: pass
+                                except (ValueError, IndexError) as _e:
+                                    logger.debug("ESPN 3PT parse failed for %s: %s", name, _e)
                             if entry:
                                 player_stats[name.lower()] = entry
                 time.sleep(0.2)

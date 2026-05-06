@@ -19,7 +19,11 @@ SCHEMA HISTORY
                      date..result
   v2 (deprecated)  : adds closing_odds, clv, card_slot, is_home,
                      context_verdict, context_reason, context_score (27 cols)
-  v3 (current)     : adds legs — JSON parlay leg detail (28 cols)
+  v3 (deprecated)  : adds legs — JSON parlay leg detail (28 cols)
+  v4 (current)     : adds over_p_raw — pre-Platt over probability (29 cols).
+                     Enables proper Platt refit without double-calibration bias
+                     (Research Brief 8 / Walsh & Joshi 2024). Blank for legacy
+                     rows and non-prop picks (game lines, parlays).
 
 Bumping the schema:
   - Add new columns to the end of CANONICAL_HEADER (append-only keeps
@@ -37,7 +41,7 @@ from typing import Iterable, Mapping
 # Canonical schema (v3)
 # ─────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 CANONICAL_HEADER: list[str] = [
     "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
@@ -59,6 +63,11 @@ CANONICAL_HEADER: list[str] = [
     # Each element: {"player","direction","line","stat","sport","game"}.
     # Blank for single-leg picks (primary, bonus, manual, gameline).
     "legs",
+    # v4: raw over_p before Platt calibration. Enables proper calibrate_platt.py
+    # refit without the double-calibration bias where win_prob (already Platt-
+    # transformed) was mistakenly fed back as input. Blank for legacy rows,
+    # non-prop picks (game lines, parlays), and manual entries.
+    "over_p_raw",
 ]
 
 # Fast membership checks.
@@ -80,6 +89,9 @@ _V2_COLUMNS: frozenset[str] = frozenset([
 # Columns added in v3 (parlay leg detail).
 _V3_COLUMNS: frozenset[str] = frozenset(["legs"])
 
+# Columns added in v4 (pre-Platt over probability for calibration fidelity).
+_V4_COLUMNS: frozenset[str] = frozenset(["over_p_raw"])
+
 # Default value for any canonical column that's missing from an input row.
 # Empty string is what writers emit for "not applicable" / "not yet filled",
 # so using "" preserves the existing "blank means nothing here" contract.
@@ -94,6 +106,7 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     """Infer which schema version an on-disk pick_log was written under.
 
     Returns:
+      4 — header includes any v4-only column (over_p_raw)
       3 — header includes any v3-only column (legs)
       2 — header includes any v2-only column (CLV/context)
       1 — header is a subset of _V1_COLUMNS (legacy)
@@ -102,6 +115,8 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     if not on_disk_header:
         return 0
     cols = set(on_disk_header)
+    if cols & _V4_COLUMNS:
+        return 4
     if cols & _V3_COLUMNS:
         return 3
     if cols & _V2_COLUMNS:
@@ -485,6 +500,9 @@ assert _V2_COLUMNS.issubset(KNOWN_COLUMNS), (
 )
 assert _V3_COLUMNS.issubset(KNOWN_COLUMNS), (
     "v3 columns must all be part of the canonical schema"
+)
+assert _V4_COLUMNS.issubset(KNOWN_COLUMNS), (
+    "v4 columns must all be part of the canonical schema"
 )
 
 

@@ -81,6 +81,8 @@ def test_paths_env_var_accepts_tilde(fresh_paths, tmp_path, monkeypatch):
     """~ is expanded so users can write $JONNYPARLAY_ROOT=~/some/path."""
     fake_home = tmp_path
     monkeypatch.setenv("HOME", str(fake_home))
+    # Windows expanduser reads USERPROFILE (not HOME); patch both.
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
     # override with a tilde-prefixed relative path
     monkeypatch.setenv("JONNYPARLAY_ROOT", "~/picksroot")
     if "paths" in sys.modules:
