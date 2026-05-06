@@ -1482,18 +1482,28 @@ def run_projections(
     # team_id and season game count, so FIX-P1 doesn't remove them.  They
     # inflate the 240-min team budget, causing the constraint to scale all
     # starters down by 20-30% (e.g. Mitchell 23 PTS → 17 PTS).
+    # H6 (2026-05-06): the 14-day filter still leaves deep-bench players in
+    # pool (LAL had 14 active vs. real 8-9 rotation).  Add recent-min filter
+    # for playoff games: keep iff recent_avg >= 5.0 OR season_avg >= 25.0.
+    # The season fallback covers temporarily-injured stars (re-included via
+    # injury parser status); backtest 2025-26 R1 = 1.2% false-drop on 15+ min
+    # performances, no 25+ min performance dropped.
     any_playoff = any(
         v == "Playoffs" for v in game_season_type.values()
     )
     _max_inactive = 14 if any_playoff else 0
+    _min_rec_avg = 5.0 if any_playoff else 0.0
+    _season_fallback = 25.0 if any_playoff else 0.0
     active = get_all_active_players(game_date, min_recent_games=5,
                                     season=season,
                                     max_days_inactive=_max_inactive,
+                                    min_recent_avg_min=_min_rec_avg,
+                                    season_avg_fallback_min=_season_fallback,
                                     db_path=db_path)
     active = active[active["team_id"].isin(team_to_game.keys())]
     if _max_inactive > 0:
-        log.info("Playoff recency filter (max_days_inactive=%d): %d players",
-                 _max_inactive, len(active))
+        log.info("Playoff pool filter (max_days_inactive=%d, rec_avg>=%.1f or season_avg>=%.1f): %d players",
+                 _max_inactive, _min_rec_avg, _season_fallback, len(active))
 
     log.info("Projecting %d players for %s ...", len(active), game_date)
     results = []

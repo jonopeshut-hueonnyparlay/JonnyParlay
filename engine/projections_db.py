@@ -1222,6 +1222,9 @@ def get_player_b2b_context(player_id: int, game_date,
 def get_all_active_players(before_date: str, min_recent_games: int = 3,
                             season: Optional[str] = None,
                             max_days_inactive: int = 0,
+                            min_recent_avg_min: float = 0.0,
+                            season_avg_fallback_min: float = 0.0,
+                            recent_avg_window: int = 3,
                             db_path: Path = DB_PATH) -> pd.DataFrame:
     """Players with recent history — projection candidate pool.
 
@@ -1237,6 +1240,21 @@ def get_all_active_players(before_date: str, min_recent_games: int = 3,
     to remove players who clearly will not play (long-term injured, released)
     and would otherwise inflate the 240-min team constraint, causing starters
     to be scaled down significantly.
+
+    ``min_recent_avg_min`` / ``season_avg_fallback_min`` (H6, 2026-05-06):
+    when ``min_recent_avg_min > 0``, additionally require the player to satisfy
+    EITHER a recent-min threshold OR a season-avg fallback:
+      - recent_avg(DNP=0) over last ``recent_avg_window`` team games
+        >= ``min_recent_avg_min``, OR
+      - season_avg_min (counting only games with min >= 5) >= ``season_avg_fallback_min``.
+
+    Used for playoff projections (``min_recent_avg_min=5.0``,
+    ``season_avg_fallback_min=25.0``) to drop deep-bench players whose recent
+    DNP-heavy pattern indicates they're not in the playoff rotation.  The
+    season-avg fallback keeps temporarily-injured stars in the pool — they're
+    excluded by the injury system if status=O, and re-enter naturally if
+    cleared to play.  Backtested 2025-26 R1: 1.2% false-drop rate on 15+ min
+    performances, no 25+ min performance dropped.
     """
     import datetime as _dt
     conn = get_conn(db_path)
@@ -1267,9 +1285,69 @@ def get_all_active_players(before_date: str, min_recent_games: int = 3,
             f"{rc}",
             conn, params={"before": before_date, "mg": min_recent_games,
                           "season": season or "", "cutoff": cutoff})
+        if min_recent_avg_min > 0 and not df.empty:
+            df = _apply_recent_min_filter(
+                df, before_date, season or "", recent_avg_window,
+                min_recent_avg_min, season_avg_fallback_min, conn)
     finally:
         conn.close()
     return df
+
+
+def _apply_recent_min_filter(
+    df: pd.DataFrame, before_date: str, season: str, window: int,
+    rec_threshold: float, season_threshold: float, conn,
+) -> pd.DataFrame:
+    """H6 filter: keep players with recent_avg >= rec_threshold OR season_avg >= season_threshold.
+
+    Recent-avg is computed over the player's TEAM's last ``window`` games
+    (regardless of whether the player appeared), with DNPs counted as 0.
+    Season-avg uses only games where the player has a stat row with min >= 5.
+    """
+    keep_ids: set[int] = set()
+    teams = df.groupby("team_id")["player_id"].apply(list).to_dict()
+    for tid, pids in teams.items():
+        # Only count games that have actual stat data — SCHED rows for games
+        # not yet played (or not yet parsed) would otherwise deflate the
+        # recent_avg denominator for every player on the team.
+        team_games = pd.read_sql_query(
+            "SELECT g.game_id FROM games g"
+            " WHERE (g.home_team_id=? OR g.away_team_id=?)"
+            "   AND g.season=? AND g.game_date < ?"
+            "   AND EXISTS (SELECT 1 FROM player_game_stats pgs"
+            "               WHERE pgs.game_id=g.game_id)"
+            " ORDER BY g.game_date DESC LIMIT ?",
+            conn, params=[int(tid), int(tid), season, before_date, window])
+        gids = list(team_games["game_id"])
+        if not gids:
+            continue
+        ph_g = ",".join("?" for _ in gids)
+        ph_p = ",".join("?" for _ in pids)
+        rec_df = pd.read_sql_query(
+            f"SELECT player_id, SUM(min) as total_min FROM player_game_stats"
+            f" WHERE game_id IN ({ph_g}) AND player_id IN ({ph_p})"
+            f" GROUP BY player_id",
+            conn, params=gids + pids)
+        rec_total = dict(zip(rec_df["player_id"], rec_df["total_min"].fillna(0.0)))
+
+        if season_threshold > 0:
+            season_df = pd.read_sql_query(
+                f"SELECT pgs.player_id, AVG(pgs.min) as avg_min"
+                f" FROM player_game_stats pgs JOIN games g ON g.game_id=pgs.game_id"
+                f" WHERE pgs.player_id IN ({ph_p}) AND g.season=?"
+                f" AND g.game_date < ? AND pgs.min >= 5"
+                f" GROUP BY pgs.player_id",
+                conn, params=pids + [season, before_date])
+        else:
+            season_df = pd.DataFrame(columns=["player_id", "avg_min"])
+        season_avg = dict(zip(season_df["player_id"], season_df["avg_min"].fillna(0.0)))
+
+        for pid in pids:
+            rec_avg = float(rec_total.get(pid, 0.0)) / len(gids)
+            s_avg = float(season_avg.get(pid, 0.0))
+            if rec_avg >= rec_threshold or (season_threshold > 0 and s_avg >= season_threshold):
+                keep_ids.add(int(pid))
+    return df[df["player_id"].isin(keep_ids)].reset_index(drop=True)
 
 
 def seed_scheduled_games(

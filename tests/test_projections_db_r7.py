@@ -291,5 +291,122 @@ class TestCaptureClvCustomShadow:
         assert custom_log not in log_paths, "Custom log must not appear when ENABLE_CUSTOM_CLV=False"
 
 
+# ---------------------------------------------------------------------------
+# H6 — get_all_active_players recent-min filter (2026-05-06)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def h6_db(tmp_path):
+    """DB scenario for H6: one team, last 3 games, four players with varying patterns."""
+    db_path = tmp_path / "h6.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE teams (
+            team_id INTEGER PRIMARY KEY, name TEXT, abbreviation TEXT
+        );
+        CREATE TABLE players (
+            player_id INTEGER PRIMARY KEY, name TEXT, name_key TEXT,
+            team_id INTEGER, position TEXT
+        );
+        CREATE TABLE games (
+            game_id TEXT PRIMARY KEY, game_date TEXT, season TEXT,
+            home_team_id INTEGER, away_team_id INTEGER, season_type TEXT
+        );
+        CREATE TABLE player_game_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT, player_id INTEGER,
+            team_id INTEGER, min REAL
+        );
+        """
+    )
+    conn.execute("INSERT INTO teams VALUES (1, 'Lakers', 'LAL')")
+    conn.execute("INSERT INTO teams VALUES (2, 'Celtics', 'BOS')")
+    # Lakers' last 3 games (and 7 more season games for the min_recent_games gate)
+    for i, d in enumerate([
+        "2026-04-29", "2026-05-01", "2026-05-05",  # last 3 (DESC)
+        "2026-04-25", "2026-04-23", "2026-04-21", "2026-04-19",
+        "2026-04-17", "2026-04-15", "2026-04-13",
+    ]):
+        conn.execute("INSERT INTO games VALUES (?, ?, '2025-26', 1, 2, ?)",
+                     (f"G{i:03d}", d, "Playoffs" if i < 3 else "Regular Season"))
+    # Players:
+    #   1 = Star (recent 35 ea, season high) → kept via recent
+    #   2 = Returning star (DNP recent, season 30) → kept via fallback
+    #   3 = Deep bench (recent 2 ea, season 12) → dropped
+    #   4 = Spot rotation borderline (recent 8 ea, season 12) → kept via recent
+    conn.execute("INSERT INTO players VALUES (1, 'Star', 'star', 1, 'F')")
+    conn.execute("INSERT INTO players VALUES (2, 'Returner', 'returner', 1, 'G')")
+    conn.execute("INSERT INTO players VALUES (3, 'Bench', 'bench', 1, 'C')")
+    conn.execute("INSERT INTO players VALUES (4, 'Spot', 'spot', 1, 'F')")
+
+    # Star: 35 min in each of last 3 games and all earlier
+    for gid in [f"G{i:03d}" for i in range(10)]:
+        conn.execute("INSERT INTO player_game_stats (game_id, player_id, team_id, min) VALUES (?, 1, 1, 35)", (gid,))
+    # Returner: DNP last 3 games, 30 min in earlier games (5+ games to clear min_recent_games=5)
+    for gid in [f"G{i:03d}" for i in range(3, 10)]:
+        conn.execute("INSERT INTO player_game_stats (game_id, player_id, team_id, min) VALUES (?, 2, 1, 30)", (gid,))
+    # Bench: 2 min in last 3, 12 min in earlier games
+    for gid in [f"G{i:03d}" for i in range(3)]:
+        conn.execute("INSERT INTO player_game_stats (game_id, player_id, team_id, min) VALUES (?, 3, 1, 2)", (gid,))
+    for gid in [f"G{i:03d}" for i in range(3, 10)]:
+        conn.execute("INSERT INTO player_game_stats (game_id, player_id, team_id, min) VALUES (?, 3, 1, 12)", (gid,))
+    # Spot: 8 min throughout
+    for gid in [f"G{i:03d}" for i in range(10)]:
+        conn.execute("INSERT INTO player_game_stats (game_id, player_id, team_id, min) VALUES (?, 4, 1, 8)", (gid,))
+    conn.commit()
+    conn.close()
+    return str(db_path)
+
+
+class TestH6RecentMinFilter:
+    """H6: recent-min filter drops deep-bench while preserving stars + returners."""
+
+    def test_filter_keeps_recent_high_min(self, h6_db):
+        from projections_db import get_all_active_players
+        df = get_all_active_players(
+            "2026-05-06", min_recent_games=5, season="2025-26",
+            max_days_inactive=14, min_recent_avg_min=5.0,
+            season_avg_fallback_min=25.0, db_path=h6_db)
+        assert 1 in df["player_id"].values, "Star should be kept (rec_avg=35)"
+
+    def test_filter_keeps_returner_via_season_fallback(self, h6_db):
+        """Returning star: DNP recent but high season avg should be kept."""
+        from projections_db import get_all_active_players
+        df = get_all_active_players(
+            "2026-05-06", min_recent_games=5, season="2025-26",
+            max_days_inactive=14, min_recent_avg_min=5.0,
+            season_avg_fallback_min=25.0, db_path=h6_db)
+        assert 2 in df["player_id"].values, "Returner should be kept via season_avg fallback"
+
+    def test_filter_drops_deep_bench(self, h6_db):
+        """Deep-bench player with both recent and season below threshold should be dropped."""
+        from projections_db import get_all_active_players
+        df = get_all_active_players(
+            "2026-05-06", min_recent_games=5, season="2025-26",
+            max_days_inactive=14, min_recent_avg_min=5.0,
+            season_avg_fallback_min=25.0, db_path=h6_db)
+        assert 3 not in df["player_id"].values, "Deep-bench should be dropped (rec=2, season=12)"
+
+    def test_filter_keeps_borderline_via_recent(self, h6_db):
+        """Spot rotation at exactly 8 recent_avg should pass the rec>=5 check."""
+        from projections_db import get_all_active_players
+        df = get_all_active_players(
+            "2026-05-06", min_recent_games=5, season="2025-26",
+            max_days_inactive=14, min_recent_avg_min=5.0,
+            season_avg_fallback_min=25.0, db_path=h6_db)
+        assert 4 in df["player_id"].values, "Spot rotation should be kept (rec_avg=8)"
+
+    def test_filter_disabled_when_threshold_zero(self, h6_db):
+        """min_recent_avg_min=0 (regular-season default) should be a no-op."""
+        from projections_db import get_all_active_players
+        df = get_all_active_players(
+            "2026-05-06", min_recent_games=5, season="2025-26",
+            max_days_inactive=0, min_recent_avg_min=0.0,
+            season_avg_fallback_min=0.0, db_path=h6_db)
+        # All 4 players have >=5 games this season — all should pass
+        assert set(df["player_id"].values) >= {1, 2, 3, 4}
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
