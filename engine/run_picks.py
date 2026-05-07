@@ -2859,39 +2859,250 @@ def deduplicate(picks):
     return list(result.values())
 
 
-def dedup_game_line_correlation(picks):
-    """FIX 5: Remove correlated intra-game line pairs before premium selection.
+def filter_game_line_correlations(picks):
+    """Extended game-line correlation gate (GLC).
 
-    TOTAL + TEAM_TOTAL in the same direction for the same game are highly correlated
-    (both win/lose together based on scoring level).  Keep only the higher pick_score.
+    Replaces the old TOTAL+TEAM_TOTAL-only dedup with a full conflict matrix.
+    For each same-game pair of game-line picks, classify the relationship and
+    drop the lower pick_score leg on HARD CONFLICT.
 
-    Correlated pairs (same game, same direction):
-      - TOTAL over  + TEAM_TOTAL over   → keep best
-      - TOTAL under + TEAM_TOTAL under  → keep best
-    Opposite directions are NOT correlated (Total over + Team Total under = hedge).
-    F5_TOTAL and NRFI/YRFI are independent markets — not subject to this rule.
+    HARD CONFLICT — drop lower pick_score leg:
+      1. Team A ML/SPREAD-cover + Team B (opponent) TEAM_TOTAL Over:
+         Team A winning typically prevents opponent from scoring freely.
+         E.g. BUF ML + MTL TT Over — most BUF wins end 3-2 or 3-1, leaving MTL under 3.
+      2. F5_ML Team A + F5_ML Team B (same game):
+         Both teams cannot win the first 5 innings simultaneously.
+      3. TOTAL Over + TOTAL Under (same game):
+         Logical impossibility — kept defensively.
+      4. TOTAL + TEAM_TOTAL same direction (same game):
+         Preserved from original FIX-5 dedup — still a hard dedup, now folded here.
+
+    SOFT TENSION — log at INFO, keep both:
+      - ML/SPREAD Team A + TEAM_TOTAL Under Team A:
+        Both lean toward a low-scoring win — reinforcing, not conflicting.
+      - TOTAL Over + TEAM_TOTAL Over (same team):
+        Aligned; original FIX-5 already deduplicated these, which is stricter than needed
+        for the TOTAL vs TEAM_TOTAL *different-team* case handled above.
+
+    Prop picks (PTS/AST/REB/SOG/etc.) and NRFI/YRFI are independent markets
+    not subject to this gate — they pass through untouched.
     """
-    CORR_STATS = {"TOTAL", "TEAM_TOTAL"}
-    # Separate game-line picks that might be correlated from everything else
-    gl = [p for p in picks if p.get("stat") in CORR_STATS]
-    other = [p for p in picks if p.get("stat") not in CORR_STATS]
+    GL_STATS = {"ML_FAV", "ML_DOG", "SPREAD", "TOTAL", "TEAM_TOTAL",
+                "F5_ML", "F5_SPREAD", "F5_TOTAL", "NRFI", "YRFI"}
 
-    # Group by (game, direction)
-    groups = defaultdict(list)
-    for p in gl:
-        groups[(p.get("game", ""), p.get("direction", ""))].append(p)
+    gl_picks = [p for p in picks if p.get("stat") in GL_STATS]
+    prop_picks = [p for p in picks if p.get("stat") not in GL_STATS]
 
-    kept = []
-    for (game, direction), group in groups.items():
-        stats_present = {p["stat"] for p in group}
-        if "TOTAL" in stats_present and "TEAM_TOTAL" in stats_present:
-            # Correlated — keep only the best pick_score in this group
-            best = max(group, key=lambda p: p.get("pick_score", 0) or 0)
-            kept.append(best)
+    # Group game-line picks by game string
+    game_groups: dict = defaultdict(list)
+    for p in gl_picks:
+        game_groups[p.get("game", "")].append(p)
+
+    dropped: set = set()  # indices into gl_picks of dropped legs
+
+    for game, group in game_groups.items():
+        if len(group) < 2:
+            continue
+
+        # Walk all pairs
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                a = group[i]
+                b = group[j]
+                sa = a.get("stat", "")
+                sb = b.get("stat", "")
+                da = a.get("direction", "")
+                db = b.get("direction", "")
+                ha = a.get("is_home")  # True=home, False=away
+                hb = b.get("is_home")
+
+                conflict = False
+
+                # Rule 1: ML or SPREAD-cover for Team A + TEAM_TOTAL Over for Team B (opponent)
+                # A "wins" pick combined with the opponent's over = contradiction.
+                for win_pick, tt_pick in [(a, b), (b, a)]:
+                    ws = win_pick.get("stat", "")
+                    ts = tt_pick.get("stat", "")
+                    td = tt_pick.get("direction", "")
+                    wh = win_pick.get("is_home")
+                    th = tt_pick.get("is_home")
+                    if (ws in {"ML_FAV", "ML_DOG", "SPREAD"} and
+                            ts == "TEAM_TOTAL" and
+                            td == "over" and
+                            wh is not None and th is not None and
+                            wh != th):          # different teams
+                        conflict = True
+                        break
+
+                # Rule 2: F5_ML for both teams in the same game
+                if not conflict and sa == "F5_ML" and sb == "F5_ML":
+                    # Both can't win the first 5
+                    conflict = True
+
+                # Rule 3: TOTAL Over + TOTAL Under in same game (logical impossibility)
+                if not conflict and sa == "TOTAL" and sb == "TOTAL" and da != db:
+                    conflict = True
+
+                # Rule 4: TOTAL + TEAM_TOTAL same direction (original FIX-5 dedup)
+                if not conflict:
+                    if ({sa, sb} == {"TOTAL", "TEAM_TOTAL"} and da == db):
+                        conflict = True
+
+                if conflict:
+                    # Drop the lower pick_score leg
+                    score_a = a.get("pick_score") or 0
+                    score_b = b.get("pick_score") or 0
+                    loser_idx = gl_picks.index(b) if score_a >= score_b else gl_picks.index(a)
+                    winner = a if score_a >= score_b else b
+                    loser = b if score_a >= score_b else a
+                    if loser_idx not in dropped:
+                        dropped.add(loser_idx)
+                        logger.info(
+                            "GLC HARD CONFLICT [%s]: dropped %s %s (score=%.1f) "
+                            "conflicts with %s %s (score=%.1f)",
+                            game,
+                            loser.get("stat"), loser.get("direction"),
+                            float(loser.get("pick_score") or 0),
+                            winner.get("stat"), winner.get("direction"),
+                            float(winner.get("pick_score") or 0),
+                        )
+                        print(
+                            f"  [GLC] Dropped {loser.get('player')} {loser.get('stat')} "
+                            f"{loser.get('direction')} (score={loser.get('pick_score', 0):.1f}) "
+                            f"— conflicts with {winner.get('player')} {winner.get('stat')} "
+                            f"(score={winner.get('pick_score', 0):.1f}) [{game}]"
+                        )
+
+    kept_gl = [p for idx, p in enumerate(gl_picks) if idx not in dropped]
+    return prop_picks + kept_gl
+
+
+# Backward-compat alias — external callers and existing tests still work.
+def dedup_game_line_correlation(picks):
+    """Thin alias for filter_game_line_correlations (FIX 5, preserved for compatibility)."""
+    return filter_game_line_correlations(picks)
+
+
+# ── CHANGE 2: Team-total lambda divergence warning ─────────────────────────────
+
+def warn_tt_divergence(all_picks, threshold: float = 0.25) -> None:
+    """Warn when the engine's projected team total diverges from market-implied.
+
+    Market-implied team total is derived from game total ± spread/2:
+        home_team_implied = (total_line - home_spread_line) / 2
+        away_team_implied = (total_line + home_spread_line) / 2
+    Equivalently: implied = (total_line + team_spread_line) / 2
+    where team_spread_line is the spread from that team's perspective
+    (positive = underdog / getting points, negative = favourite / giving points).
+
+    Fires a WARNING-level log + console print when |proj - implied| > threshold.
+    Operates over ALL picks (qualified + failed) so the warning doesn't depend
+    on whether the TOTAL/SPREAD pick itself passed gates.
+    """
+    # Build per-game lookup tables from ALL picks
+    total_by_game: dict = {}          # game → total_line (from TOTAL pick)
+    spread_by_game_home: dict = {}    # game → home-team spread_line (is_home=True)
+
+    for p in all_picks:
+        game = p.get("game", "")
+        stat = p.get("stat", "")
+        if stat == "TOTAL" and game not in total_by_game:
+            try:
+                total_by_game[game] = float(p["line"])
+            except (KeyError, TypeError, ValueError):
+                pass
+        elif stat == "SPREAD" and p.get("is_home") is True and game not in spread_by_game_home:
+            try:
+                spread_by_game_home[game] = float(p["line"])
+            except (KeyError, TypeError, ValueError):
+                pass
+
+    # Check each TEAM_TOTAL pick
+    for p in all_picks:
+        if p.get("stat") != "TEAM_TOTAL":
+            continue
+        game = p.get("game", "")
+        total_line = total_by_game.get(game)
+        home_spread = spread_by_game_home.get(game)
+        if total_line is None or home_spread is None:
+            continue
+
+        is_home = p.get("is_home")
+        if is_home is True:
+            # home implied = (total - home_spread) / 2
+            implied = (total_line - home_spread) / 2.0
         else:
-            kept.extend(group)
+            # away implied = (total + home_spread) / 2
+            implied = (total_line + home_spread) / 2.0
 
-    return other + kept
+        try:
+            proj = float(p["proj"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        gap = abs(proj - implied)
+        if gap > threshold:
+            logger.warning(
+                "TT DIVERGENCE [%s]: %s proj=%.2f market-implied=%.2f gap=%.2f > %.2f",
+                game, p.get("player", ""), proj, implied, gap, threshold,
+            )
+            print(
+                f"  [TT-DIVERGE] {p.get('player','')} ({game}): "
+                f"engine_proj={proj:.2f} market_implied={implied:.2f} "
+                f"gap={gap:.2f} > {threshold:.2f} — check projection"
+            )
+
+
+# ── CHANGE 3: Pre-post thesis block ───────────────────────────────────────────
+
+_GL_STATS_THESIS = {"ML_FAV", "ML_DOG", "SPREAD", "TOTAL", "TEAM_TOTAL",
+                    "F5_ML", "F5_SPREAD", "F5_TOTAL", "NRFI", "YRFI"}
+
+
+def print_thesis_block(picks_pre: list, picks_post: list) -> None:
+    """Print a per-game thesis block comparing pre- and post-GLC game-line picks.
+
+    For each game that has game-line picks in either list, print:
+      PRE-GLC : all qualified game-line picks for that game
+      POST-GLC: game-line picks that survived the GLC filter
+      Dropped : legs removed by the GLC filter
+
+    Only fires when at least one game has multiple game-line picks pre-GLC.
+    """
+    def _gl(picks):
+        return [p for p in picks if p.get("stat") in _GL_STATS_THESIS]
+
+    pre_gl = _gl(picks_pre)
+    post_gl = _gl(picks_post)
+    post_keys = {
+        (p.get("game",""), p.get("stat",""), p.get("direction",""), p.get("is_home"))
+        for p in post_gl
+    }
+
+    # Group pre-GLC by game
+    by_game: dict = defaultdict(list)
+    for p in pre_gl:
+        by_game[p.get("game", "")].append(p)
+
+    multi_games = {g: ps for g, ps in by_game.items() if len(ps) >= 2}
+    if not multi_games:
+        return
+
+    print("\n  ── Thesis Check (game-line picks per game) ──")
+    for game, pre_picks in sorted(multi_games.items()):
+        print(f"  {game}:")
+        for p in sorted(pre_picks, key=lambda x: -(x.get("pick_score") or 0)):
+            key = (p.get("game",""), p.get("stat",""), p.get("direction",""), p.get("is_home"))
+            survived = key in post_keys
+            marker = "  " if survived else "  [DROPPED]"
+            score = p.get("pick_score") or 0
+            print(
+                f"    {'✓' if survived else '✗'} {p.get('player',''):<28} "
+                f"{p.get('stat',''):<12} {p.get('direction',''):<6} "
+                f"score={score:.1f}{marker}"
+            )
+    print()
+
 
 # ============================================================
 #  PARLAY BUILDERS
@@ -5506,8 +5717,16 @@ def main():
 
     # Deduplicate
     qualified = deduplicate(qualified)
-    # FIX 5: Remove correlated intra-game TOTAL + TEAM_TOTAL pairs (same direction)
-    qualified = dedup_game_line_correlation(qualified)
+
+    # CHANGE 2: Warn when engine team total diverges from market-implied (all picks, incl. failed)
+    warn_tt_divergence(all_picks)
+
+    # CHANGE 1 / FIX 5: Full GLC matrix — drop hard-conflict game-line pairs
+    qualified_pre_glc = list(qualified)  # snapshot for thesis block
+    qualified = filter_game_line_correlations(qualified)
+
+    # CHANGE 3: Thesis block — show pre vs post GLC per game (multi-pick games only)
+    print_thesis_block(qualified_pre_glc, qualified)
 
     print(f"\n  Qualified picks (pre-context): {len(qualified)}")
     print(f"  Failed gates: {len(failed)}")
