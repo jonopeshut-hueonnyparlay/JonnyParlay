@@ -176,10 +176,12 @@ MIN_UPTIME_BEFORE_EXIT_SECS = 4 * 60 * 60
 # Maximum daemon uptime (seconds) before the daemon self-terminates even
 # with zero picks logged. Prevents a no-picks day from leaving the daemon
 # running indefinitely and blocking the next day's 10 AM scheduled start
-# (Task Scheduler MultipleInstances=StopExisting handles the restart, but
-# this guard ensures a clean logged exit rather than a force-kill).
-# 20 hours: covers 10 AM start → 6 AM next morning safely.
-MAX_DAEMON_UPTIME_SECS = 20 * 60 * 60
+# (Task Scheduler MultipleInstances=IgnoreNew would silently skip the
+# 10 AM trigger if the old daemon is still Running; this guard ensures
+# the old daemon exits cleanly before then).
+# 18 hours: 10 AM start → exits by 4 AM; even a 2 PM manual start
+# exits by 8 AM — both well before the next 10 AM trigger.
+MAX_DAEMON_UPTIME_SECS = 18 * 60 * 60
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────

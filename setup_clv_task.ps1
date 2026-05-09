@@ -22,7 +22,7 @@ $trigger = New-ScheduledTaskTrigger `
     -At $startTime
 
 $settings = New-ScheduledTaskSettingsSet `
-    -MultipleInstances    StopExisting `
+    -MultipleInstances    IgnoreNew `
     -ExecutionTimeLimit   (New-TimeSpan -Hours 22) `
     -StartWhenAvailable   `
     -WakeToRun            `
