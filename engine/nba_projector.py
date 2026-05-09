@@ -235,6 +235,16 @@ DK_STD_FLOOR = {
     "cold_start": 3.0,
 }
 
+# H5: high-variance player flag.
+# Players whose rolling PTS coefficient of variation (std/mean) exceeds this
+# threshold are flagged [HIGH-VAR] in the projection log.  Their observed PTS
+# std is also used as an additional floor on dk_std so over_p reflects the
+# true outcome spread rather than the 0.35×proj_pts Gaussian approximation.
+# Threshold chosen to catch pure 3PT specialists (Strus CV=0.77) while leaving
+# ordinary high-usage players unaffected (Mitchell CV=0.34, Robinson CV=0.38).
+HIGH_VAR_CV_THRESHOLD = 0.60
+HIGH_VAR_MIN_GAMES    = 8   # require at least this many clean games to compute CV
+
 # P18-v4 — Playoff calibration (2026-05-02).
 # Two-component design replacing the blunt per-stat PLAYOFF_DEFLATORS (P18-v1):
 #
@@ -1468,9 +1478,23 @@ def project_player(
     ast_p25,  ast_med,  ast_p75  = compute_distribution(projections["ast"],  "ast",  role, n_games)
     fg3m_p25, fg3m_med, fg3m_p75 = compute_distribution(projections["fg3m"], "fg3m", role, n_games)
 
-    # R2: apply role-specific floor so bench player uncertainty is not underestimated
+    # H5: compute rolling PTS CV from clean game history for high-variance flag
+    # and as an additional dk_std floor (observed spread beats the 0.35 formula
+    # for streaky 3PT specialists whose distribution is bimodal not Gaussian).
+    pts_cv = None
+    pts_std_recent = 0.0
+    if len(df_clean) >= HIGH_VAR_MIN_GAMES and "pts" in df_clean.columns:
+        _pts = df_clean["pts"].head(20)
+        _mean = float(_pts.mean())
+        if _mean > 4.0:
+            pts_std_recent = float(_pts.std(ddof=1))
+            pts_cv = round(pts_std_recent / _mean, 3)
+
+    # R2 + H5: dk_std is the max of the 0.35×proj_pts formula, the role floor,
+    # and (when enough history exists) the observed rolling PTS std.
     dk_std = round(max(projections["pts"] * DK_STD_COEFF,
-                       DK_STD_FLOOR.get(role, 3.0)), 2)
+                       DK_STD_FLOOR.get(role, 3.0),
+                       pts_std_recent), 2)
     run_ts = datetime.datetime.utcnow().isoformat(timespec="seconds")
 
     return {
@@ -1478,6 +1502,7 @@ def project_player(
         "player_id": player_id, "player_name": player_name,
         "team_id": team_id, "opp_team_id": opp_team_id, "game_id": game_id,
         "role_tier": role,
+        "pts_cv": pts_cv,
         "proj_min":  round(proj_min, 2),
         "proj_pts":  pts_med,  "proj_pts_p25":  pts_p25,  "proj_pts_p75":  pts_p75,
         "proj_reb":  reb_med,  "proj_reb_p25":  reb_p25,  "proj_reb_p75":  reb_p75,
@@ -1742,6 +1767,16 @@ def run_projections(
 
     diagnostics.flush(game_date)
     log.info("Projections complete: %d players", len(results))
+
+    # H5: warn on high-variance players so the operator knows before reviewing picks.
+    high_var = [r for r in results if (r.get("pts_cv") or 0) >= HIGH_VAR_CV_THRESHOLD]
+    for r in sorted(high_var, key=lambda x: x["pts_cv"], reverse=True):
+        log.warning(
+            "[HIGH-VAR] %s (%s): pts_cv=%.2f proj_pts=%.1f dk_std=%.1f — "
+            "3PT specialist with bimodal scoring; individual game outcome highly uncertain",
+            r["player_name"], r["role_tier"], r["pts_cv"], r["proj_pts"], r["dk_std"],
+        )
+
     return results
 
 def _main():
