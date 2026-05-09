@@ -1,12 +1,15 @@
-"""Tests for CLV daemon MIN_UPTIME_BEFORE_EXIT_SECS guard.
+"""Tests for CLV daemon MIN_UPTIME_BEFORE_EXIT_SECS and MAX_DAEMON_UPTIME_SECS guards.
 
-The daemon must NOT exit with "All picks captured" when uptime is below
-MIN_UPTIME_BEFORE_EXIT_SECS, even if every currently-logged pick has CLV.
-This prevents the scenario where NHL picks are captured early but NBA
-run_picks hasn't fired yet — the daemon would previously declare "done"
-and exit before the NBA picks were ever logged.
+MIN_UPTIME: daemon must NOT exit "all picks captured" before this wall-clock
+minimum, preventing early exit when one sport's picks are captured but another
+sport's run_picks hasn't fired yet.
 
-2026-05-08 fix: capture_clv.py lines ~1108 and ~1354.
+MAX_UPTIME: daemon MUST exit after this wall-clock maximum even when zero picks
+were ever logged, preventing a no-picks day from leaving the daemon running
+indefinitely and blocking the next morning's 10 AM scheduled start.
+
+2026-05-08 MIN_UPTIME fix: capture_clv.py lines ~1108 and ~1354.
+2026-05-09 MAX_UPTIME fix: capture_clv.py "no picks logged yet" branch.
 """
 
 import csv
@@ -194,7 +197,61 @@ class TestMinUptimeConstant:
         import capture_clv as mod
         assert mod.MIN_UPTIME_BEFORE_EXIT_SECS >= 2 * 3600
 
-    def test_min_uptime_is_at_most_12_hours(self):
-        """Guard must not exceed Task Scheduler's ExecutionTimeLimit."""
+    def test_min_uptime_is_less_than_max_uptime(self):
+        """MIN_UPTIME must be strictly less than MAX_UPTIME so the max guard can fire."""
         import capture_clv as mod
-        assert mod.MIN_UPTIME_BEFORE_EXIT_SECS <= 12 * 3600
+        assert mod.MIN_UPTIME_BEFORE_EXIT_SECS < mod.MAX_DAEMON_UPTIME_SECS
+
+
+class TestMaxUptimeConstant:
+    """Sanity checks on the MAX_DAEMON_UPTIME_SECS value."""
+
+    def test_max_uptime_is_at_least_16_hours(self):
+        """Must cover a full game day: 10 AM start → midnight ET end = 14h."""
+        import capture_clv as mod
+        assert mod.MAX_DAEMON_UPTIME_SECS >= 16 * 3600
+
+    def test_max_uptime_is_at_most_22_hours(self):
+        """Must be less than Task Scheduler's 22H ExecutionTimeLimit so the
+        daemon exits cleanly (with a log message) before Task Scheduler
+        force-kills it."""
+        import capture_clv as mod
+        assert mod.MAX_DAEMON_UPTIME_SECS <= 22 * 3600
+
+    def test_no_picks_logged_below_max_uptime(self, tmp_path):
+        """When no picks are logged and uptime < MAX, daemon continues polling."""
+        import capture_clv as mod
+
+        log_path = tmp_path / "pick_log.csv"
+        _write_pick_log(log_path, [])  # empty log
+
+        start_utc = datetime.now(timezone.utc) - timedelta(hours=1)
+        now = datetime.now(timezone.utc)
+        uptime_secs = (now - start_utc).total_seconds()
+
+        any_logged = any(
+            len(mod.load_picks(lp, "2026-05-09")) > 0
+            for lp in [log_path] if lp.exists()
+        )
+        assert not any_logged
+        # uptime < MAX — daemon must NOT exit yet
+        assert uptime_secs < mod.MAX_DAEMON_UPTIME_SECS
+
+    def test_no_picks_logged_exceeds_max_uptime(self, tmp_path):
+        """When no picks are logged and uptime >= MAX, daemon should exit."""
+        import capture_clv as mod
+
+        log_path = tmp_path / "pick_log.csv"
+        _write_pick_log(log_path, [])  # empty log
+
+        start_utc = datetime.now(timezone.utc) - timedelta(hours=21)
+        now = datetime.now(timezone.utc)
+        uptime_secs = (now - start_utc).total_seconds()
+
+        any_logged = any(
+            len(mod.load_picks(lp, "2026-05-09")) > 0
+            for lp in [log_path] if lp.exists()
+        )
+        assert not any_logged
+        # uptime >= MAX — daemon must exit
+        assert uptime_secs >= mod.MAX_DAEMON_UPTIME_SECS

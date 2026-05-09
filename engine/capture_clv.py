@@ -173,6 +173,14 @@ STALE_AFTER_SECS = 30 * 60
 # NBA tips (~10:30pm ET).
 MIN_UPTIME_BEFORE_EXIT_SECS = 4 * 60 * 60
 
+# Maximum daemon uptime (seconds) before the daemon self-terminates even
+# with zero picks logged. Prevents a no-picks day from leaving the daemon
+# running indefinitely and blocking the next day's 10 AM scheduled start
+# (Task Scheduler MultipleInstances=StopExisting handles the restart, but
+# this guard ensures a clean logged exit rather than a force-kill).
+# 20 hours: covers 10 AM start → 6 AM next morning safely.
+MAX_DAEMON_UPTIME_SECS = 20 * 60 * 60
+
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -1146,7 +1154,17 @@ def run(run_date: str):
                 print(f"  [{now.strftime('%H:%M')} UTC] All picks captured — done for today.")
                 break
             else:
-                # run_picks.py hasn't run yet — keep waiting
+                # run_picks.py hasn't run yet — keep waiting, but respect MAX_DAEMON_UPTIME_SECS
+                # so a no-picks day doesn't leave the daemon running into the next morning.
+                uptime_secs = (now - _daemon_start_utc).total_seconds()
+                if uptime_secs >= MAX_DAEMON_UPTIME_SECS:
+                    logger.warning(
+                        "MAX_UPTIME (%dh) reached with no picks logged — exiting to allow "
+                        "tomorrow's scheduled start. uptime=%.0f sec",
+                        MAX_DAEMON_UPTIME_SECS // 3600, uptime_secs,
+                    )
+                    print(f"  [{now.strftime('%H:%M')} UTC] MAX_UPTIME reached with no picks — exiting.")
+                    break
                 print(f"  [{now.strftime('%H:%M')} UTC] No picks logged yet — waiting for run_picks.py...")
                 _interruptible_sleep(POLL_INTERVAL_SECS)
                 continue
