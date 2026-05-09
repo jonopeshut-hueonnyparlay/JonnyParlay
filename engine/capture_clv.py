@@ -1036,12 +1036,13 @@ def run(run_date: str):
             logger.warning("capture_attempts cap hit (%d) — evicted oldest: %s", MAX_ATTEMPTS_ENTRIES, old_key)
         return attempts
 
-    # All log files to update (main + per-sport shadow + custom projection shadow)
-    log_paths = [PICK_LOG] + list(SHADOW_LOGS.values())
-    if ENABLE_CUSTOM_CLV and CUSTOM_SHADOW_LOG.exists():
-        log_paths.append(CUSTOM_SHADOW_LOG)
-
     while True:
+        # Rebuild log_paths each iteration so files created after daemon startup
+        # (e.g. pick_log_custom.csv written by a shadow run mid-day) are picked up.
+        log_paths = [PICK_LOG] + list(SHADOW_LOGS.values())
+        if ENABLE_CUSTOM_CLV and CUSTOM_SHADOW_LOG.exists():
+            log_paths.append(CUSTOM_SHADOW_LOG)
+
         # Audit H-10: bail at the top of each iteration if a signal was caught
         # during the previous sleep. All CSV writes happen inside FileLock
         # context managers that complete atomically before we get here, so this
@@ -1317,7 +1318,7 @@ def run(run_date: str):
             # Arrive ~1 poll interval early so we don't miss the window edge
             sleep_secs = int(min(secs_to_next_window - POLL_INTERVAL_SECS, POLL_INTERVAL_LONG_SECS))
             sleep_secs = max(sleep_secs, POLL_INTERVAL_SECS)
-            mins_away = int(secs_to_next_window / 60)
+            mins_away = int(secs_to_next_window / 60) if secs_to_next_window != float("inf") else sleep_secs // 60
             print(f"\n  [{now.strftime('%H:%M')} UTC] {remaining} pick(s) pending. "
                   f"First window in ~{mins_away}min -- sleeping {sleep_secs//60}min...\n")
         else:
