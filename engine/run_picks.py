@@ -2985,7 +2985,7 @@ def dedup_game_line_correlation(picks):
 
 # ── CHANGE 2: Team-total lambda divergence warning ─────────────────────────────
 
-def warn_tt_divergence(all_picks, threshold: float = 0.25) -> None:
+def warn_tt_divergence(all_picks, threshold: float = 1.5) -> None:
     """Warn when the engine's projected team total diverges from market-implied.
 
     Market-implied team total is derived from game total ± spread/2:

@@ -170,7 +170,7 @@ class TestHighVarLogWarning:
             for r in sorted(high_var, key=lambda x: x["pts_cv"], reverse=True):
                 nbp.log.warning(
                     "[HIGH-VAR] %s (%s): pts_cv=%.2f proj_pts=%.1f dk_std=%.1f — "
-                    "3PT specialist with bimodal scoring; individual game outcome highly uncertain",
+                    "high-variance scorer; dk_std floored by observed std; individual game outcome highly uncertain",
                     r["player_name"], r["role_tier"], r["pts_cv"],
                     r["proj_pts"], r["dk_std"],
                 )

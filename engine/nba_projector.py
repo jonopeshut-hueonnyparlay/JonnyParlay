@@ -240,8 +240,8 @@ DK_STD_FLOOR = {
 # threshold are flagged [HIGH-VAR] in the projection log.  Their observed PTS
 # std is also used as an additional floor on dk_std so over_p reflects the
 # true outcome spread rather than the 0.35×proj_pts Gaussian approximation.
-# Threshold chosen to catch pure 3PT specialists (Strus CV=0.77) while leaving
-# ordinary high-usage players unaffected (Mitchell CV=0.34, Robinson CV=0.38).
+# Threshold set at 0.60 — catches high-variance scorers (Strus CV=0.77, Caruso
+# CV=0.64) while leaving consistent starters unaffected (Mitchell CV=0.34).
 HIGH_VAR_CV_THRESHOLD = 0.60
 HIGH_VAR_MIN_GAMES    = 8   # require at least this many clean games to compute CV
 
@@ -1773,7 +1773,7 @@ def run_projections(
     for r in sorted(high_var, key=lambda x: x["pts_cv"], reverse=True):
         log.warning(
             "[HIGH-VAR] %s (%s): pts_cv=%.2f proj_pts=%.1f dk_std=%.1f — "
-            "3PT specialist with bimodal scoring; individual game outcome highly uncertain",
+            "high-variance scorer; dk_std floored by observed std; individual game outcome highly uncertain",
             r["player_name"], r["role_tier"], r["pts_cv"], r["proj_pts"], r["dk_std"],
         )
 

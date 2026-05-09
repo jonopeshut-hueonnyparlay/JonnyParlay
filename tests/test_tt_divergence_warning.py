@@ -107,7 +107,7 @@ def test_home_team_formula():
          "pick_score": 55.0, "gate_result": "PASS"},
         {"stat": "SPREAD",    "line": -1.0, "game": "G2", "is_home": True,
          "direction": "cover", "pick_score": 50.0, "gate_result": "PASS"},
-        {"stat": "TEAM_TOTAL","proj": 5.0,  "game": "G2", "is_home": True,
+        {"stat": "TEAM_TOTAL","proj": 5.5,  "game": "G2", "is_home": True,
          "direction": "over", "player": "Home TT", "line": 3.5,
          "pick_score": 40.0, "gate_result": "PASS"},
     ]
@@ -121,7 +121,7 @@ def test_home_team_formula():
         log_output = buf.getvalue()
     finally:
         run_picks.logger.removeHandler(handler)
-    # proj=5.0, implied=3.5, gap=1.5 → warning must fire
+    # proj=5.5, implied=3.5, gap=2.0 → warning must fire
     assert "TT DIVERGENCE" in log_output
 
 
@@ -133,7 +133,7 @@ def test_away_team_formula():
          "pick_score": 55.0, "gate_result": "PASS"},
         {"stat": "SPREAD",    "line": -1.0, "game": "G3", "is_home": True,
          "direction": "cover", "pick_score": 50.0, "gate_result": "PASS"},
-        {"stat": "TEAM_TOTAL","proj": 4.0,  "game": "G3", "is_home": False,
+        {"stat": "TEAM_TOTAL","proj": 4.5,  "game": "G3", "is_home": False,
          "direction": "over", "player": "Away TT", "line": 2.5,
          "pick_score": 40.0, "gate_result": "PASS"},
     ]
@@ -147,7 +147,7 @@ def test_away_team_formula():
         log_output = buf.getvalue()
     finally:
         run_picks.logger.removeHandler(handler)
-    # proj=4.0, implied=2.5, gap=1.5 → warning
+    # proj=4.5, implied=2.5, gap=2.0 → warning
     assert "TT DIVERGENCE" in log_output
 
 

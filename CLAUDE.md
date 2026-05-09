@@ -53,7 +53,7 @@ Discord bot display name: **PicksByJonny**
 
 | File | Purpose |
 |------|---------|
-| `engine/run_picks.py` | Main betting engine (~5k+ lines). **Source of truth — edit engine/ only. Root entry points are shims.** Flags: `--force-card` (override card guard), `--no-cache` (bypass 11-min Odds API cache — picks pipeline only). |
+| `engine/run_picks.py` | Main betting engine (~5k+ lines). **Source of truth — edit engine/ only. Root entry points are shims — no sync step needed.** Flags: `--force-card` (override card guard), `--no-cache` (bypass 11-min Odds API cache — picks pipeline only). |
 | `engine/grade_picks.py` | Auto-grades pick_log.csv results, posts Discord recap + results graphic. Monthly summary auto-fires on 1st of month. |
 | `engine/capture_clv.py` | CLV daemon — polls every 2 min, captures closing odds T-30 to T+3. Scheduled via Task Scheduler at 10am daily. S4U logon. `MAX_DAEMON_UPTIME_SECS=18h` guard prevents no-picks day from blocking next-day start. Also watches `pick_log_custom.csv` when `ENABLE_CUSTOM_CLV=True`. |
 | `engine/clv_report.py` | CLI report: `python clv_report.py [--days N] [--sport X] [--tier Y] [--stat X] [--shadow]` |
