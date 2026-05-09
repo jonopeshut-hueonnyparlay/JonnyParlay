@@ -164,6 +164,15 @@ POLL_INTERVAL_LONG_SECS = 30 * 60  # 30 min cap — sleep until just before firs
 # within half an hour of tip-off can still recover closing odds).
 STALE_AFTER_SECS = 30 * 60
 
+# Minimum daemon uptime (seconds) before the "all picks captured" early-exit
+# is allowed. Prevents the daemon from exiting prematurely when one sport's
+# picks have CLV but another sport's picks haven't been logged yet (e.g. NHL
+# captured at 5pm but NBA run_picks fires at 6pm). The daemon will keep
+# polling at POLL_INTERVAL_SECS until this wall-clock minimum has elapsed.
+# Default 4 hours — covers the gap between NHL openers (~7pm ET) and late
+# NBA tips (~10:30pm ET).
+MIN_UPTIME_BEFORE_EXIT_SECS = 4 * 60 * 60
+
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -939,6 +948,24 @@ def run(run_date: str):
     # runs at normal process exit to release the daemon lock.
     _install_signal_handlers()
 
+    # Track daemon start time for the MIN_UPTIME_BEFORE_EXIT_SECS guard.
+    # Prevents premature "all picks captured" exit when one sport's picks
+    # are captured but another sport's run hasn't fired yet.
+    _daemon_start_utc = datetime.now(timezone.utc)
+
+    # atexit exit-reason logger — if the process is killed externally (e.g.
+    # TerminateProcess, Task Scheduler timeout) Python's atexit still fires
+    # for normal exits but not for hard kills. This at least covers clean
+    # exits that somehow bypass the main loop's own exit prints.
+    def _log_exit():
+        try:
+            logger.info("Daemon exiting (atexit) — uptime %.0f sec, PID %d",
+                        (datetime.now(timezone.utc) - _daemon_start_utc).total_seconds(),
+                        os.getpid())
+        except Exception:
+            pass
+    atexit.register(_log_exit)
+
     print(f"\n{'-'*60}")
     print(f"  CLV Daemon -- {run_date}")
     print(f"  Capture window: T-{CAPTURE_BEFORE_SECS//60}min to T+{CAPTURE_AFTER_SECS//60}min")
@@ -1079,6 +1106,22 @@ def run(run_date: str):
                 for lp in log_paths if lp.exists()
             )
             if any_logged:
+                # ── MIN_UPTIME guard (2026-05-08 fix) ─────────────────────────
+                # All CURRENTLY logged picks have CLV — but more picks may be
+                # logged later (e.g. NHL captured at 5pm, NBA run_picks fires
+                # at 6pm). Only declare "done" after the daemon has been alive
+                # long enough for all sports' run_picks to have fired.
+                uptime_secs = (now - _daemon_start_utc).total_seconds()
+                if uptime_secs < MIN_UPTIME_BEFORE_EXIT_SECS:
+                    mins_left = int((MIN_UPTIME_BEFORE_EXIT_SECS - uptime_secs) / 60)
+                    print(f"  [{now.strftime('%H:%M')} UTC] All logged picks captured, "
+                          f"but uptime only {int(uptime_secs/60)}min "
+                          f"(min {MIN_UPTIME_BEFORE_EXIT_SECS//3600}h) — "
+                          f"waiting {mins_left}min for potential late-sport picks...")
+                    _interruptible_sleep(POLL_INTERVAL_SECS)
+                    continue
+                # ──────────────────────────────────────────────────────────────
+
                 # picks_needing_clv returned empty — but some picks may have been
                 # graded (W/L) before the daemon could capture their closing line.
                 # Detect these "graded-but-missed" picks and mark them STALE so
@@ -1309,6 +1352,16 @@ def run(run_date: str):
             if lp.exists()
         )
         if remaining == 0:
+            # MIN_UPTIME guard — same logic as the top-of-loop check.
+            # More picks may be logged later for a different sport.
+            uptime_secs = (now - _daemon_start_utc).total_seconds()
+            if uptime_secs < MIN_UPTIME_BEFORE_EXIT_SECS:
+                mins_left = int((MIN_UPTIME_BEFORE_EXIT_SECS - uptime_secs) / 60)
+                print(f"\n  [{now.strftime('%H:%M')} UTC] All logged picks captured, "
+                      f"but uptime only {int(uptime_secs/60)}min — "
+                      f"waiting {mins_left}min for potential late-sport picks...")
+                _interruptible_sleep(POLL_INTERVAL_SECS)
+                continue
             print(f"\n  All picks captured for {run_date}. Daemon exiting.")
             break
 
@@ -1345,6 +1398,14 @@ def main():
     except KeyboardInterrupt:
         print("\n\n  Daemon stopped by user.")
         sys.exit(0)
+    except Exception:
+        # Catch-all so uncaught exceptions land in clv_daemon.log rather than
+        # vanishing silently when the daemon runs under Task Scheduler (S4U
+        # logon, no visible console). The bat-file redirect captures stderr
+        # too, so the traceback reaches the log file.
+        import traceback
+        logger.error("Daemon crashed with unhandled exception:\n%s", traceback.format_exc())
+        sys.exit(1)
 
 
 if __name__ == "__main__":
