@@ -75,11 +75,13 @@ def tmp_db(tmp_path):
     conn.execute("INSERT INTO players VALUES (1, 'Player One', 'player_one', 1, 'F')")
     conn.execute("INSERT INTO players VALUES (2, 'Newcomer', 'newcomer', 1, 'G')")
     conn.execute("INSERT INTO players VALUES (3, 'Veteran', 'veteran', 2, 'C')")
+    conn.execute("INSERT INTO players VALUES (4, 'Injured Return', 'injured_return', 1, 'F')")
     # Games across two seasons
     conn.execute("INSERT INTO games VALUES (101, '2023-11-01', '2023-24', 1, 2, 'Final')")
     conn.execute("INSERT INTO games VALUES (102, '2024-01-15', '2023-24', 1, 2, 'Final')")
     conn.execute("INSERT INTO games VALUES (103, '2025-03-01', '2024-25', 1, 2, 'Final')")
     conn.execute("INSERT INTO games VALUES (104, '2025-10-20', '2025-26', 1, 2, 'Final')")
+    conn.execute("INSERT INTO games VALUES (105, '2025-07-10', '2024-25', 1, 2, 'Final')")
     # Stats: Player 1 played in all prior seasons
     conn.execute("INSERT INTO player_game_stats (player_id, game_id, min, pts) VALUES (1, 101, 30, 10)")
     conn.execute("INSERT INTO player_game_stats (player_id, game_id, min, pts) VALUES (1, 102, 25, 8)")
@@ -88,6 +90,8 @@ def tmp_db(tmp_path):
     # Veteran: played in 2023-24 only, last game far in the past
     conn.execute("INSERT INTO player_game_stats (player_id, game_id, min, pts) VALUES (3, 101, 35, 20)")
     conn.execute("INSERT INTO player_game_stats (player_id, game_id, min, pts) VALUES (3, 102, 38, 22)")
+    # Injured Return: last played 2025-07-10 (~102 days before 2025-10-20 reference)
+    conn.execute("INSERT INTO player_game_stats (player_id, game_id, min, pts) VALUES (4, 105, 28, 12)")
     # Newcomer: no prior games at all
     conn.commit()
     conn.close()
@@ -192,22 +196,24 @@ class TestGetPlayerLastAppearanceDays:
 # ---------------------------------------------------------------------------
 
 class TestColdStartSubType:
-    """C13: cold_start players are classified as taxi / returner / new_acquisition."""
+    """C13: cold_start players are classified as taxi / returner / extended_absence / new_acquisition."""
 
     def _make_projector_call(self, tmp_db, player_id: int, before_date: str,
                               current_season: str = "2025-26"):
-        """Helper that calls the DB functions and applies the R7 classification logic."""
+        """Helper that calls the DB functions and applies the RB8 classification logic."""
         from projections_db import get_player_career_game_count, get_player_last_appearance_days
         n_career, career_avg_min = get_player_career_game_count(
             player_id, current_season, db_path=tmp_db)
         last_days = get_player_last_appearance_days(
             player_id, before_date, db_path=tmp_db)
 
-        # R7 classification logic (mirrors nba_projector cold_start block)
+        # RB8 classification logic (mirrors nba_projector cold_start block)
         if n_career == 0:
             sub_type = "taxi"
         elif last_days is None or last_days >= 180:
             sub_type = "returner"
+        elif last_days >= 60:
+            sub_type = "extended_absence"
         else:
             sub_type = "new_acquisition"
         return sub_type, n_career, career_avg_min, last_days
@@ -239,6 +245,40 @@ class TestColdStartSubType:
         sub_type, _, _, days = self._make_projector_call(tmp_db, 3, str(ref))
         assert days == 180
         assert sub_type == "returner"
+
+    def test_extended_absence_mid_range(self, tmp_db):
+        """Player 4 last played ~102 days before reference — extended_absence."""
+        sub_type, n, avg, days = self._make_projector_call(tmp_db, 4, "2025-10-20")
+        assert sub_type == "extended_absence", f"Expected extended_absence, got {sub_type!r}"
+        assert days is not None and 60 <= days < 180
+
+    def test_boundary_exactly_60_days_is_extended_absence(self, tmp_db):
+        """60 days exactly is the lower bound for extended_absence."""
+        from datetime import date, timedelta
+        # Player 4 last played 2025-07-10; 60 days later = 2025-09-08
+        last = date.fromisoformat("2025-07-10")
+        ref = last + timedelta(days=60)
+        sub_type, _, _, days = self._make_projector_call(tmp_db, 4, str(ref))
+        assert days == 60
+        assert sub_type == "extended_absence"
+
+    def test_boundary_59_days_is_new_acquisition(self, tmp_db):
+        """59 days is below the extended_absence threshold → new_acquisition."""
+        from datetime import date, timedelta
+        last = date.fromisoformat("2025-07-10")
+        ref = last + timedelta(days=59)
+        sub_type, _, _, days = self._make_projector_call(tmp_db, 4, str(ref))
+        assert days == 59
+        assert sub_type == "new_acquisition"
+
+    def test_boundary_179_days_is_extended_absence(self, tmp_db):
+        """179 days is the upper bound for extended_absence (< 180)."""
+        from datetime import date, timedelta
+        last = date.fromisoformat("2025-07-10")
+        ref = last + timedelta(days=179)
+        sub_type, _, _, days = self._make_projector_call(tmp_db, 4, str(ref))
+        assert days == 179
+        assert sub_type == "extended_absence"
 
 
 # ---------------------------------------------------------------------------

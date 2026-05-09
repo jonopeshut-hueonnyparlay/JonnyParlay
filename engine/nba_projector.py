@@ -1071,15 +1071,17 @@ def project_player(
         career_min_prior = get_player_career_avg_minutes(
             player_id, current_season=season, db_path=db_path
         )
-        # R7 Brief 7: cold_start sub-type classification.
+        # R7/RB8: cold_start sub-type classification.
         # Classifies cold_start players to improve minutes cap accuracy:
-        #   taxi         — 0 career games in DB (true first-timer / G-League callup)
-        #   returner     — has career history but last game >= 180 days ago
-        #   new_acquisition — has career history, recently active elsewhere
+        #   taxi              — 0 career games in DB (true first-timer / G-League callup)
+        #   returner          — has career history, last game >= 180 days ago (full-season absence)
+        #   extended_absence  — has career history, last game 60-179 days ago (2-6 month injury)
+        #   new_acquisition   — has career history, last game < 60 days ago (new team / recent)
         # Per-subtype cold_start_min_cap (applied post-scalar to proj_min):
-        #   taxi         → 12.0 min  (unknown role, very uncertain)
-        #   returner     → career_avg_min (max 22) or 14.0  (reduced role after long layoff)
-        #   new_acquisition → career_avg_min (max 28) or 16.0  (recently active, new team TBD)
+        #   taxi             → 12.0 min  (unknown role, very uncertain)
+        #   returner         → career_avg_min (max 22) or 14.0  (reduced role after full-season layoff)
+        #   extended_absence → career_avg_min × 0.70 (max 25) or 14.0  (conditioning uncertainty)
+        #   new_acquisition  → career_avg_min (max 28) or 16.0  (recently active, new team TBD)
         n_career_games, career_avg_min_raw = get_player_career_game_count(
             player_id, current_season=season, db_path=db_path
         )
@@ -1093,6 +1095,9 @@ def project_player(
             if days_since is None or days_since >= 180:
                 cold_start_subtype = "returner"
                 cold_start_min_cap = min(career_avg_min_raw, 22.0) if career_avg_min_raw else 14.0
+            elif days_since >= 60:
+                cold_start_subtype = "extended_absence"
+                cold_start_min_cap = min(career_avg_min_raw * 0.70, 25.0) if career_avg_min_raw else 14.0
             else:
                 cold_start_subtype = "new_acquisition"
                 cold_start_min_cap = min(career_avg_min_raw, 28.0) if career_avg_min_raw else 16.0

@@ -251,7 +251,7 @@ ARCHIVE: (collapsed)
 | Longshot | 6-leg parlay of safest picks. Logged as `run_type=longshot`. Per-game cap: max 2 legs per game (`LONGSHOT_MAX_PER_GAME=2`). Added Apr 28 2026. |
 | CLV | Closing Line Value — primary edge indicator. Positive = beat the close. |
 | CO-legal books | 18 CO-approved books. API key "espnbet" = display "theScore Bet" |
-| cold_start sub-types | R7 (May 3 2026). Players below `MIN_GAMES_FOR_TIER=10` in current season are classified at projection time: **taxi** — n_career_games=0, min cap=12; **returner** — last appearance ≥180 days ago, min cap=min(career_avg, 22); **new_acquisition** — last appearance <180 days, min cap=min(career_avg, 28). Cap applied after role scalar. Source: `project_player()` in nba_projector.py. (L17) |
+| cold_start sub-types | R7/RB8. Players below `MIN_GAMES_FOR_TIER=10` in current season are classified at projection time: **taxi** — n_career_games=0, min cap=12; **returner** — last appearance ≥180 days, min cap=min(career_avg, 22); **extended_absence** — last appearance 60-179 days, min cap=min(career_avg×0.70, 25); **new_acquisition** — last appearance <60 days, min cap=min(career_avg, 28). Cap applied after role scalar. Source: `project_player()` in nba_projector.py. |
 
 ## Books / APIs
 - **Odds API key + Discord webhooks:** loaded from `.env` via `engine/secrets_config.py`
