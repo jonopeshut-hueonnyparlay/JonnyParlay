@@ -438,19 +438,24 @@ def cold_start_rates(position):
 def classify_role(df):
     """Classify a player's role from the most recent 10 games.
 
-    Thresholds (starter_rate ≥0.60 AND ≥26 MPG / sixth_man ≥20 MPG /
-    rotation ≥12 MPG / spot ≥5 MPG / else cold_start) are inherited from
-    the initial 2026-04-30 build and have not been empirically refit
-    alongside the recent scalar work (Brief 7 R3, H2 2026-05-06).  Audit
-    B2 (2026-05-06) flagged them as a candidate for a binned MAE-by-role
-    check at the next calibration session — see
-    docs/audits/AUDIT_2026-05-06_projection_deep_dive.md §B2.
+    Thresholds refit 2026-05-09 from 1385 player-snapshots (2024-25 +
+    2025-26, RS + Playoffs, n≥5 games):
+
+      starter_rate ≥0.60 AND avg_min ≥24 → starter
+        Empirical basis: 26-28 MPG band has 79.4% sr≥0.60; 24-26 MPG has
+        36.3% sr≥0.60.  Lowered from 26→24 to capture starters who
+        average fewer minutes due to foul trouble / blowout rest without
+        losing the sr guard that blocks garbage-time bench players.
+      avg_min ≥20 → sixth_man  (unchanged)
+      avg_min ≥12 → rotation   (unchanged)
+      avg_min ≥ 5 → spot       (unchanged)
+      else        → cold_start
     """
     if df.empty: return "cold_start"
     recent = df.head(10)
     avg_min = recent["min"].mean()
     starter_rate = recent["starter_flag"].mean()
-    if starter_rate >= 0.60 and avg_min >= 26: return "starter"
+    if starter_rate >= 0.60 and avg_min >= 24: return "starter"
     if avg_min >= 20: return "sixth_man"
     if avg_min >= 12: return "rotation"
     if avg_min >= 5:  return "spot"
