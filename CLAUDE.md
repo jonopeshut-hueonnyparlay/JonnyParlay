@@ -1,191 +1,36 @@
 # Memory
 
-## Audit 2026-05-06 — Status (projection deep dive)
-Read-only deep audit of the NBA projection chain. Findings: **0 CRIT / 5 HIGH / 8 MED / 5 LOW**. Full doc: `docs/audits/AUDIT_2026-05-06_projection_deep_dive.md`.
+## Active Scalars — `engine/nba_projector.py`
+- `PLAYOFF_MINUTES_SCALAR` (~line 242): starter=1.075, sixth_man=0.960, rotation=0.924, spot=0.948, cold_start=0.400. Refit 2026-05-06 on 3925 pairs (3 seasons).
+- `REGULAR_SEASON_MINUTES_SCALAR` (~line 261): starter=1.0534, sixth_man=1.0139, rotation=1.0327, spot=1.5695, cold_start=1.0034.
+- `REGULAR_SEASON_STAT_SCALAR` (~line 276): pts=1.0019, ast=1.0120, reb=1.0264, fg3m=1.0231, blk=1.0608, stl=1.0017, tov=1.000.
+- `LEAGUE_AVG_PACE`=100.22 (2025-26 season-to-date; 2024-25 RS=99.58). `LEAGUE_AVG_PACE_PO`=96.5.
+- `_HOME_AWAY_DELTA`: pts=0.0235, reb=0.0088, ast=0.0333, fg3m=0.0452, blk=0.0439, tov=−0.0122.
+- `_REB_RATE_PRIOR`: G=0.058, F=0.079, C=0.133.
+- `DK_STD_FLOOR`: starter=4.0, sixth_man=4.0, rotation=3.5, spot=3.0, cold_start=3.0. `DK_STD_COEFF`=0.35.
+- `HIGH_VAR_CV_THRESHOLD`=0.60, `HIGH_VAR_MIN_GAMES`=8 (3PT specialist bimodal flag, RB8 H5).
+- Blowout sigmoid: k=0.15, mid=20.0, max_reduction=0.19 (refit 2026-05-06 on 24,600 rows).
+- `PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate.
 
-**Closed in fix batch (2026-05-06):**
-- **H1 (Vegas team-total constraint vs 240-min lineup protection):** Path (b) — Vegas constraint now lineup-protected for `proj_min` (top-5 starters preserved; bench absorbs the scaling). Empirical validation: pre-fix 50/60 top-5 observations were outside ±5% of their lineup-protected baseline (mean star deflation 2.6 min); post-fix 0/20 outside ±5% (deflation 0.0 min). Vegas still actively anchors `proj_pts` for non-top-5. Two commits: `1c3a528` (instrumentation, 10 diag tests) + `1fda742` (Path (b) fix, 12 fix-validation tests).
-- **H2 (cold_start cap clamps override):** added `injury_minutes_override is None and` guard at `nba_projector.py:1130`. Taxi cold_start with announced minutes restriction (e.g. 14-min cap) is no longer silently re-clamped to the sub-type cap (12). Note: the broader `ROLE_MAX_MIN["cold_start"]=16` ceiling at line 1162 still applies as a final safety. Tests: `tests/test_cold_start_override_bypass.py` (4 tests). Commit: `e4911d9`.
-- **M3 (Odds API blackout silent no-op):** added top-level `log.error` in `generate_projections.run()` when both `implied_totals` and `spreads` come back empty. Tests: `tests/test_odds_api_blackout_warning.py` (5 tests). Commit: `1d00c07`.
-- **H4 (`LEAGUE_AVG_PACE` provenance):** value 100.22 is **2025-26 season-to-date**, not "2024-25 full season" as Brief 7 R5 originally claimed. `team_season_stats` reports 2024-25 RS=99.58, 2025-26 RS=100.22. Value retained for calibration continuity; comment at `nba_projector.py:62` and the R5 entry below corrected. Commit: `dceca67`.
-- **O1 (pick_log schema doc):** updated to schema_version=4 / 29 cols / last col `over_p_raw` (matching `engine/pick_log_schema.py`). Commit: `da9b54b`.
-- **O2/O3/O4 (CLAUDE.md scalar source-of-truth + memory refresh):** new "Audit 2026-05-06 — Status" block with current scalars (supersedes stale historical entries below); `memory/projects/custom-projection-engine.md` lead refreshed. Commit: `29474ac`.
+## Data-gated / Open
+- **H3 (Platt refit)**: gated on ~300 post-v4 `over_p_raw` rows (~13 as of 2026-05-09). Check: count non-empty `over_p_raw` in pick_log.csv.
+- **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv` (0/86 as of 2026-05-09). Daemon stable post-2026-05-09 MAX_UPTIME fix.
+- **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`) not empirically refit — candidate for next calibration session.
 
-**Closed in second fix batch (2026-05-06, doc-sweep):**
-- **B4 (`MIN_GAMES_FOR_TIER` strict-less-than clarity):** comment expanded at `nba_projector.py:114` — exactly-10-games is *not* cold_start (audit prior-day reading was overaggressive). Comment-only. Commit: `540ea13`.
-- **E4 (`PLAYOFF_MINUTES_SCALAR["cold_start"] = 0.400` semantics):** corrected misleading "filtered out, sub-type caps handle" comment at `nba_projector.py:252`. Audit's "unreachable" claim was wrong — verified at line 1129 that 0.400 is multiplied first; the per-subtype cap is a *ceiling*, not a replacement, and 0.400 × baseline (≈6–7 min) typically stays below the cap so the scalar dominates in practice. Comment-only. Commit: `540ea13`.
-- **F5 (asymmetric `_SCALE_KEYS` cross-references):** added 1-line cross-pointers in `nba_projector.py:1583` (240-min `_SCALE_KEYS`) and `generate_projections.py:64` (Vegas `_CONSTRAINT_SCALE_KEYS`) so a future reader sees both lists exclude `proj_min` for different design reasons (240-min handles `proj_min` separately via core/bench scales; Vegas omits it because total team minutes is a physical invariant). Comment-only. Commit: `def608d`.
-- **P4 (diagnostic-script layout):** moved 6 one-shot scripts (`diag_blowout_buckets.py`, `diag_h6_pool.py`, `diag_h6_backtest.py`, `diag_h1_constraint_chain.py`, `analyze_playoff_scalars.py`, `_check_dvp.py`) from `engine/` to `engine/tools/`. Destination is `engine/tools/` (not `engine/diagnostics/`) because `engine/diagnostics.py` already exists as a production module. None of the moved scripts are imported by production code (verified by grep). Each script's `sys.path` setup updated to insert `engine/`; docstring "Run:" lines updated. Commit: `6e4c878`.
-- **M4 (11-min Odds API cache subsystem):** CLAUDE.md `engine/run_picks.py` row updated to clarify the 11-min cache is owned by the picks pipeline, *not* the projection pipeline. The projection pipeline's `_odds_api_get` in `csv_writer.py` has retry/429 handling but no time-keyed cache. `--no-cache` only affects the picks pipeline. Doc-only. Commit: `b2ddbd9`.
+## Closed Audits
+Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
 
-**Closed in third fix batch (2026-05-06, shadow-mode + remaining audit items):**
-- **A1 (`--research --no-cap` truncated to ~4 picks/day):** `apply_caps()` at `engine/run_picks.py:5518` was running before the no-cap log-substitution at line 5549, so the qualified pool was already capped by NBA's 8u sport cap / per-stat 2 / 12u total before the bypass branch saw it. Wrapped `apply_caps()` in `if not getattr(args, "no_cap", False)`. Safety preserved (existing `--no-cap requires --no-discord` guard at line ~5190). Tests: `tests/test_no_cap_bypasses_apply_caps.py` (3 tests). Commit: `773a5d6`.
-- **A2 (shadow log dedup blocked same-day re-runs):** `log_picks` dedup at `run_picks.py:3220-3235` was path-agnostic, so a `--shadow` re-fire silently no-op'd against rows from the morning run. Added `is_shadow_log = log_path.name != "pick_log.csv"` and gated the `existing_keys` population on it. Schema-rewrite path and intra-run dedup both preserved. Live `pick_log.csv` behavior unchanged. Tests: `tests/test_shadow_log_dedup.py` (4 tests). Commit: `828fa72`.
-- **A3 / N3 (shadow observability — zero-row writes silent):** added `logger.warning` at the end of `log_picks` in `run_picks.py:3344` distinguishing `qualified_in>0 dedup_skipped=N` (re-run blocked) from `qualified_in=0` (upstream gate filtered everything). Pairs with the A2 fix so a same-day shadow no-op is now both impossible and observable. Tests: `tests/test_log_picks_zero_row_warning.py` (3 tests; the test fixture attaches caplog directly to the `jonnyparlay` logger because it sets `propagate=False`). Commit: `46e3652`.
-- **B2 (role-tier threshold provenance):** docstring added to `classify_role()` at `nba_projector.py:427` noting the 26/20/12/5 MPG cutoffs and 0.60 starter_rate are inherited from the initial 2026-04-30 build and have not been empirically refit alongside Brief 7 R3 / H2 2026-05-06 scalar work. Flagged as a candidate for a binned MAE-by-role check at the next calibration session. Comment-only. Commit: `33c8fdb`.
-- **E5 (scalar freeze policy):** new doc at `docs/calibration/scalar-freeze-policy.md` declares which scalars are eligible for refit at any session (RS/PO minutes scalars, RS stat scalar, home/away delta, REB priors, playoff rate deflators, DK_STD_FLOOR, blowout sigmoid, EWMA span, PTS_BLEND_ALPHA) vs frozen (`PLATT_A`/`PLATT_B` gated on H3 `over_p_raw` accumulation; `LEAGUE_AVG_PACE`/`LEAGUE_AVG_PACE_PO` gated on season boundary). Refit thresholds (n_pairs ≥300 stats / ≥500 minutes, |bias| ≥0.05 std, OOS validation on held-out season) and refit-record checklist included. New file only. Commit: `c063589`.
-- **L2 (`busy_timeout=20000` validation):** grepped `data/clv_daemon.log` (7422 lines) for `database is locked` / `OperationalError` across the last 7 days of playoff-evening operation — zero hits. Documented inline at `engine/projections_db.py:209` so a future auditor doesn't re-investigate; bump trigger pinned to evidence in `clv_daemon.log` rather than gut feel. Comment-only. Commit: `3f8b60e`.
-- **M1 (down-grade race-condition runbook):** new runbook at `docs/runbooks/injury-status-changes.md` documents symptom, detection, mitigation via `--late-run`, and live/shadow/research invocation patterns. Caveats noted: Vegas totals not refreshed under `--late-run`; KILLSHOT cap enforced across re-runs. New file only. Commit: `d122160`.
-- **M2 (legacy-override re-EWMA — perf):** closed as wontfix-perf with a comment at `nba_projector.py:1112`. The override path's separate `ewma_baseline` recompute is intentionally redundant with `project_minutes()`'s internal EWMA; threading a baseline hint through would save sub-ms on the ~5-15 override-bearing players per slate — not worth the optional-param surface area. Comment-only. Commit: `a4da963`.
-- **A4 (card guard blocks shadow log_picks):** surfaced during operational testing of the third batch. The card-guard short-circuit at `run_picks.py:5583` suppresses `log_picks()` for the entire run when today's premium card has already shipped — correct for live re-runs (avoids double-logging), but wrong for `--no-discord` runs that have no Discord post to deduplicate against. Production symptom: the JonnyParlay Shadow Run scheduled task generated 31 qualified picks and logged ZERO of them whenever SaberSim's live run fired first in the day. Fix: extract `_card_guard_should_block_logging(card_was_up, no_discord, force_card)` pure helper at `engine/run_picks.py:4136`; bypass when `--no-discord` or `--force-card` is set. Tests: `tests/test_card_guard_bypass.py` (4 tests covering the truth table). End-to-end verified: shadow re-fire without `--force-card` grew `pick_log_custom.csv` from 20 → 40 today rows. Commit: `30bcd4f`.
+| Audit | Findings | Status |
+|-------|----------|--------|
+| 2026-05-06 projection deep-dive | 0C/5H/8M/5L | ALL CLOSED (H3 data-gated) |
+| 2026-05-05 injury + deep audit | various | ALL CLOSED |
+| 2026-05-04 10-agent | 14C/17H/28M/17L | ALL CLOSED |
+| 2026-05-02 10-agent season | 6C/33H/16M/3L | ALL CLOSED |
+| 2026-05-01 | 0C/2H/4M/9L | ALL CLOSED |
+| 2026-04-28 | 3C/11H/14M/20L | ALL CLOSED |
+| 2026-04-21 | 78 items | ALL CLOSED |
 
-**Closed in fourth fix batch (2026-05-07, GLC matrix + picks pipeline):**
-- **GLC-1 (game-line correlation matrix gate):** `filter_game_line_correlations()` replaces the narrow `dedup_game_line_correlation()`. Extended from TOTAL+TEAM_TOTAL same-direction dedup (FIX 5) to a full 4-rule matrix: (1) ML/SPREAD for Team A + TEAM_TOTAL Over for opponent → HARD CONFLICT; (2) F5_ML for both teams in same game → HARD CONFLICT; (3) TOTAL Over + TOTAL Under same game → HARD CONFLICT; (4) TOTAL + TEAM_TOTAL same direction (FIX-5 backward compat). Prop picks never touched. Conflicts drop lower `pick_score` leg. Old `dedup_game_line_correlation` kept as thin alias. Fixes tonight's BUF@MTL bug: BUF ML (39.6) + MTL TT Over (34.7) are correlated — BUF winning prevents MTL scoring 3+; MTL TT O2.5 dropped. Tests: `tests/test_glc_extended.py` (13 tests). Commit: pending.
-- **GLC-2 (TT divergence warning):** `warn_tt_divergence()` fires `[TT-DIVERGE]` console + WARNING log when engine's projected team total diverges from market-implied by >0.25. Formula: `home_implied=(total_line−home_spread)/2`, `away_implied=(total_line+home_spread)/2`. Silently skips games missing TOTAL or SPREAD picks. Runs over `all_picks` (including failed gates) to catch projection drift early. Tests: `tests/test_tt_divergence_warning.py` (8 tests). Commit: pending.
-- **GLC-3 (pre/post thesis check block):** `print_thesis_block()` prints a per-game comparison of pre-GLC vs post-GLC game-line picks (✓ survived, ✗ + [DROPPED] removed) — fires only for games with ≥2 GL picks pre-filter. Prop picks excluded from count and display. Tests: `tests/test_thesis_check_block.py` (8 tests). Commit: pending.
-
-**Test progression:** 903 → 919 (post first batch, +16) → 941 (post H1, +22) → 941 (post doc-sweep, no behavior change) → 951 (post third batch, +10: A1 ×3, A2 ×4, A3 ×3) → 955 (post A4 fix, +4) → 984 (post GLC batch, +29: GLC-1 ×13, GLC-2 ×8, GLC-3 ×8). Final: 984 passed, 0 failed.
-
-**Source of truth for active scalars — `engine/nba_projector.py`:**
-- `PLAYOFF_MINUTES_SCALAR` (line 242) — H2 refit 2026-05-06 (3925 matched pairs across 2023-24 / 2024-25 / 2025-26): starter=1.075, sixth_man=0.960, rotation=0.924, spot=0.948, cold_start=0.400 (filtered out, sub-type caps handle). **Supersedes** Brief 7 R3 (rotation 0.550, spot 0.350) referenced below.
-- `REGULAR_SEASON_MINUTES_SCALAR` (line 261): starter=1.0534, sixth_man=1.0139, rotation=1.0327, spot=1.5695, cold_start=1.0034.
-- `REGULAR_SEASON_STAT_SCALAR` (line 276): pts=1.0019, ast=1.0120, reb=1.0264, fg3m=1.0231, blk=1.0608, stl=1.0017, tov=1.000. **Supersedes** the OOS-trimmed values (ast 1.005, blk 1.043) recorded below — refit after REB-prior fix + EWMA span 6→8.
-
-**Open items (queued for follow-up sessions):**
-- **H3 (Platt refit)** — gated on accumulating ~300+ post-v4 `over_p_raw` rows. Run `SELECT COUNT(*) FROM ... WHERE over_p_raw != ''` against `data/pick_log.csv` periodically; trigger refit when the count clears 300 and the `_REB_RATE_PRIOR` / `REGULAR_SEASON_STAT_SCALAR` haven't drifted between fits.
-
-**Audit 2026-05-06 — ALL ITEMS CLOSED** except H3 (data-gated, not code-gated). GLC matrix + TT divergence + thesis block (GLC-1/2/3) shipped 2026-05-07 as picks pipeline hardening (not part of original audit scope).
-
-## Audit 2026-05-05 — Status (injury system + deep audit)
-Full-system audit spawned 2026-05-05 after computer crash + injury system diagnosis. Key fixes:
-
-**Injury name format fix (C1):** NBA PDF uses "Last, First" but DB stores "First Last". `_maybe_reverse_name()` added to `injury_parser.py` — applied in `_normalise_report()` before `fold_name()`. Active-team filter added to `get_injury_context()` — only processes players on teams with games today.
-
-**Projection fixes:** H1 (override scalar bypass — season/playoff scalar skipped when injury_minutes_override is not None), H2 (USG% OT inflation — `tm_min.clip(upper=240.0)`), H5 (career threshold carried forward when career_min_prior is None but career_avg_min_raw exists), H6 (proj_min included in `_CONSTRAINT_SCALE_KEYS` in generate_projections.py).
-
-**DB fixes:** H4 (SCHED collision — seed_scheduled_games checks for real row before inserting; get_games_for_date deduplicates by matchup keeping real rows), M3 (try/finally on all 13 remaining bare conn.close() in projections_db.py), M4 (spread warning in _fetch_spreads when team name unmatched).
-
-**CLV fixes:** C1 (CLV write key upgraded to 5-tuple with date prefix), L4 (picks_needing_clv excludes terminal results W/L/P/VOID), M9 (`_mark_picks_stale()` writes STALE to closing_odds when CLV permanently retired).
-
-**Other fixes:** M5 (generate_daily_csv applies constrain_team_totals when team_totals available; warns when missing), M6 (run_picks over-force counter update), M7 (KILLSHOT units included in 12u daily cap sanity check), M8 (weekly_recap avg_clv stored as decimal; tests updated).
-
-**Tests added (2026-05-05):** test_clv_date_key.py (11 tests), test_clv_stale_marker.py (3), test_injury_parser_fixes.py (13), test_derive_team_totals.py, test_team_total_derivation.py.
-
-**Test suite (2026-05-05):** 903 passed / 0 failed. Commit: fd97218.
-
-**Audit 2026-05-05 — ALL ITEMS CLOSED.**
-
-## Audit 2026-05-04 — Status
-Full audit doc: `docs/audits/AUDIT_2026-05-04.md`. **14 CRIT / 17 HIGH / 28 MED / 17 LOW** — 10-agent full-system audit post Research Brief 7.
-
-**ALL ITEMS ALREADY CLOSED by Fix Pass Session 7** (session 7 completed all fixes before context ended). Post-audit code verification confirmed every finding had already been resolved with inline comments referencing each issue ID (C1–C9, H1–H9, M2/M8/M10, etc.). No new code changes required.
-
-**Test suite (2026-05-04, post projection fix):** 853 passed / 21 FUSE-sandbox failures / 2 skipped = 876 total. +10 net new tests (test_team_total_derivation.py). FUSE failures (test_tail_guard, test_section38/39/40, test_capture_clv_shutdown::sigterm, test_section32::weekly_recap_fallback) are Linux sandbox artifacts — all pass on Windows.
-
-**Audit 2026-05-04 — ALL ITEMS CLOSED.**
-
-## Audit 2026-05-02 — Status
-Full audit doc: `docs/audits/AUDIT_2026-05-02.md`. **6 CRIT / 33 HIGH / 16 MED / 3 LOW / 12 CLEAN.**
-
-**Fix pass session 1 (May 3 2026, 763 tests):**
-- CRIT-1 (A1-023): `_pick_log_lock` no longer yields without lock — now raises `_FileLockTimeout`
-- CRIT-5 (H-CRIT-001): test_pick_log_atomic_write.py updated to 28-col schema
-- CRIT-6 (H-CRIT-002): test_pick_log_schema.py — added `legs` last-position assertion
-- H1 (D1-001): `build_monthly_embed()` undefined `tier_lines`/`best_tier_line` removed — monthly recaps now functional
-- H15 (B1-001): REB Bayesian shrinkage now conditional on `_reb_n_games == 0` only
-- M10 (D1-005): `compute_pick_streak` MODEL_RUN_TYPES narrowed to `{"primary","bonus"}` (props only)
-- M12 (D1-007): `grade_prop` direction fallthrough now returns None + logs warning instead of silently grading as "under"
-- C2-001 (H16): `get_player_recent_games` in projections_db.py — connection now closed in try/finally
-- H12 (A1-022): NBA header detection — added `"reb" in headers` check + warning if rebound column absent
-- H17 (C2-002): `make_team_total_key()` helper added to csv_writer.py; both consumers (csv_writer + generate_projections) use it
-- H19 (C2-004): `get_player_career_avg_minutes()` now logs warning before returning None
-- H26 (G6-004): `_proj_cache.clear()` added at top of both `run_backtest` entry points (backtest_projections.py)
-- H31 (H-HIGH-003): TestPerLegGates — per-leg cover_prob + edge gate tests now passing (correct NBA team names + mock.patch)
-- H33 (H-HIGH-005): test_odds_client_malformed_json.py — `OddsClient` → `OddsFetcher`, truncation fix; all 3 tests pass
-
-**Fix pass session 2 (May 3 2026, 805 tests pass):**
-- M5 (B1-012): nba_projector.py — `_proj_poss_blk` now separate variable from `_proj_poss_stl`; BLK uses `proj_poss_blk`
-- M6 (B1-017): `_REB_PRIOR_N_OREB/DREB` standardised to 12 (matching `_REB_RATE_PRIOR_N`)
-- M8 (C3-003): `compute_defensive_splits()` now filters `cnt >= MIN_SPLIT_GAMES=5` before inserting splits
-- M11 (D1-006): `build_monthly_embed()` — `_next_month` pre-computed with assert before MONTH_NAMES lookup
-- M13 (E2-004): Already correct — `SHADOW_LOGS = {}` when `ENABLE_SHADOW_CLV=False` handles this
-- M14 (F4-002): `engine_logger.py` idempotency key uses `repr(log_path)` instead of `str()`
-- M15 (F7-001): `injury_parser.py` — broad `except Exception` narrowed to specific expected types
-- M16 (F7-002): `injury_parser.py` — minute overrides clamped to `[0, 48]` with warning on out-of-range
-- L1 (G5-001): `historical_backtest.py` comment updated — `errors_by_role` stores tuples not raw errors
-- L2 (H-LOW-007): `test_weekly_recap_clv.py` float equality → `pytest.approx`
-
-**Fix pass session 3 (May 3 2026, 845 tests pass):**
-- H22 (A1-027): `_webhook_post` in grade_picks.py — split timeout `(5, 10)`; `ReadTimeout` not retried (POST body already sent — retry risks duplicate Discord post)
-- H23 (A1-028): weekly_recap.py `_save_guard` non-atomic fallback removed — logs warning instead of open() write that could truncate guard file
-- H24 (A1-029): morning_preview.py — same `_save_guard` fix; `force=True` path now does release+claim BEFORE posting (not post-success claim)
-- H25 (G6-005): backtest_projections.py — legacy 27-col rows padded with `""` instead of dropped; `on_bad_lines="error"` after pre-validation
-- H27 (H-HIGH-001): calibrate_platt.py — 5-fold cross-validated Brier added; in-sample labeled "biased low"; OOS used for go/no-go
-- H28 (H-HIGH-002): calibrate_winprob.py — same 5-fold CV Brier; `brier_score_raw_cv`, `brier_score_cal_cv`, `brier_improvement_pct_cv` added to result dict
-- M3 (B1-008): nba_projector.py — `compute_ast_rate` call uses `game_pace` denominator (was `team_pace`) — aligns training basis with projection basis
-- M7 (B1-019): nba_projector.py 240-min constraint `_SCALE_KEYS` extended with `proj_*_p25`, `proj_*_p75`, `dk_std` — percentile keys were stale after scaling
-- M9 (C3-006): generate_projections.py — implied-total coverage warning already issued before `run_projections()` call (confirmed no-op fix needed)
-
-**Fix pass session 4 (May 3 2026, 845 tests pass):**
-- CRIT-2/3/4: confirmed already fixed in prior sessions (no code change needed)
-- H2 (A1-002): confirmed already fixed — `pick_score()` used for NRFI/YRFI (FIX H2 comment at line ~2760)
-- H3/H7/H8/H9/H11/H12/H13/H20/H21/H29/H30/H32: all confirmed already fixed in prior sessions
-- H4 (A2-001): `is_home: ""` added explicitly to TOTAL and F5_TOTAL pick dicts in run_picks.py
-- H5 (A1-034b): confirmed already fixed — `MIN_DAILY_LAY_PROB` guard inside builder (line ~3138)
-- H6 (A1-034): `extract_game_lines()` spread/ML dict keys now normalized to canonical abbreviations via `resolve_team_abbrev()` — prevents duplicate entries from bookmaker name variation; all consumers updated to match by abbreviation with `raw_name` fallback
-- H10 (A1-011): `_load_cache()` `except Exception` narrowed to `json.JSONDecodeError` — real I/O errors now propagate
-- H14 (A3-011): `_card_already_posted_today()` now checks discord guard key `premium_card:{today}` first; pick_log fallback requires `card_slot` non-blank — KILLSHOT-only runs no longer suppress the card on next run
-- H18 (C2-003): csv_writer.py three `datetime.date.today()` calls replaced with ET-aware `datetime.datetime.now(ZoneInfo(...)).strftime(...)` — `ZoneInfo` import added
-- M1 (A3-020): no rowcount sidecar exists in current code — no-op (T2c from Research Brief 6 was not implemented; schema sidecar ordering already correct)
-- M2 (A1-something): confirmed already fixed — `log_picks()` uses `p.get("adj_edge", 0)`
-- M4 (B1-003): `project_minutes()` already uses `is not None` guards (lines 896/898); `get_player_career_avg_minutes()` returns `None` not `0.0` — no-op
-
-**Fix pass session 7 (May 4 2026, 857+ tests pass) — Fix Pass 7 (10-agent audit, 2025-26 season hardening):**
-- CRIT-1/2/3/4/5/6: all closed (prior sessions confirmed or new fixes)
-- H8 (sabersim_backtest): persist=True so projections cache to DB during backtest regen
-- H9 (generate_projections.py): warning when --shadow and --run-picks both specified (H10); M4 return type hint -> Path|None; L4 --shadow help text expanded
-- H12 (clv_report.py): stat sort key uses -inf fallback; M6 unused OrderedDict removed; M28 .upper() normalization; L6 --version added
-- H13 (test_pick_log_atomic_write.py): position assertions for legs (final col=27, 28 total cols)
-- M16/M17 (calibrate_platt/winprob): sys.exit(1) when OOS Brier improvement negative; L16 warning at n<50
-- M7 (analyze_picks.py): pick_log_custom.csv included when --shadow enabled
-- M19 (engine_logger.py): idempotency key uses normcase(abspath()) not repr()
-- M20 (discord_guard.py): _load_unlocked() uses read_bytes() atomic single read; L14 guard key format documented in module docstring
-- M21 (sabersim_backtest.py): run_projections import moved to module level
-- C11/C12/C13/C14: tests/test_projections_db_r7.py created (18+ tests for new DB functions and capture_clv constants)
-- L1 (nba_projector.py): stale 99.5 pace comment updated to 100.22
-- L2 (projections_db.py): get_player_career_game_count() docstring + type hint improved
-- L8 (historical_backtest.py): sampled → sampled_dates rename throughout
-- L11 (run_picks.py): --force-card help text expanded with dedup clarification
-- L17 (CLAUDE.md): cold_start sub-type min caps table added to Terms
-- L3 (CLAUDE.md): CLV daemon entry updated to document ENABLE_CUSTOM_CLV / pick_log_custom.csv
-
-**Audit 2026-05-02 (10-agent, 2025-26 season) — ALL ITEMS CLOSED.** 866 tests total (735 + 129 FUSE-deselected + 2 skipped), 0 failures. FUSE-deselected tests (test_tail_guard, test_section38/39/40, test_capture_clv_shutdown::sigterm, test_section32::weekly_recap_fallback) are sandbox artifacts — all pass on Windows. Run `--recompute-splits` on Windows to apply T2d fg3a split schema.
-
-**Audit 2026-05-02 — ALL ITEMS CLOSED.** L3 (operational: run `--recompute-splits` on Windows) remains as a Windows task.
-
-**Fix pass session 6 (May 3 2026, 839 tests pass) — Research Brief 7 Go-Live Audit & Production Hardening:**
-- R1 (Platt refit): Calibrate_platt.py run — OOS Brier improvement = **−4.2%** (calibration hurts). Root cause: double-calibration design flaw — pick_log stores post-Platt win_prob, but calibrate_platt.py treats it as pre-Platt raw over_p. Dataset also mixed pre/post-Platt picks (Apr 14 – May 1 pre-fit; May 1+ post-fit). **Decision: keep PLATT_A=1.4988, PLATT_B=-0.8102 unchanged.** To properly refit in future, need `over_p_raw` (pre-Platt) logged as a pick_log column.
-- R2 (dk_std floors): `DK_STD_FLOOR = {starter:4.0, sixth_man:4.0, rotation:3.5, spot:3.0, cold_start:3.0}` added to nba_projector.py. `dk_std = round(max(proj_pts * 0.35, DK_STD_FLOOR.get(role, 3.0)), 2)` — prevents underestimating uncertainty for bench roles.
-- R3 (PLAYOFF_MINUTES_SCALAR): rotation 0.786→**0.550**, spot 0.902→**0.350**. Empirical basis: 535 matched pairs Apr 18-29 playoffs — rotation projects 18.5 vs 10.2 actual; spot projects 13.9 vs 4.9 actual.
-- R4 (_HOME_AWAY_DELTA): Updated all 6 stats to empirical values — pts 0.0052→**0.0235**, reb 0.0058→**0.0088**, ast 0.0135→**0.0333**, fg3m 0.0131→**0.0452**, blk 0.0127→**0.0439**, tov −0.0063→**−0.0122**. STL already absent (unchanged).
-- R5 (LEAGUE_AVG_PACE): 99.5→**100.22**. Provenance corrected by Audit 2026-05-06 H4: `team_season_stats` reports 2024-25 RS=99.58, 2025-26 RS=100.22 (n=30 each); the 100.22 value is **2025-26 season-to-date**, not 2024-25 as originally annotated. Value retained for calibration continuity — current scalars are fitted against this basis.
-- R6 (REB priors): `_REB_RATE_PRIOR` updated — G 0.055→**0.058**, F 0.095→**0.079**, C 0.165→**0.133**. `_REB_POS_OREB_PRIOR` and `_REB_POS_DREB_PRIOR` scaled proportionally (ratio method per position).
-- R7 (cold_start sub-type): Two new DB functions added to projections_db.py — `get_player_career_game_count()` (n_career_games, career_avg_min_raw) and `get_player_last_appearance_days()`. Cold-start block in `project_player()` now classifies: **taxi** (n_career=0, cap=12 min) / **returner** (days≥180, cap=min(career_avg,22)) / **new_acquisition** (days<180, cap=min(career_avg,28)). Cap applied post-scalar. Logged at DEBUG level.
-- CLV shadow fix: `capture_clv.py` was not watching `pick_log_custom.csv` — custom projection shadow picks would never get CLV written back. Fixed: added `CUSTOM_SHADOW_LOG = DATA_DIR / "pick_log_custom.csv"` + `ENABLE_CUSTOM_CLV = True` flag. Daemon now appends custom log to `log_paths` whenever the file exists. 839 tests pass.
-
-**Fix pass session 5 (May 3 2026, 846 tests pass) — seed sensitivity + OOS validation + Brief 6 operational hardening:**
-- Seed sensitivity (§3): seeds 7, 99, 137 all within ±0.05 threshold. PTS straddles zero across seeds — scalar 1.000 confirmed. Cold-start ratio flips direction between seasons (1.27 in early 2024-25 vs 0.91 in 2023-24) — season-composition artifact, not structural model error.
-- OOS 2023-24 validation (§3): overall bias = -0.000 (rate-adj +0.033); diff from seed=42 = 0.026 < 0.05 threshold — scalars generalize cleanly to held-out season.
-- `REGULAR_SEASON_STAT_SCALAR` trimmed from OOS results: ast 1.013→1.005 (was over-correcting), blk 1.056→1.043 (cross-seed mean); reb/fg3m/pts/stl confirmed.
-- Playoff pace fix (§7.6): `LEAGUE_AVG_PACE_PO = 96.5` was defined but never referenced — dead code. Fixed: `project_minutes()` now scales `game_pace` by `(LEAGUE_AVG_PACE_PO / LEAGUE_AVG_PACE)` (~0.970) when `is_playoff=True` before computing `_base_pf`. Applies to all pace-dependent stats. Override bypassed when implied_total available.
-- Historical backtest progress indicator: per-date `print(f"[{date_idx+1}/{len(sampled)}] {game_date}: {len(games)} games", flush=True)` in historical_backtest.py.
-- §8 Odds API retry/429 handling: `_odds_api_get()` helper added to csv_writer.py — retries once on Timeout/5xx (3s delay), backs off 60s on 429, logs `X-Requests-Remaining` header. Both `fetch_nba_implied_totals()` calls (totals + team_totals) now use it. `generate_projections.py` imports `_odds_api_get` from csv_writer and uses it in `_fetch_spreads()`.
-- §8 BEGIN IMMEDIATE transaction: `nba_projector.py` now opens `BEGIN IMMEDIATE` before the per-player upsert loop when `persist=True` — single exclusive write transaction reduces contention with CLV daemon; `conn.commit()` at end closes it.
-- §7.5 Spot role scalar floor: added `if role == "spot": _rs_scalar = max(_rs_scalar, 1.200)` in `project_minutes()` — current fitted value 1.700 is unchanged (above floor); floor protects future refits given wide CI [1.57, 1.83].
-
-## Audit 2026-05-01 — Status
-Full audit doc: `docs/audits/AUDIT_2026-05-01.md`. **0 CRIT / 2 HIGH / 4 MED / 9 LOW / 54 CLEAN.**
-
-**Closed May 1 2026:** H1, H2, M1, M2, M3, M4, L1–L9. P9 Platt constants fitted (PLATT_A=1.4988, PLATT_B=-0.8102, 76 props, 6% Brier). 832 tests pass. **Audit fully closed.**
-
-## Audit 2026-04-28 — Status
-Full audit doc: `docs/audits/AUDIT_2026-04-28.md`. **52 findings: 3 CRIT / 11 HIGH / 14 MED / 20 LOW / 4 CLEAN.**
-
-**All CRIT + HIGH items closed (Apr 28–29 2026).** Branch: `audit-2026-04-28-fixes` merged to main.
-
-**MED — all closed:** M1 (mlb schema), M2 (csv_writer TZ), M3 (KILLSHOT substring), M5 (push-leg drop), M6 (empty CSV abort), M8 (run lock), M9 (paths.py sweep), M12 (stdout utf-8).
-
-**LOW — all closed Apr 30 2026:** L1 (tests/ dir), L2 (docs/audits/), L3 (marketing/ untracked), L5 (fuse artifacts — auto-clear), L6 (backtest logs — never tracked), L7 (pre-commit hook — `.git/hooks/pre-commit` guards shims), L9 (REB dropped from KILLSHOT_STAT_ALLOW), L10 (is_decimal_leak — already invoked), L11 (SIGMA fallthrough warning), L12 (unit cap docs), L13 ($PSScriptRoot in setup_clv_task.ps1), L14 (legs column docs), L15 (MBP terminology note), L16 (root shims — eliminate copy-sync drift), L17 (NHL sizing docs), L18 (conftest.py), L19 (streak docs), L20 (discord corruption test). **Audit fully closed.**
+---
 
 ## Me
 Jono (jonopeshut@gmail.com). Sports bettor, DFS player, Discord community operator. Runs picks as a trading business — analytical, sharp, luxury brand.
@@ -202,27 +47,27 @@ Discord bot display name: **PicksByJonny**
 | **Discord Overhaul** | Full server rebuild — **done**. Phase 1 design + Phase 2 manual build both shipped. |
 | **KILLSHOT** | Premium tier (v2, Apr 21 2026). Auto-qualifies only when ALL pass: `tier=T1` strict, `pick_score≥90`, `win_prob≥0.65`, `odds ∈ [-200, +110]`, `stat ∈ {PTS,AST,SOG,3PM}`. Sizing: 3u default, 4u iff `win_prob≥0.70 AND edge≥0.06` (no 5u). Weekly cap: **2**. Manual override (`--killshot NAME`) bypasses gate but still counts toward cap + requires `score≥75`. Posts to #killshot with @everyone. |
 | **KairosEdge** | Halftime trade system — buying trailing team YES in full-game winner market. Tracked separately from props. |
-| **Custom Projection Engine** | In-flight replacement for SaberSim as the CSV input to `run_picks.py`. **Code lives in this repo** (engine/nba_projector.py + projections_db.py + injury_parser.py + csv_writer.py + backtest_projections.py; data/projections.db = 16 MB SQLite). Build order steps 1–4 complete and verified May 2 2026. **P18-v4 implemented May 2 2026** (role-conditional playoff minutes scalar + AST/3PM rate deflators — bias cut from -0.620 to -0.108; adj MAE +10.2% vs SaberSim). Research Brief 5: 14/15 levers done (L9 foul-trouble live = low priority). `engine/generate_projections.py` added — daily runner that orchestrates Odds API → injuries → projections → SaberSim CSV → optional run_picks.py. Run: `python engine\generate_projections.py [--run-picks]`. **Shadow mode (6fef8f5):** `--shadow` flag logs to `data/pick_log_custom.csv` with no Discord — use alongside live SaberSim run for parallel CLV validation. `paths.py` honors `JONNYPARLAY_PICK_LOG` env var to redirect all pick logging. Daily: `python engine\generate_projections.py --shadow` + `python run_picks.py nba.csv`. Full spec: `memory/projects/custom-projection-engine.md`. **May 2 2026 calibration session — tasks #2–#5 complete:** (1) `MIN_GAMES_FOR_TIER` raised 5→10 (task #2 cold_start fix); (2) career history minutes prior added via `get_player_career_avg_minutes()` in projections_db.py — replaces flat 16 MPG for cold_start players; (3) `REGULAR_SEASON_MINUTES_SCALAR` v2 fitted from 30-date backtest residuals (starter=1.056, sixth_man=1.019, rotation=1.035, spot=1.700, cold_start=0.940); (4) `REGULAR_SEASON_STAT_SCALAR` added (task #3) for per-stat bias correction: pts=1.000, ast=1.013, reb=1.031, fg3m=1.019, blk=1.064, stl/tov=1.000; (5) OT cap and team constraint tasks complete. **Final backtest results (3rd run, seed=42, n=30):** overall raw bias -0.033 (was -0.620), PTS bias +0.024, minutes ratio 0.9993, cold_start ratio 1.0000. Go-live gate: need ~100 CLV shadow observations from custom projector shadow runs (pick_log_custom.csv). The ~7 CLV observations in pick_log.csv as of May 2 are SaberSim live picks, not shadow custom picks. Shadow pipeline has 0 observations — must run `generate_projections.py --shadow` daily to accumulate. **Research Brief 6 (May 2 2026) — all 7 tasks complete:** T1 (calibration contamination audit — PTS scalar anomaly resolved analytically, DB integrity clean); T2a (busy_timeout=20000 in get_conn); T2b (implied-total coverage warning in generate_projections.py); T2c (pick_log row-count guard — sidecar `pick_log.rowcount`, aborts write on truncation); T2d (3PM matchup: fg3m→fg3a ratio — uses attempts-conceded not makes-conceded; requires `--recompute-splits` on next pull); T3 (clv_report.py `--stat` filter + per-stat CLV table N≥5); T4 (historical_backtest.py bias-by-role-tier + PTS magnitude buckets); T5 (Vegas team-total constraint in generate_projections.py via `constrain_team_totals()`, scale clipped [0.80,1.20], `--no-constraint` flag); T6 (REB baseline Bayesian shrinkage to positional prior `_REB_RATE_PRIOR = {G:0.055, F:0.095, C:0.165}` reb/min, k=12). **Seed sensitivity + OOS validation (May 3 2026) — COMPLETE:** seeds 7/99/137 all pass ±0.05; 2023-24 OOS bias = -0.000. Final `REGULAR_SEASON_STAT_SCALAR`: pts=1.000, ast=1.005 (trimmed from 1.013), reb=1.031, fg3m=1.019, blk=1.043 (trimmed from 1.064), stl/tov=1.000. Playoff pace fix live (§7.6). Odds API retry/429 handling live (§8). BEGIN IMMEDIATE persist tx live (§8). Spot scalar floor 1.200 live (§7.5). **Research Brief 6 ALL items fully complete.** Go-live gate: need ~100 CLV shadow observations from custom projector shadow runs (pick_log_custom.csv). The ~7 CLV observations in pick_log.csv as of May 2 are SaberSim live picks, not shadow custom picks. Shadow pipeline has 0 observations — must run `generate_projections.py --shadow` daily to accumulate. **Research Brief 7 (May 3 2026) — all 7 items complete:** R1 (Platt refit skipped — OOS -4.2%, double-calibration flaw; need `over_p_raw` column in pick_log to fix properly); R2 (DK_STD_FLOOR per-role floors); R3 (PLAYOFF_MINUTES_SCALAR rotation 0.786→0.550, spot 0.902→0.350); R4 (_HOME_AWAY_DELTA all 6 stats empirical); R5 (LEAGUE_AVG_PACE 99.5→100.22); R6 (_REB_RATE_PRIOR G/F/C empirical, OREB/DREB priors proportionally scaled); R7 (cold_start sub-type: taxi/returner/new_acquisition + per-subtype min cap; `get_player_career_game_count()` + `get_player_last_appearance_days()` added to projections_db.py). 839 tests pass. Go-live gate: ~100 CLV shadow observations still needed. **May 4 2026 — projection diagnosis + team-total fix (commit a6da147):** Diagnosed why custom projector was producing all-under picks for MIN vs DEN playoff game. Root causes found: (1) `constrain_team_totals()` was silently no-oping — Odds API does not return the `team_totals` market during NBA playoffs, only game totals + spreads, so `team_totals` dict was empty and the function returned early. SAS was projecting 124.1 pts vs Vegas 109.8 (13% over), NYK 114.5 vs 106.2 (8% over). **Fix:** `_derive_team_totals()` added to `generate_projections.py` — when API returns 0 explicit team totals, derives from game total ± spread/2 (home_total=(total-spread)/2, away_total=(total+spread)/2). Wired into `run()` at step 2b. 10 unit tests added in `tests/test_team_total_derivation.py`. (2) DiVincenzo showing as "Confirmed" despite being OUT (ruptured achilles, done for season) — `nbainjuries` package (requires Java/JVM) either failed or he wasn't on the report at pipeline run time; returns empty dict → no injury flag → projected as starter. Not a code bug — external data issue; injury_parser already handles this if rerun after report is updated. (3) Edwards low EWMA minutes — correctly reflecting injury-reduced playoff games; self-corrects as he plays healthy games. No code fix needed. Test suite: 853 passed / 21 FUSE-only failures / 2 skipped (10 new tests net gain). |
+| **Custom Projection Engine** | Replacement for SaberSim as `run_picks.py` CSV input. **Code:** engine/nba_projector.py + projections_db.py + injury_parser.py + csv_writer.py + backtest_projections.py; data/projections.db (SQLite, ~16 MB). **Run daily:** `python engine\generate_projections.py [--run-picks]`. **Late updates:** `--late-run` re-fetches injuries + re-runs without DB persist. **Shadow mode:** `--shadow` → logs to pick_log_custom.csv, no Discord (parallel CLV validation). **Go-live gate:** ~100 shadow CLV rows (0/86 as of 2026-05-09). **Key features:** EWMA + Bayesian projection per player, role-tier minute scalars (RS + PO), confirmed-starter lineup integration (`engine/lineup_fetcher.py`, C1 2026-05-08), injury redistribution (override/bump split), 240-min lineup-protected constraint, Vegas team-total constraint, blowout sigmoid, high-var `[HIGH-VAR]` flag for bimodal 3PT scorers. Development log: `docs/audits/AUDIT_HISTORY.md`. Full spec: `memory/projects/custom-projection-engine.md`. |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `engine/run_picks.py` | Main betting engine (large — ~5k+ lines and growing). **Source of truth — edit engine/ only. Root entry points are shims (L16, Apr 30 2026) — no sync step needed.** Flags added May 2 2026: `--force-card` (override card guard for fresh repost without double-logging), `--no-cache` (bypass the 11-min Odds API cache fresh odds). The 11-min cache is owned by `run_picks.py` (the picks pipeline) — it is **not** the same subsystem as the projection pipeline's `_odds_api_get` helper in `engine/csv_writer.py`, which has its own retry / 429 / `X-Requests-Remaining` logic but no time-keyed cache. Audit M4 (2026-05-06) clarification — `--no-cache` only affects the picks pipeline. |
+| `engine/run_picks.py` | Main betting engine (~5k+ lines). **Source of truth — edit engine/ only. Root entry points are shims.** Flags: `--force-card` (override card guard), `--no-cache` (bypass 11-min Odds API cache — picks pipeline only). |
 | `engine/grade_picks.py` | Auto-grades pick_log.csv results, posts Discord recap + results graphic. Monthly summary auto-fires on 1st of month. |
-| `engine/capture_clv.py` | CLV daemon — polls every 2 min, captures closing odds in T-30 to T+3 window per game. Writes `closing_odds` + `clv` to pick_log. Scheduled via Windows Task Scheduler at 10am daily. Single-instance guard via filelock. Ghost-game checkpoint integrity check on startup. Also watches `pick_log_custom.csv` when `ENABLE_CUSTOM_CLV=True` (default) — required for custom projection shadow CLV tracking. Disable per-log by setting `ENABLE_CUSTOM_CLV = False` in capture_clv.py. (L3) |
-| `engine/clv_report.py` | CLI report: `python clv_report.py [--days N] [--sport X] [--tier Y] [--stat X] [--shadow]` — `--stat` added May 2 2026 (T3). Per-stat CLV table in BY STAT section (N≥5 gate, sorted best→worst CLV). |
+| `engine/capture_clv.py` | CLV daemon — polls every 2 min, captures closing odds T-30 to T+3. Scheduled via Task Scheduler at 10am daily. S4U logon. `MAX_DAEMON_UPTIME_SECS=18h` guard prevents no-picks day from blocking next-day start. Also watches `pick_log_custom.csv` when `ENABLE_CUSTOM_CLV=True`. |
+| `engine/clv_report.py` | CLI report: `python clv_report.py [--days N] [--sport X] [--tier Y] [--stat X] [--shadow]` |
 | `engine/results_graphic.py` | Generates PNG results card posted to Discord after recap. |
 | `engine/analyze_picks.py` | Backtest analysis dashboard. Usage: `python analyze_picks.py [--sport X] [--since YYYY-MM-DD] [--stat X] [--shadow] [--export]` |
 | `engine/weekly_recap.py` | Weekly P&L recap posted to #announcements every Sunday. |
 | `engine/morning_preview.py` | Posts daily card teaser to #announcements after run_picks.py runs. |
-| `data/pick_log.csv` | Model-generated ledger (primary / bonus / daily_lay / sgp / longshot). Starts Apr 14 2026. **29-column** header (schema_version=4, last col is `over_p_raw` — pre-Platt over probability, RB8 IMMEDIATE 1; `legs` JSON for parlays is now col 28). |
-| `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 29-column schema. Graded alongside main log but never posted to Discord recap. Excluded from CLV daemon. |
+| `data/pick_log.csv` | Model-generated ledger (primary / bonus / daily_lay / sgp / longshot). Starts Apr 14 2026. **29-column** header (schema_version=4, last col is `over_p_raw`). |
+| `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 29-column schema. Graded alongside main log but never posted to Discord. Excluded from CLV daemon. |
 | `data/pick_log_mlb.csv` | Shadow log for MLB (still in SHADOW_SPORTS). Include in analyze with --shadow flag. |
-| `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. Same-Game Parlay builder. Runs after every pick run. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
-| `start_clv_daemon.bat` | Launcher for CLV daemon — called by Task Scheduler. Requires `PYTHONUNBUFFERED=1` + `python -u` (S4U logon). **Must contain ASCII only** — non-ASCII chars (em-dash, box-drawing, ×) cause cmd.exe to crash with exit code 255. |
-| `setup_clv_task.ps1` | One-shot PowerShell script that registers the CLV daemon scheduled task. S4U logon + WakeToRun. Re-run as admin to reset. |
-| `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. Template for future manual webhooks. |
+| `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. Same-Game Parlay builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
+| `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
+| `setup_clv_task.ps1` | Registers CLV daemon scheduled task. S4U logon + WakeToRun. `ExecutionTimeLimit=22h`. Re-run as admin to reset. |
+| `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. |
 | `tests/test_context.py` | Manual test harness for context system — run on Windows to test `--context` flag behaviour. |
 
 ## Discord Structure (Target)
@@ -265,59 +110,42 @@ ARCHIVE: (collapsed)
 - Install: `pip install -r requirements.txt --break-system-packages`
 - **Hard deps (required to import):** `filelock` (cross-process locks), `requests`
 - **Soft deps (feature-gated):** `openpyxl` (xlsx recap), `Pillow` (results_graphic PNG), `anthropic` (--context mode)
-- Audit C-1 closed Apr 19 2026 — `filelock` is hard-required everywhere. If it's missing, the engine fails fast at import with a clear install hint.
-
-## Audit Status
-- **Closed Apr 21 2026 — 78/78 items declared resolved.** Section 40 (schema-version fail-fast via sidecar) + Section 41 (print → logging via `engine/engine_logger.py`) were the final two items. Regression suite: 756 passed, 2 skipped.
-- **Apr 28 2026 — Parlay sharpness overhaul:** SGP redesigned 6→3-4 legs (+200–450), daily lay per-leg gates + Kelly sizing, longshot per-game cap of 2. All committed. engine/sgp_builder.py synced (H1 closed).
-- **Audit 2026-04-28 — 52 findings, ALL items closed Apr 28–30 2026.** CRIT+HIGH closed Apr 28–29; all MED + all LOW closed Apr 29–30. See `docs/audits/AUDIT_2026-04-28.md`.
 
 ## pick_log.csv Schema (current — schema_version 4, 29 columns)
 `date, run_time, run_type, sport, player, team, stat, line, direction, proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode, result, closing_odds, clv, card_slot, is_home, context_verdict, context_reason, context_score, legs, over_p_raw`
 
-Authoritative source: `engine/pick_log_schema.py` (`SCHEMA_VERSION` + `CANONICAL_HEADER`). Updated to v4 by RB8 IMMEDIATE 1 (2026-05-05).
+Authoritative source: `engine/pick_log_schema.py`. Updated to v4 by RB8 IMMEDIATE 1 (2026-05-05).
 
 - `run_type`: primary | bonus | manual | daily_lay | sgp | longshot
 - `tier`: T1 | T1B | T2 | T3 | KILLSHOT | DAILY_LAY | SGP | LONGSHOT | MANUAL
 - `stat`: SOG | PTS | REB | AST | 3PM | SPREAD | ML_FAV | ML_DOG | TOTAL | TEAM_TOTAL | F5_ML | F5_SPREAD | F5_TOTAL | PARLAY
-- `is_home`: True/False for SPREAD/ML/F5/TEAM_TOTAL picks; blank for props (canonical: `normalize_is_home`)
+- `is_home`: True/False for SPREAD/ML/F5/TEAM_TOTAL picks; blank for props
 - `clv`: closing_implied_prob − your_implied_prob (positive = beat the close); filled by capture_clv.py
-- `context_verdict`: supports | neutral | conflicts | skipped | disabled — blank on normal runs (context disabled by default)
-- `legs`: JSON array for parlay rows. **SGP populates ✓** | longshot populates ✓ | **daily_lay populates ✓** (H9 closed Apr 28 — `_daily_lay_legs_json()` added; grader reads JSON-first with game-string fallback for 9 legacy rows). primary/bonus/manual leave it blank. pick_log_mlb.csv 282 short rows normalized to 29 cols.
-- `over_p_raw`: pre-Platt over-probability for prop picks (RB8 IMMEDIATE 1, 2026-05-05). Blank for non-props and for legacy v1–v3 rows where it was never recorded; `recover_over_p()` in `calibrate_platt.py` falls back via direction recovery for those. Populating this column for ~300+ post-v4 rows is the single unblocker for the H3 Platt refit (Brief 7 R1).
+- `context_verdict`: supports | neutral | conflicts | skipped | disabled — blank on normal runs
+- `legs`: JSON array for parlay rows (SGP ✓, longshot ✓, daily_lay ✓). primary/bonus/manual leave blank.
+- `over_p_raw`: pre-Platt over-probability for prop picks. Blank for non-props and legacy v1–v3 rows. Populating ~300+ rows unblocks H3 Platt refit.
 
-## Sizing Caps (L12/L17)
+## Sizing Caps
 - **Daily total cap: 12u** (`G12` check in run_picks.py) — hard ceiling across all run_types per session.
 - **Sport unit caps:** NBA = 8.0u max per pick | NHL = 5.0u max per pick (`SPORT_UNIT_CAP` dict).
 - **NHL SOG stat cap:** max 6 picks per run (`STAT_CAP = {"SOG": 6, ...}`; default cap = 2 for other stats).
 
 ## Context Sanity System
-
-**Status: DISABLED by default.** Enable with `--context` flag.
-
-SaberSim projections already incorporate injury adjustments. Context layer stays in code for future use.
-
-```
-python run_picks.py nba.csv --context
-```
-Requires `anthropic` package + `ANTHROPIC_API_KEY` env var on Windows.
-
+**Status: DISABLED by default.** Enable with `--context` flag. Requires `anthropic` package + `ANTHROPIC_API_KEY`.
 - `run_pregame_scan()` — one Haiku + web_search call per sport (concurrent)
 - `run_context_check()` — one call per pick (up to 8 concurrent), checks for OUT/scratched flags
 - `conflicts` → pick cut | `supports` → pass + annotation | `neutral` → pass
 
 ## MLB Status
-Still in **SHADOW_SPORTS** — picks go to `pick_log_mlb.csv`, not posted to Discord. Sizing bug fixed (Apr 19 2026) — shadow picks now get VAKE base sizing. Go-live = Jono's call.
+Still in **SHADOW_SPORTS** — picks go to `pick_log_mlb.csv`, not posted to Discord. Go-live = Jono's call.
 
 ## Running grade_picks.py in Cowork
-M9 closed Apr 29 2026 — all engine modules now use `paths.py`. Set `JONNYPARLAY_ROOT` to the repo root and every module resolves paths correctly:
+Set `JONNYPARLAY_ROOT` to the repo root and every module resolves paths correctly:
 ```
 export JONNYPARLAY_ROOT=/sessions/.../mnt/JonnyParlay
 python engine/grade_picks.py --date YYYY-MM-DD [--repost] [--dry-run]
 ```
-Windows deployments leave the env var unset — `paths.py` falls back to `~/Documents/JonnyParlay` so existing behavior is unchanged.
-
-Migrated: `clv_report`, `csv_writer`, `grade_picks`, `projections_db`, `discord_guard`, `morning_preview`, `weekly_recap`, `analyze_picks`, `results_graphic`, `run_picks`. Remaining hardcoders: `capture_clv` (CLV daemon — low priority, runs on Windows only).
+Windows deployments leave env var unset — `paths.py` falls back to `~/Documents/JonnyParlay`.
 
 ## ⚠ Cowork Write Caution
 If the engine runs on Windows and writes to pick_log.csv, do NOT use the Write tool to rewrite pick_log.csv — it will clobber engine-written rows. Use Edit/append only.
@@ -329,5 +157,6 @@ If the engine runs on Windows and writes to pick_log.csv, do NOT use the Write t
 
 ## CLV Daemon
 - Scheduled: Windows Task Scheduler, daily 10am, runs `start_clv_daemon.bat`
-- Logon: **S4U** (fires without active desktop session). WakeToRun enabled.
-- Manual trigger: `schtasks /run /tn "JonnyParlay CLV Daemon"` or foreground `python -u engine\capture_clv.
+- Logon: **S4U** (fires without active desktop session). WakeToRun enabled. `ExecutionTimeLimit=22h`.
+- `MAX_DAEMON_UPTIME_SECS=18h` — exits if no picks logged after 18h (prevents blocking next-day start on zero-pick days).
+- Manual trigger: `schtasks /run /tn "JonnyParlay CLV Daemon"` or foreground `python -u engine\capture_clv.py`

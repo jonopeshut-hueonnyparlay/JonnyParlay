@@ -16,6 +16,12 @@ projections/*.csv
 # Research input notes (binary)
 *.docx
 
+# Generated Excel exports
+data/*.xlsx
+
+# Exported Claude Code session transcripts
+20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+
 # Python
 __pycache__/
 *.pyc
