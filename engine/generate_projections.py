@@ -53,6 +53,7 @@ from projections_db import DB_PATH, seed_scheduled_games
 from nba_projector import run_projections, CURRENT_SEASON
 from csv_writer import write_nba_csv, fetch_nba_implied_totals, make_team_total_key, _odds_api_get
 from injury_parser import get_injury_context
+from lineup_fetcher import fetch_confirmed_starters
 from name_utils import fold_name
 import diagnostics
 
@@ -492,6 +493,13 @@ def run(
         injury_statuses.update(_manual)
         log.info("  applied %d manual override(s) from inactives_override.json", len(_manual))
 
+    # 3b. Confirmed starting lineups (~30 min before tip via NBA live API)
+    confirmed_starters = fetch_confirmed_starters(game_date)
+    if confirmed_starters:
+        log.info("Confirmed lineups available: %d teams", len(confirmed_starters))
+    else:
+        log.debug("No confirmed lineups yet (pre-tip or unavailable)")
+
     # 4. Run projections
     log.info("Running projections...")
     projections = run_projections(
@@ -502,6 +510,7 @@ def run(
         injury_statuses=injury_statuses,
         injury_minutes_overrides=injury_minutes_overrides,
         injury_minutes_redistrib_bumps=injury_minutes_redistrib_bumps,
+        confirmed_starters=confirmed_starters,
         db_path=db_path,
         persist=persist,
     )

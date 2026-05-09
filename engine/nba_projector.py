@@ -41,6 +41,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import diagnostics
+from name_utils import fold_name
 from projections_db import (
     DB_PATH, get_player_recent_games, get_player_season_game_count,
     get_player_career_avg_minutes,
@@ -1034,6 +1035,7 @@ def project_player(
     implied_total=None, spread=None, injury_status="",
     injury_minutes_override=None, injury_minutes_redistrib_bump=None,
     is_home=None, db_path=DB_PATH,
+    is_confirmed_starter: bool | None = None,
 ):
     if injury_status in ("O", "OUT"):
         return None
@@ -1136,6 +1138,17 @@ def project_player(
                 role = "sixth_man"
             elif override_delta >= 8.0 and role == "sixth_man":
                 role = "starter"
+
+        # Confirmed lineup override: authoritative game-day role from NBA live API.
+        # Overrides upward only — being absent from the confirmed 5 triggers a warning
+        # but keeps the historical role to hedge against late lineup submissions or name
+        # matching misses.
+        if is_confirmed_starter is True and role != "starter":
+            log.info("[LINEUP-CONFIRM] %s: %s→starter (confirmed lineup)", player_name, role)
+            role = "starter"
+        elif is_confirmed_starter is False and role == "starter":
+            log.warning("[LINEUP-MISMATCH] %s projected as starter but not in confirmed lineup "
+                        "(keeping starter — verify manually)", player_name)
 
         min_min  = _ROLE_MIN_MINUTES[role]
         df_clean = df[df["min"] >= min_min].copy()
@@ -1483,6 +1496,7 @@ def run_projections(
     implied_totals=None, spreads=None,
     injury_statuses=None, injury_minutes_overrides=None,
     injury_minutes_redistrib_bumps=None,
+    confirmed_starters=None,
     db_path=DB_PATH, persist=True,
 ):
     implied_totals                  = implied_totals or {}
@@ -1490,6 +1504,7 @@ def run_projections(
     injury_statuses                 = injury_statuses or {}
     injury_minutes_overrides        = injury_minutes_overrides or {}
     injury_minutes_redistrib_bumps  = injury_minutes_redistrib_bumps or {}
+    confirmed_starters              = confirmed_starters or {}
 
     games = get_games_for_date(game_date, db_path)
     if games.empty:
@@ -1548,6 +1563,25 @@ def run_projections(
         log.info("Playoff pool filter (max_days_inactive=%d, rec_avg>=%.1f or season_avg>=%.1f): %d players",
                  _max_inactive, _min_rec_avg, _season_fallback, len(active))
 
+    # Build {team_id: frozenset(folded_starter_names)} from confirmed_starters.
+    # The lookup is built once here so the per-player loop below stays O(1).
+    _confirmed_by_team: dict = {}
+    if confirmed_starters:
+        _conn_t = get_conn(db_path)
+        try:
+            _trows = _conn_t.execute(
+                "SELECT team_id, abbreviation FROM teams"
+            ).fetchall()
+        finally:
+            _conn_t.close()
+        _abbr_to_id = {r["abbreviation"]: r["team_id"] for r in _trows}
+        for _tricode, _names in confirmed_starters.items():
+            _tid = _abbr_to_id.get(_tricode)
+            if _tid:
+                _confirmed_by_team[_tid] = frozenset(fold_name(n) for n in _names)
+        log.info("Confirmed lineups: %d team(s) — %s",
+                 len(_confirmed_by_team), ", ".join(confirmed_starters.keys()))
+
     log.info("Projecting %d players for %s ...", len(active), game_date)
     results = []
     conn = get_conn(db_path) if persist else None
@@ -1561,6 +1595,9 @@ def run_projections(
         game_id, opp_team_id = team_to_game[team_id]
         status = injury_statuses.get(pid, "")
         if status in ("O", "OUT"): continue
+        _conf_starters_set = _confirmed_by_team.get(team_id)
+        _is_confirmed = (fold_name(row["name"]) in _conf_starters_set
+                         if _conf_starters_set is not None else None)
         try:
             proj = project_player(
                 player_id=pid, player_name=row["name"],
@@ -1575,6 +1612,7 @@ def run_projections(
                 injury_minutes_redistrib_bump=injury_minutes_redistrib_bumps.get(pid),
                 is_home=(team_id in home_team_ids),
                 db_path=db_path,
+                is_confirmed_starter=_is_confirmed,
             )
         except Exception as exc:
             log.debug("project_player error %s (%d): %s", row["name"], pid, exc)
