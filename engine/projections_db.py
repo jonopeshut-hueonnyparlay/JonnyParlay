@@ -1756,6 +1756,8 @@ Examples:
   python engine/projections_db.py --pull --seasons 2025-26        # one season
   python engine/projections_db.py --pull --seasons 2025-26 --season-types Playoffs
   python engine/projections_db.py --pull --reset                  # wipe + repull
+  python engine/projections_db.py --pull-positions                # refresh positions only (2025-26)
+  python engine/projections_db.py --pull-positions --seasons 2024-25  # specific season
   python engine/projections_db.py --recompute-splits              # rebuild splits only
   python engine/projections_db.py --verify                        # sanity checks
   python engine/projections_db.py --status                        # DB summary
@@ -1779,6 +1781,9 @@ Examples:
     parser.add_argument("--recompute-splits", action="store_true",
                         dest="recompute_splits",
                         help="Rebuild team_def_splits from existing game stats (no API calls)")
+    parser.add_argument("--pull-positions", action="store_true",
+                        dest="pull_positions",
+                        help="Refresh player positions via NBA API PlayerIndex (no game data pull)")
     parser.add_argument("--verify", action="store_true",
                         help="Run sanity checks on the DB")
     parser.add_argument("--status", action="store_true",
@@ -1804,6 +1809,13 @@ Examples:
         conn.close()
         log.info("Splits recomputed.")
 
+    if args.pull_positions:
+        season = (args.seasons or ["2025-26"])[0]
+        conn = get_conn(db)
+        n = pull_player_positions(conn, season=season)
+        conn.close()
+        log.info("--pull-positions: updated %d player position(s) for %s", n, season)
+
     if args.pull:
         seasons = args.seasons  # None = use DEFAULT_SEASONS
         if args.force:
@@ -1822,7 +1834,7 @@ Examples:
         pull_all(seasons=seasons, reset=args.reset,
                  season_types=args.season_types, db_path=db)
 
-    if not any([args.pull, args.recompute_splits, args.verify, args.status]):
+    if not any([args.pull, args.pull_positions, args.recompute_splits, args.verify, args.status]):
         parser.print_help()
 
 
