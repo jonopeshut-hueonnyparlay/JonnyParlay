@@ -2100,6 +2100,8 @@ def _post_merged_recaps(dates_for_recap, main_rows, recap_merge_logs, args):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         description="Grade pick_log.csv results",
         formatter_class=argparse.RawDescriptionHelpFormatter,

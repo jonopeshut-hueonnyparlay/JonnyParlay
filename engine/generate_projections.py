@@ -546,6 +546,8 @@ def run(
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     # H18: use Eastern time so default date is correct for late-night runs
     try:
         from zoneinfo import ZoneInfo as _ZI
