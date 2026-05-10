@@ -15,7 +15,7 @@
 ## Data-gated / Open
 - **H3 (Platt refit)**: gated on ~300 post-v4 `over_p_raw` rows (~13 as of 2026-05-09). Check: count non-empty `over_p_raw` in pick_log.csv.
 - **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv` (0/86 as of 2026-05-09). Daemon stable post-2026-05-09 MAX_UPTIME fix.
-- **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`) not empirically refit — candidate for next calibration session.
+- **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`): refit 2026-05-09 on 76,604 trailing-10-game snapshots. MPG threshold confirmed at 26 (24-26 MPG players project like sixth_man regardless of sr; +6.9% PO bias with starter scalar vs -4.6% with sixth_man). 20/12/5 MPG and 0.60 sr unchanged.
 
 ## Closed Audits
 Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`

@@ -438,24 +438,30 @@ def cold_start_rates(position):
 def classify_role(df):
     """Classify a player's role from the most recent 10 games.
 
-    Thresholds refit 2026-05-09 from 1385 player-snapshots (2024-25 +
-    2025-26, RS + Playoffs, n≥5 games):
+    Thresholds refit 2026-05-09 from 76,604 trailing-10-game snapshots
+    (2024-25 + 2025-26, all season types, n>=10 prior games):
 
-      starter_rate ≥0.60 AND avg_min ≥24 → starter
-        Empirical basis: 26-28 MPG band has 79.4% sr≥0.60; 24-26 MPG has
-        36.3% sr≥0.60.  Lowered from 26→24 to capture starters who
-        average fewer minutes due to foul trouble / blowout rest without
-        losing the sr guard that blocks garbage-time bench players.
-      avg_min ≥20 → sixth_man  (unchanged)
-      avg_min ≥12 → rotation   (unchanged)
-      avg_min ≥ 5 → spot       (unchanged)
-      else        → cold_start
+      starter_rate >=0.60 AND avg_min >=26 -> starter
+        Empirical basis: actual/trailing ratio for 24-26 MPG players is
+        1.006 regardless of starter_rate.  With starter scalar (1.075 PO /
+        1.053 RS) this group is over-projected by +6.9% PO / +4.7% RS.
+        With sixth_man scalar (0.960 PO / 1.014 RS) error is -4.6% PO /
+        +0.8% RS -- consistently closer.  26 MPG is where starter_rate
+        begins to predict a material minutes gap (sr>=0.60 vs <0.60 at
+        26-28 MPG: 27.4 vs 26.1 min, a 1.3-min gap worth the scalar split).
+      avg_min >=20 -> sixth_man
+        20-26 MPG players: actual/trailing ~0.991-1.006, sixth_man scalar
+        (1.014 RS) matches within 0.8-1.5%.
+      avg_min >=12 -> rotation
+        10-20 MPG: median next-game 13.0 (10-15 band) to 17.5 (15-20 band).
+      avg_min >= 5 -> spot
+      else         -> cold_start
     """
     if df.empty: return "cold_start"
     recent = df.head(10)
     avg_min = recent["min"].mean()
     starter_rate = recent["starter_flag"].mean()
-    if starter_rate >= 0.60 and avg_min >= 24: return "starter"
+    if starter_rate >= 0.60 and avg_min >= 26: return "starter"
     if avg_min >= 20: return "sixth_man"
     if avg_min >= 12: return "rotation"
     if avg_min >= 5:  return "spot"
