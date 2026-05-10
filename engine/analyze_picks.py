@@ -285,6 +285,10 @@ def calibration_section(picks):
 
 
 def main():
+    # Ensure UTF-8 output on Windows (cp1252 console can't encode box-drawing chars)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="Backtest analysis for pick_log.csv")
     parser.add_argument("--sport",      default=None,  help="Filter by sport (NBA, NHL, MLB, etc.)")
     parser.add_argument("--since",      default=None,  help="Only picks from this date forward (YYYY-MM-DD)")
