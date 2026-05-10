@@ -10,6 +10,7 @@
 - `DK_STD_FLOOR`: starter=4.0, sixth_man=4.0, rotation=3.5, spot=3.0, cold_start=3.0. `DK_STD_COEFF`=0.35.
 - `HIGH_VAR_CV_THRESHOLD`=0.60, `HIGH_VAR_MIN_GAMES`=8 (3PT specialist bimodal flag, RB8 H5).
 - Blowout sigmoid: k=0.15, mid=20.0, max_reduction=0.19 (refit 2026-05-06 on 24,600 rows).
+- `PLAYOFF_RATE_DEFLATORS`: pts=0.934, ast=0.870, fg3m=0.948. Refit 2026-05-10 from 20-date playoff backtest (1071 player-games, Apr 18–May 8 2026). PTS deflator added (was missing — +0.791 over-projection confirmed). AST/fg3m updated from stale n=43 calibration. Post-fix biases: PTS −0.007, AST −0.006, FG3M +0.003 (all ≈0).
 - `PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate.
 
 ## Data-gated / Open
