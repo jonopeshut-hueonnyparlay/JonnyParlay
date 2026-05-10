@@ -705,7 +705,7 @@ def get_tier_min_edge(tier):
 # ============================================================
 
 def check_prop_gates(pick):
-    """Apply gates G1-G10, G14. Returns (pass, gate_failed) tuple."""
+    """Apply gates G1-G10, G14-G15. Returns (pass, gate_failed) tuple."""
     prob = pick["win_prob"]
     edge = pick["adj_edge"]
     odds = pick["odds"]
@@ -755,6 +755,15 @@ def check_prop_gates(pick):
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
         if _z < 0.10:
             return False, "G14"
+
+    # G15: HIGH-VAR 3PM gate — bimodal 3PT shooters have unreliable nightly
+    # projections (pts_cv >= 0.60 = seen 0→5 variance within recent games).
+    # Only triggers when custom engine provides pts_cv; SaberSim CSV leaves
+    # the column empty so this gate is a no-op in non-custom-engine runs.
+    if stat == "3PM":
+        _cv = pick.get("pts_cv")
+        if _cv and float(_cv) >= 0.60:
+            return False, "G15"
 
     # G1: high prob + bad odds — but allow if edge is strong (FIX L2)
     if prob >= 0.70 and odds > -200 and edge < 0.05:
@@ -5333,6 +5342,12 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
             return ((ln - pr) / _sig if d == "under" else (pr - ln) / _sig) < 0.10
         return False
     has_g14_fail = any(_g14_fail(p) for p in all_qualified)
+    has_g15_fail = any(
+        p.get("stat") == "3PM"
+        and p.get("pts_cv")
+        and float(p["pts_cv"]) >= 0.60
+        for p in all_qualified
+    )
     max_game = max(defaultdict(int, {p["game"]: sum(1 for q in all_qualified if q["game"]==p["game"]) for p in all_qualified}).values()) if all_qualified else 0
 
     # G11 check: any pitcher with 2+ props across K/OUTS/HA/ER?
@@ -5363,6 +5378,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8 enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5", not has_g8_fail),
         (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
+        (f"G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)", not has_g15_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
         (f"R7 enforced: Max per game = {max_game} (cap: {max_per_game})", max_game <= max_per_game),
         (f"G11 enforced: Max pitcher props per pitcher = {max_pitcher_props}", max_pitcher_props <= 1),
