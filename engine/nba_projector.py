@@ -316,10 +316,14 @@ REGULAR_SEASON_STAT_SCALAR = {
 #    FG3M: −0.090 under-projection → adjusted 1.221/1.288 = 0.948
 #         Teams shoot slightly fewer 3s in playoffs but prior 0.8780 was too
 #         aggressive; proportion of FGA that are 3s has been rising annually.
+#    BLK:  −0.074 under-projection (t=−2.74, n=1049) → 0.561/0.487 = 1.152
+#         More half-court, deliberate offense in playoffs creates more shot-block
+#         opportunities; blocks genuinely increase per minute relative to RS rates.
 PLAYOFF_RATE_DEFLATORS = {
     "pts":  0.934,
     "ast":  0.870,
     "fg3m": 0.948,
+    "blk":  1.152,
 }
 
 # P11 — Home/away adjustment factors (2026-05-01).
@@ -1479,9 +1483,9 @@ def project_player(
                 projections[stat] = max(0.0, round(
                     projections[stat] * (1.0 + sign * delta), 2))
 
-    # Playoff calibration P18-v4 (2026-05-02):
+    # Playoff calibration P18-v4 (2026-05-02), deflators updated 2026-05-10:
     # Minutes scalar already applied to proj_min above — all stats benefit.
-    # Residual rate deflators applied only for AST and FG3M (genuine playoff rate drops).
+    # Residual rate deflators applied for PTS/AST/FG3M/BLK (genuine per-min rate changes).
     if is_playoff:
         for stat, defl in PLAYOFF_RATE_DEFLATORS.items():
             if stat in projections:
