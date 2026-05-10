@@ -278,13 +278,17 @@ PLAYOFF_MINUTES_SCALAR = {
 #     v2 updated 2026-05-02 from 30-date 2025-26 retrospective backtest
 #     (4653 player-games).  new_scalar = old_scalar * residual_ratio.
 #     v3 updated 2026-05-05 after REB prior fix + EWMA_SPAN_MIN 6->8.
-#     30-date backtest (4653 player-games, seed=42, season 2025-26).
+#     v4 updated 2026-05-10 from new 30-date RS backtest (4653 player-games).
+#     Root cause of drift: classify_role() threshold raised 24->26 MPG (2026-05-09)
+#     reclassified some players from starter->sixth_man; combined with overall
+#     3.65% minutes under-projection across all roles (ratio 1.0365 overall).
+#     new_scalar = old_scalar * ratio per role.
 REGULAR_SEASON_MINUTES_SCALAR = {
-    "starter":    1.0534,  # v3: ratio 0.9976 — nearly flat
-    "sixth_man":  1.0139,  # v3: ratio 0.9950
-    "rotation":   1.0327,  # v3: ratio 0.9977
-    "spot":       1.5695,  # v3: ratio 0.9233 — spot over-projected, pulled down
-    "cold_start": 1.0034,  # v3: ratio 1.0674 — cold_start was under; corrected
+    "starter":    1.0667,  # v4: ratio 1.0126 (was 1.0534)
+    "sixth_man":  1.0462,  # v4: ratio 1.0318 (was 1.0139)
+    "rotation":   1.0854,  # v4: ratio 1.0511 (was 1.0327)
+    "spot":       1.6124,  # v4: ratio 1.0273 (was 1.5695)
+    "cold_start": 1.0880,  # v4: ratio 1.0843 (was 1.0034)
 }
 
 # 1c. REGULAR_SEASON_STAT_SCALAR (task #3, 2026-05-02):
