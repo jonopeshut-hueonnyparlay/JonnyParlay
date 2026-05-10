@@ -17,9 +17,8 @@ $action  = New-ScheduledTaskAction `
     -Argument   "/c `"$batFile`"" `
     -WorkingDirectory $startDir
 
-$trigger = New-ScheduledTaskTrigger `
-    -Daily `
-    -At $startTime
+$triggerDaily   = New-ScheduledTaskTrigger -Daily -At $startTime
+$triggerStartup = New-ScheduledTaskTrigger -AtStartup
 
 $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances    IgnoreNew `
@@ -27,7 +26,9 @@ $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable   `
     -WakeToRun            `
     -DontStopIfGoingOnBatteries `
-    -AllowStartIfOnBatteries
+    -AllowStartIfOnBatteries `
+    -RestartCount         5 `
+    -RestartInterval      (New-TimeSpan -Minutes 5)
 
 $principal = New-ScheduledTaskPrincipal `
     -UserId    $env:USERNAME `
@@ -37,7 +38,7 @@ $principal = New-ScheduledTaskPrincipal `
 Register-ScheduledTask `
     -TaskName  $taskName `
     -Action    $action `
-    -Trigger   $trigger `
+    -Trigger   @($triggerDaily, $triggerStartup) `
     -Settings  $settings `
     -Principal $principal `
     -Force | Out-Null
