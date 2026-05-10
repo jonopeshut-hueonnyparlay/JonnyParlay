@@ -305,14 +305,21 @@ REGULAR_SEASON_STAT_SCALAR = {
 }
 
 # 2. PLAYOFF_RATE_DEFLATORS (genuine per-stat rate changes, not minutes-driven):
-#    AST: isolation-heavy playoff offense → fewer motion-offense assists.
-#    FG3M: tighter perimeter defense → fewer open 3-point attempts per minute.
-#    PTS, REB, STL, BLK, TOV: effect is primarily minutes-driven; no extra deflation.
-#    Calibrated empirically (n=43 graded props Apr-May 2026) — P18-v4 yields
-#    MAE=3.436 bias=-0.108 vs P18-v1 MAE=3.413 bias=-0.620 and SaberSim 3.254.
+#    Recalibrated 2026-05-10 from 20-date playoff backtest (1071 player-games,
+#    Apr 18 – May 8 2026, all role tiers).  Bias = proj − actual; deflator =
+#    actual_mean / proj_pre-deflator_mean.
+#
+#    PTS: +0.791 over-projection (mean proj 12.031) → 11.240/12.031 = 0.934
+#         Playoff defense suppresses scoring vs RS per-minute rates.
+#    AST: −0.125 under-projection → adjusted deflator 2.428/2.790 = 0.870
+#         Isolation-heavy offenses reduce assists but less than prior 0.8255.
+#    FG3M: −0.090 under-projection → adjusted 1.221/1.288 = 0.948
+#         Teams shoot slightly fewer 3s in playoffs but prior 0.8780 was too
+#         aggressive; proportion of FGA that are 3s has been rising annually.
 PLAYOFF_RATE_DEFLATORS = {
-    "ast":  0.8255,
-    "fg3m": 0.8780,
+    "pts":  0.934,
+    "ast":  0.870,
+    "fg3m": 0.948,
 }
 
 # P11 — Home/away adjustment factors (2026-05-01).
