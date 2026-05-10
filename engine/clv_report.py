@@ -23,6 +23,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# Force UTF-8 output on Windows (cp1252 console can't encode box-drawing chars)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # Canonical locked-reader helper — every pick_log reader must take the same
 # FileLock as the writers (audit H-8 / M-series).
 sys.path.insert(0, str(Path(__file__).resolve().parent))

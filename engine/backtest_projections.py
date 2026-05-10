@@ -510,12 +510,12 @@ def run_backtest_all_projections(
     db_path=DB_PATH,
     verbose=False,
 ):
-    _proj_cache.clear()  # H26: prevent stale projections across multi-run scenarios
     """Sweep ALL rows in the projections table and compare to actuals.
 
     P1 implementation: expands from pick_log-filtered n=~40 to all-projections
     n=~500+, giving a truer MAE baseline. No SaberSim comparison (no CSV needed).
     """
+    _proj_cache.clear()  # H26: prevent stale projections across multi-run scenarios
     conn = get_conn(db_path)
 
     # Build query over all projections with a matching game result

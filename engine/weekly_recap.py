@@ -604,7 +604,11 @@ def _webhook_post_with_file(url, payload, file_buf=None, filename="weekly.xlsx")
             else:
                 r = requests.post(url, json=payload, timeout=10)
             if r.status_code == 429:
-                time.sleep(float(r.json().get("retry_after", 2.0)))
+                try:
+                    retry_after = float(r.json().get("retry_after", 2.0))
+                except Exception:
+                    retry_after = 2.0
+                time.sleep(retry_after)
                 continue
             if r.status_code in (200, 204):
                 return True

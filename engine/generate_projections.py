@@ -68,7 +68,11 @@ _CONSTRAINT_SCALE_KEYS = [
     "proj_ast",  "proj_ast_p25",  "proj_ast_p75",
     "proj_fg3m", "proj_fg3m_p25", "proj_fg3m_p75",
     "proj_blk", "proj_stl", "proj_tov",
-    "dk_std",
+    # dk_std intentionally excluded: it has a role-specific absolute floor
+    # (DK_STD_FLOOR) that must not be scaled by the Vegas mean-correction factor.
+    # Scaling variance by the same ratio as the mean is only valid for the
+    # proportional 0.35*proj_pts component — at the floor, dk_std represents
+    # irreducible uncertainty and scaling it inflates/deflates it incorrectly.
 ]
 # H1 fix (audit 2026-05-06): proj_min intentionally excluded. Total team
 # minutes is a physical invariant (240/regulation), set by the lineup-

@@ -401,6 +401,11 @@ def _odds_api_get(url: str, params: dict, label: str) -> dict | list | None:
     """
     global _quota_low_warned
 
+    # Guard: missing/empty key returns 401 which would trigger quota parking.
+    if not ODDS_API_KEY:
+        logger.error("%s: ODDS_API_KEY is not set — skipping request", label)
+        return None
+
     # Audit L-8: once we've seen x-requests-remaining=0, every call is
     # guaranteed to return 429 until the UTC rollover. Skip them entirely so
     # the daemon's backoff math doesn't churn through retries on every poll.

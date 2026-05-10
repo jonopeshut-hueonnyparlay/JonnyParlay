@@ -116,12 +116,11 @@ _CROSS_STAT_TENSION = {
 
 def _is_negatively_correlated(leg_a, leg_b):
     """Return True if two legs conflict -- HARD KILL, never combine."""
-    # R0: Same player, same stat, same direction, different line = DEDUP
+    # R0: Same player, same stat, same direction = DEDUP (any line, including exact duplicate)
     # e.g. DiVincenzo O9.5 PTS + O8.5 PTS -- redundant (9.5 dominates 8.5)
     if (leg_a["player"] == leg_b["player"]
             and leg_a["stat"] == leg_b["stat"]
-            and leg_a["direction"] == leg_b["direction"]
-            and leg_a["line"] != leg_b["line"]):
+            and leg_a["direction"] == leg_b["direction"]):
         return True
 
     # R1: Same player, same stat, opposite direction

@@ -283,7 +283,7 @@ def fetch_nba_boxscore(date_str):
                                 continue
                             d = dict(zip(labels, vals))
                             entry = {}
-                            for our_key, espn_key in [("PTS","PTS"),("REB","REB"),("AST","AST")]:
+                            for our_key, espn_key in [("PTS","PTS"),("REB","REB"),("AST","AST"),("BLK","BLK"),("STL","STL")]:
                                 try: entry[our_key] = int(d[espn_key])
                                 except (KeyError, ValueError, TypeError) as _e:
                                     logger.debug("ESPN stat parse failed %s/%s: %s", espn_key, name, _e)
@@ -2067,7 +2067,7 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
 
     # \u2500\u2500 Dates with new grades in this log \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     dates_from_this = {row["date"] for idx, row in ungraded
-                       if rows[idx].get("result") in ("W", "L", "P")}
+                       if rows[idx].get("result") in ("W", "L", "P", "VOID")}
 
     # \u2500\u2500 Discord posting (skip for shadow sports) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     if not is_shadow and not args.dry_run:

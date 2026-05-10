@@ -551,11 +551,11 @@ def _main() -> None:
     parser.add_argument("--json",   action="store_true", help="Output as JSON")
     args = parser.parse_args()
 
-    statuses, overrides = get_injury_context(
+    statuses, overrides, bumps = get_injury_context(
         game_date=args.date, season=args.season, db_path=args.db)
 
     if args.json:
-        print(json.dumps({"statuses": statuses, "overrides": overrides}, indent=2))
+        print(json.dumps({"statuses": statuses, "overrides": overrides, "bumps": bumps}, indent=2))
         return
 
     print(f"\nInjury statuses ({len(statuses)} players):")

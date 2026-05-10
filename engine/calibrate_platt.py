@@ -84,27 +84,6 @@ def recover_over_p(df: pd.DataFrame) -> np.ndarray:
     return over_p.astype(float)
 
 
-def fit_platt(over_p: np.ndarray, y: np.ndarray) -> tuple[float, float]:
-    """DEPRECATED — use _fit_nll_exact() instead (L9).
-
-    This function approximates the bet direction via ``over_p > 0.5``,
-    which is less accurate than using the actual direction flag.
-    main() already calls _fit_nll_exact() correctly.
-    Kept for reference; do not use in new code.
-    """
-    def nll(params: list[float]) -> float:
-        a, b = params
-        logit = np.clip(a * over_p + b, -30.0, 30.0)
-        cal_over = sigmoid(logit)
-        is_over = over_p > 0.5   # approximate — exact direction would need the column
-        p_win = np.where(is_over, cal_over, 1.0 - cal_over)
-        return -np.mean(y * np.log(p_win + 1e-15) + (1 - y) * np.log(1 - p_win + 1e-15))
-
-    res = minimize(
-        nll, x0=[1.0, 0.0], method="Nelder-Mead",
-        options={"xatol": 1e-9, "fatol": 1e-9, "maxiter": 100_000},
-    )
-    return float(res.x[0]), float(res.x[1])
 
 
 def _fit_nll_exact(over_p: np.ndarray, is_over: np.ndarray, y: np.ndarray) -> tuple[float, float]:

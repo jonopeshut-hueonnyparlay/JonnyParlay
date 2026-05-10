@@ -553,8 +553,12 @@ def no_vig(imp1, imp2):
     return imp1 / total, imp2 / total
 
 def is_decimal_leak(odds):
-    """Check if odds look like decimal format leaked through."""
-    return 1.0 < odds < 3.0
+    """Check if odds look like decimal format leaked through.
+    Range 1.0 < odds < 2.5 catches decimal (e.g. 1.91 for -110).
+    Upper bound is 2.5 (not 3.0) to avoid rejecting valid +100 to +149 American odds,
+    whose decimal equivalents are 2.0–2.49.
+    """
+    return 1.0 < odds < 2.5
 
 def _platt_calibrate_prop(over_p: float) -> float:
     """Apply P9 Platt scaling to raw over_p from the distribution model.
@@ -568,7 +572,7 @@ def _platt_calibrate_prop(over_p: float) -> float:
     return 1.0 / (1.0 + math.exp(-raw))
 
 
-def calc_prop_prob(proj, line, stat):
+def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0):
     """Calculate over/under probability for a player prop.
     FIX M1: For integer lines, properly handle push probability.
     Push at exactly the line is excluded (DK rules: push = refund),
@@ -578,6 +582,10 @@ def calc_prop_prob(proj, line, stat):
     P16: NB_STATS (3PM) use negative binomial CDF instead of Normal.
     NB_R[stat] is the within-player conditional dispersion parameter r,
     calibrated from per-player avg(var/mu) over the 2024-25 DB sample.
+
+    H3: sigma_override — when > 0, replaces the default SIGMA[stat] formula for
+    Normal-distribution stats (PTS etc.). Used to pass dk_std from the custom
+    projection engine, which includes a role floor and an observed high-var floor.
     """
     if stat in POISSON_STATS and line <= POISSON_CUTOFF:
         k = math.floor(line)
@@ -614,11 +622,17 @@ def calc_prop_prob(proj, line, stat):
             under_p = negbinom_cdf(k, proj, r)
             over_p = 1.0 - negbinom_cdf(k, proj, r)
     else:
-        s = SIGMA.get(stat)
-        if s is None:  # L11: warn on unknown stat so calibration gaps surface early
-            logger.warning("calc_prop_prob: no SIGMA entry for stat=%r — using default fallback {mult:0.40, min:2.0}", stat)
-            s = {"mult": 0.40, "min": 2.0}
-        sigma = max(proj * s["mult"], s["min"])
+        if sigma_override > 0.0:
+            # H3: use empirical σ from projection engine (dk_std), which incorporates
+            # a role-specific floor and the observed high-variance floor for bimodal players.
+            # More accurate than the flat 0.35×proj formula for non-starters and high-CV players.
+            sigma = sigma_override
+        else:
+            s = SIGMA.get(stat)
+            if s is None:  # L11: warn on unknown stat so calibration gaps surface early
+                logger.warning("calc_prop_prob: no SIGMA entry for stat=%r — using default fallback {mult:0.40, min:2.0}", stat)
+                s = {"mult": 0.40, "min": 2.0}
+            sigma = max(proj * s["mult"], s["min"])
         under_p = normal_cdf(line, proj, sigma)
         over_p = 1.0 - normal_cdf(line, proj, sigma)
     return over_p, under_p
@@ -728,16 +742,14 @@ def check_prop_gates(pick):
     if prob < 0.50:
         return False, "G13"
 
-    # G14: projection clearance gate — ensures model has directional conviction
-    # Poisson stats at non-trivial lines (≥2.0): projection must land on correct side.
-    # Normal stats (SIGMA): projection must clear line by ≥0.10σ.
-    # NB stats (3PM) and low lines (<2.0) are exempt — distribution accurately captures edge.
-    if stat in POISSON_STATS and 2.0 <= line <= POISSON_CUTOFF:
-        if direction == "under" and proj > line:
-            return False, "G14"
-        if direction == "over" and proj < line:
-            return False, "G14"
-    elif stat in SIGMA and (stat not in POISSON_STATS or line > POISSON_CUTOFF):
+    # G14: projection clearance gate — ensures model has directional conviction.
+    # Normal/SIGMA stats (PTS, OUTS, HA, TB, HRR): proj must clear line by ≥0.10σ.
+    # Poisson stats (AST, REB, SOG, etc.) are exempt — Poisson probability correctly
+    # handles cases where the discrete distribution favors the pick even when proj
+    # slightly crosses the line (e.g. AST 4.5 under with proj=4.6 still gives ~51%
+    # under probability). G13 (prob≥0.50) already handles true direction failures.
+    # NB stats (3PM) are exempt — Negative Binomial distribution handles these correctly.
+    if stat in SIGMA and stat not in POISSON_STATS:
         _s = SIGMA[stat]
         _sigma = max(proj * _s["mult"], _s["min"])
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
@@ -882,17 +894,16 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     premium = []
     used = set()  # track by id() to avoid duplicates
     game_count = defaultdict(int)
-    stat_dir_count = defaultdict(int)
+    stat_count = defaultdict(int)          # R10: per-stat total (any direction)
     pitcher_game_dir_count = defaultdict(int)  # G12: (game, direction) → pitcher prop count
     over_count = 0
     has_over = False
 
     def can_add(p):
         game = p.get("game", "")
-        key = (p["stat"], p["direction"])
         if game_count[game] >= max_per_game:  # R7
             return False
-        if stat_dir_count[key] >= 2:  # R10
+        if stat_count[p["stat"]] >= 2:  # R10: max 2 picks per stat regardless of direction
             return False
         if p["direction"] == "over" and over_count >= 3:  # R6
             return False
@@ -909,7 +920,7 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
         used.add(id(p))
         game = p.get("game", "")
         game_count[game] += 1
-        stat_dir_count[(p["stat"], p["direction"])] += 1
+        stat_count[p["stat"]] += 1
         if p["stat"] in PITCHER_STATS:
             pitcher_game_dir_count[(game, p["direction"])] += 1
         if p["direction"] == "over":
@@ -943,10 +954,9 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
         if swap_idx is not None:
             old_pick = premium[swap_idx]
             old_game = old_pick.get("game", "")
-            old_key  = (old_pick["stat"], old_pick["direction"])
             # Temporarily remove old_pick's contributions so can_add() sees correct state
             game_count[old_game] -= 1
-            stat_dir_count[old_key] -= 1
+            stat_count[old_pick["stat"]] -= 1
             if old_pick["stat"] in PITCHER_STATS:
                 pitcher_game_dir_count[(old_game, old_pick["direction"])] -= 1
             used.discard(id(old_pick))
@@ -962,7 +972,7 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
                 premium[swap_idx] = best_over
                 new_game = best_over.get("game", "")
                 game_count[new_game] += 1
-                stat_dir_count[(best_over["stat"], best_over["direction"])] += 1
+                stat_count[best_over["stat"]] += 1
                 if best_over["stat"] in PITCHER_STATS:
                     pitcher_game_dir_count[(new_game, best_over["direction"])] += 1
                 used.add(id(best_over))
@@ -971,7 +981,7 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
             else:
                 # No valid over found — restore old_pick's contributions
                 game_count[old_game] += 1
-                stat_dir_count[old_key] += 1
+                stat_count[old_pick["stat"]] += 1
                 if old_pick["stat"] in PITCHER_STATS:
                     pitcher_game_dir_count[(old_game, old_pick["direction"])] += 1
                 used.add(id(old_pick))
@@ -1231,6 +1241,9 @@ def parse_csv(filepath):
                 p["REB"] = float(clean.get("RB", clean.get("rb", clean.get("REB", 0))) or 0)
                 p["PTS"] = float(clean.get("PTS", clean.get("pts", 0)) or 0)
                 p["3PM"] = float(clean.get("3PT", clean.get("3pt", clean.get("3PM", 0))) or 0)
+                # H3: custom projection engine writes dk_std (empirical σ including high-var floor).
+                # SaberSim CSVs also carry this column. 0.0 = absent → falls back to SIGMA["PTS"].
+                p["dk_std"] = float(clean.get("dk_std", clean.get("DK_STD", 0)) or 0)
             elif sport == "NHL":
                 # Filter goalies
                 if p["pos"].upper() == "G":
@@ -1866,8 +1879,13 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         if over_odds is None or under_odds is None:
             continue
 
+        # H3: pass player's dk_std as sigma_override so high-var players (Strus, Caruso etc.)
+        # use their empirically observed σ instead of the flat 0.35×proj formula.
+        # Only applies to Normal-distribution stats (PTS etc.); Poisson/NB paths ignore it.
+        _dk_std = prop.get("proj_player", {}).get("dk_std", 0.0) or 0.0
+
         # Calculate probabilities
-        over_p, under_p = calc_prop_prob(proj, line, stat)
+        over_p, under_p = calc_prop_prob(proj, line, stat, sigma_override=_dk_std)
 
         # v4: save raw over_p before Platt so calibrate_platt.py can fit on
         # the actual model output without double-calibration bias.
@@ -3895,12 +3913,14 @@ def build_potd_embed(potd, today):
     }
 
 
-def post_to_discord(premium, mode, today, suppress_ping=False):
+def post_to_discord(premium, mode, today, suppress_ping=False, force=False):
     """Post the premium card + standalone POTD embed to #premium-portfolio.
 
     Uses discord_posted.json guard keys (premium_card:{date}, potd:{date}) to
     prevent double-posts if run_picks.py is re-run. Guard is only marked on
     real (non-test) successful posts — test mode can be re-run safely.
+    force=True (--force-card) releases the guard keys before claiming so the
+    card re-posts even if it was already sent today.
     """
     if not premium:
         print("  [Discord] No premium picks — skipping premium post.")
@@ -3908,6 +3928,8 @@ def post_to_discord(premium, mode, today, suppress_ping=False):
 
     # Premium card
     premium_key = f"premium_card:{today}"
+    if force:
+        _discord_release_post(premium_key)
     if not _discord_claim_post(premium_key):
         print(f"  [Discord] ⏭️  Premium card already posted for {today} — skipping")
     else:
@@ -3920,6 +3942,8 @@ def post_to_discord(premium, mode, today, suppress_ping=False):
     # POTD — separate embed, same channel, same webhook.
     # premium[0] is guaranteed non-KILLSHOT (KILLSHOTs are excluded from premium).
     potd_key = f"potd:{today}"
+    if force:
+        _discord_release_post(potd_key)
     if not _discord_claim_post(potd_key):
         print(f"  [Discord] ⏭️  POTD already posted for {today} — skipping")
     else:
@@ -4277,7 +4301,7 @@ def _log_longshot(safest6_parlay, today_str, save=True):
         with _pick_log_lock(log_path):
             with open(log_path, "r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                header = reader.fieldnames or list(HEADER)
+                header = reader.fieldnames or list(CANONICAL_HEADER)
                 rows = list(reader)
             already = any(
                 r.get("date") == today_str and r.get("run_type") == "longshot"
@@ -5291,10 +5315,10 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     n_prem = len(premium)
     n_overs_prem = sum(1 for p in premium if p["direction"] == "over")
     n_overs_all = sum(1 for p in all_qualified if p["direction"] == "over")
-    stat_dir_counts = defaultdict(int)
+    stat_counts_chk = defaultdict(int)
     for p in premium:
-        stat_dir_counts[(p["stat"], p["direction"])] += 1
-    max_same = max(stat_dir_counts.values()) if stat_dir_counts else 0
+        stat_counts_chk[p["stat"]] += 1
+    max_same = max(stat_counts_chk.values()) if stat_counts_chk else 0
     has_u25_ast = any(p["stat"] == "AST" and p["direction"] == "under" and p["line"] <= 2.5 for p in all_qualified)
     has_u25_reb = any(p["stat"] == "REB" and p["direction"] == "under" and p["line"] <= 2.5 for p in all_qualified)
     has_reb_over = any(p["stat"] == "REB" and p["direction"] == "over" for p in all_qualified)
@@ -5302,9 +5326,9 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     has_heavy_juice = any(p["odds"] <= -150 for p in all_qualified)
     def _g14_fail(p):
         s, d, ln, pr = p["stat"], p["direction"], p["line"], p.get("proj", 0.0)
-        if s in POISSON_STATS and 2.0 <= ln <= POISSON_CUTOFF:
-            return (d == "under" and pr > ln) or (d == "over" and pr < ln)
-        if s in SIGMA and (s not in POISSON_STATS or ln > POISSON_CUTOFF):
+        # Poisson stats exempt — G13 handles direction failures; discrete dist
+        # correctly prices picks even when proj slightly crosses the line.
+        if s in SIGMA and s not in POISSON_STATS:
             _s = SIGMA[s]; _sig = max(pr * _s["mult"], _s["min"])
             return ((ln - pr) / _sig if d == "under" else (pr - ln) / _sig) < 0.10
         return False
@@ -5334,11 +5358,11 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"Premium card: {n_prem} picks generated", n_prem == 5 or n_prem == 0),
         (f"Safest 5 generated", len(safest5) >= 5 or len(safest5) == 0),
         (f"R9 directional balance: {n_overs_prem} overs on Premium", n_overs_prem >= 1 if n_overs_all >= 3 else True),
-        (f"R10 same-stat cap: max {max_same} same-stat same-dir", max_same <= 2),
+        (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 2),
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8 enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5", not has_g8_fail),
-        (f"G14 enforced: Projection clearance (Poisson correct side / normal z≥0.10)", not has_g14_fail),
+        (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
         (f"R7 enforced: Max per game = {max_game} (cap: {max_per_game})", max_game <= max_per_game),
         (f"G11 enforced: Max pitcher props per pitcher = {max_pitcher_props}", max_pitcher_props <= 1),
@@ -5812,6 +5836,18 @@ def main():
     # Apply VAKE sizing to Premium 5 only (overwrites base sizing for these 5)
     premium = size_picks_vake(premium) if premium else []
 
+    # H1 (audit 2026-05-09): Hard-enforce 12u daily cap across premium + KILLSHOT combined.
+    # apply_caps() only saw the pre-KILLSHOT pool. KILLSHOT picks (3-4u each) are added
+    # after, so we must check the combined total here and trim if needed.
+    _premium_u = sum(p.get("size", 0) for p in premium)
+    _ks_total  = sum(p.get("size", 0) for p in killshots)
+    if _premium_u + _ks_total > 12.0:
+        # Drop lowest-scoring KILLSHOT(s) until within cap
+        killshots = sorted(killshots, key=lambda x: x.get("pick_score", 0), reverse=True)
+        while killshots and _premium_u + sum(p.get("size", 0) for p in killshots) > 12.0:
+            dropped = killshots.pop()
+            print(f"  [CAP] Dropping KILLSHOT {dropped['player']} ({dropped.get('size',0):.2f}u) — 12u daily cap")
+
     # Log premium picks + KILLSHOT picks on first run of the day.
     # KILLSHOT picks carry tier=KILLSHOT and no card_slot; premium picks get slots 1-5.
     # On subsequent runs (card already up), still log any new KILLSHOT picks that
@@ -6026,6 +6062,7 @@ def main():
                     tier, "", _normalize_size(size), game, "Default", "", "", "", "",
                     _normalize_is_home(is_home_val, stat),
                     "", "", "",  # context_verdict, context_reason, context_score
+                    "", "",     # legs, over_p_raw (col 28-29 — must match 29-col CANONICAL_HEADER)
                 ])
                 # Commit to disk before releasing the outer lock (audit H-5).
                 f.flush()
@@ -6110,7 +6147,8 @@ def main():
                 print("  [Discord] --repost-daily-lay: force-posting daily lay...")
                 post_daily_lay(alt_spread_parlay, today_str, suppress_ping=True, save=_save)
         else:
-            post_to_discord(premium, args.mode, today_str, suppress_ping=suppress_ping)
+            _force = getattr(args, "force_card", False)
+            post_to_discord(premium, args.mode, today_str, suppress_ping=suppress_ping, force=_force)
             post_extras_to_discord(qualified, save=_save)
 
             # Daily lay and longshot post silently -- no @everyone ping

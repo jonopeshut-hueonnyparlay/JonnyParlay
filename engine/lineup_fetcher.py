@@ -55,7 +55,7 @@ def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, list[str
         try:
             bs_data = _bs_mod.BoxScore(game_id).get_dict()
         except Exception as exc:
-            log.debug("BoxScore fetch failed for %s: %s", game_id, exc)
+            log.warning("BoxScore fetch failed for %s: %s", game_id, exc)
             continue
 
         game_node = bs_data.get("game", {})
@@ -63,7 +63,10 @@ def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, list[str
             team_node = game_node.get(side, {})
             tricode = team_node.get("teamTricode", "")
             players = team_node.get("players", [])
-            starters = [p["name"] for p in players if str(p.get("starter", "0")) == "1"]
+            starters = [
+                p.get("name") or f"{p.get('firstName', '')} {p.get('familyName', '')}".strip()
+                for p in players if str(p.get("starter", "0")) == "1"
+            ]
             if len(starters) == 5:
                 result[tricode] = starters
                 log.info("Confirmed starters %s: %s", tricode, ", ".join(starters))

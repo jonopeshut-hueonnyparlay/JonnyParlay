@@ -962,7 +962,7 @@ def get_projection_vs_actual(
         if days > 0 else "2000-01-01"
     )
     season_clause = "AND g.season = :season" if season else ""
-    role_clause   = "AND p.role_tier = :role" if role else ""
+    role_clause   = "AND pr.role_tier = :role" if role else ""
 
     sql = f"""
     WITH latest_proj AS (
@@ -1446,10 +1446,14 @@ def seed_scheduled_games(
         conn.close()
         return 0
 
-    # Determine season_type — playoffs if any current game is a playoff game
-    # (heuristic: if season string ends in second year of season, check month)
-    _month = _dt.date.fromisoformat(target).month
-    season_type = "Playoffs" if _month >= 4 else "Regular Season"
+    # Determine season_type — playoffs start mid-to-late April (historically Apr 15+).
+    # month >= 4 over-classifies early April regular-season games as Playoffs.
+    # Using Apr-15 as the floor catches all realistic playoff start dates since 2000.
+    _tdate = _dt.date.fromisoformat(target)
+    season_type = (
+        "Playoffs" if (_tdate.month >= 5 or (_tdate.month == 4 and _tdate.day >= 15))
+        else "Regular Season"
+    )
 
     inserted = 0
     try:

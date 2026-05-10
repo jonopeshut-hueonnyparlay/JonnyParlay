@@ -246,11 +246,14 @@ class TestConstrainTeamTotalsH1Fix:
     """Behavioral tests for the Path (b) fix in constrain_team_totals."""
 
     def test_proj_min_excluded_from_constraint_keys(self):
-        """Sentinel: proj_min must NOT be in the constraint scale keys."""
+        """Sentinel: proj_min must NOT be in the constraint scale keys.
+        dk_std is also excluded: it has an absolute role floor that must not
+        be scaled by the Vegas mean-correction factor (audit H4 2026-05-09).
+        """
         assert "proj_min" not in _CONSTRAINT_SCALE_KEYS
+        assert "dk_std"   not in _CONSTRAINT_SCALE_KEYS
         # Stats anchor remains intact:
         assert "proj_pts" in _CONSTRAINT_SCALE_KEYS
-        assert "dk_std"   in _CONSTRAINT_SCALE_KEYS
 
     def test_audit_adversarial_top5_protected(self):
         """Audit-spec fixture: 5*36 + 7*12 vs Vegas total 175.1 (raw scale 0.85).

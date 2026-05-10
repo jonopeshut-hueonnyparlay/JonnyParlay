@@ -1174,7 +1174,10 @@ def project_player(
         df_clean = df[df["min"] >= min_min].copy()
         rates    = compute_per_minute_rates(df_clean, avail_weights=avail_weights)
 
-    proj_min = project_minutes(role, df_clean, b2b, spread=spread,
+    # Pass raw df (all games) to project_minutes so the EWMA baseline includes
+    # foul-trouble and blowout-short games. df_clean (min-filtered) is used for
+    # per-minute rate calculations only — minutes estimation needs the full picture.
+    proj_min = project_minutes(role, df, b2b, spread=spread,
                                injury_minutes_override=injury_minutes_override,
                                minutes_prior_override=career_min_prior)
     if proj_min < 1.0:

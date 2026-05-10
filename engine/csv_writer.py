@@ -255,52 +255,10 @@ def fetch_nba_implied_totals(
             log.debug("  %s @ %s -> total %.1f (game_id %s)",
                       away_name, home_name, best_total, game_id)
 
-    # -- Fetch team totals (optional) --------------------------------------
-    params_tt = {
-        "apiKey":     ODDS_API_KEY,
-        "regions":    "us",
-        "markets":    "team_totals",
-        "oddsFormat": "american",
-    }
-    try:
-        resp_tt = _odds_api_get(
-            f"{_ODDS_BASE}/sports/{_NBA_SPORT}/odds",
-            params=params_tt,
-        )
-        if resp_tt.status_code == 200:
-            tt_events = resp_tt.json()
-            if not isinstance(tt_events, list):  # H20: validate shape before iterating
-                log.warning("fetch_nba_implied_totals: team_totals unexpected shape: %s", type(tt_events).__name__)
-                tt_events = []
-            for ev in tt_events:
-                home_name = ev.get("home_team", "")
-                away_name = ev.get("away_team", "")
-                home_tid  = name_to_tid.get(home_name)
-                away_tid  = name_to_tid.get(away_name)
-                if home_tid is None or away_tid is None:
-                    continue
-                game_id = matchup_to_gid.get((home_tid, away_tid))
-                if game_id is None:
-                    continue
-                for bm in ev.get("bookmakers", []):
-                    for mkt in bm.get("markets", []):
-                        if mkt.get("key") != "team_totals":
-                            continue
-                        for outcome in mkt.get("outcomes", []):
-                            if outcome.get("name") == "Over":
-                                desc = outcome.get("description", "")
-                                pt   = outcome.get("point")
-                                if pt is None:
-                                    continue
-                                # description = team name for team_totals market
-                                tid = name_to_tid.get(desc)
-                                if tid is not None:
-                                    key = make_team_total_key(game_id, tid)
-                                    if key not in team_totals:
-                                        team_totals[key] = float(pt)
-    except Exception as exc:
-        log.debug("fetch_nba_implied_totals: team_totals fetch failed: %s", exc)
-        # team_totals is optional -- don't abort
+    # team_totals are not available on the main /odds endpoint (returns 422).
+    # generate_projections.py derives them from game_total ± spread/2 which is
+    # mathematically equivalent to how books price the market. team_totals dict
+    # is left empty here; the caller handles derivation.
 
     log.info("fetch_nba_implied_totals: %d game totals, %d team totals for %s",
              len(implied_totals), len(team_totals), game_date)
@@ -359,7 +317,8 @@ def _proj_to_row(
         # which injury_parser._normalise_position() doesn't recognise, silently
         # excluding sixth-men from minutes redistribution when a starter is OUT.
         role = proj.get("role_tier", "")
-        _ROLE_POS = {"starter": "F", "sixth_man": "F", "rotation": "F", "bench": "F"}
+        _ROLE_POS = {"starter": "F", "sixth_man": "F", "rotation": "F", "bench": "F",
+                     "spot": "F", "cold_start": "F"}
         pos = _ROLE_POS.get(role, role[:1].upper() if role else "") or "F"
 
     return {
@@ -523,9 +482,12 @@ def generate_daily_csv(
 
     from nba_projector import run_projections
     from injury_parser import get_injury_context
+    from lineup_fetcher import fetch_confirmed_starters
 
     injury_statuses, injury_minutes_overrides, injury_minutes_redistrib_bumps = \
         get_injury_context(game_date=game_date, season=season, db_path=db_path)
+
+    confirmed_starters = fetch_confirmed_starters(game_date)
 
     projections = run_projections(
         game_date=game_date,
@@ -534,6 +496,7 @@ def generate_daily_csv(
         injury_statuses=injury_statuses,
         injury_minutes_overrides=injury_minutes_overrides,
         injury_minutes_redistrib_bumps=injury_minutes_redistrib_bumps,
+        confirmed_starters=confirmed_starters,
         db_path=db_path,
         persist=True,
     )
