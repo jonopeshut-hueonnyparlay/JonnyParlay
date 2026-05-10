@@ -184,7 +184,7 @@ def main() -> None:
     print(f"  Brier cal  (5-fold CV):{brier_oos_cal:.4f}")
     print(f"  Brier improvement OOS: {brier_oos_pct:.1f}%  <-- use this for go/no-go")
     print()
-    print("  ── Bucket check ─────────────────────────────────────────")
+    print("  -- Bucket check ---------------------------------------------")
     edges = np.array([0.55, 0.60, 0.65, 0.70, 0.75, 0.80])
     for lo, hi in zip(edges[:-1], edges[1:]):
         mask = (raw_p_win >= lo) & (raw_p_win < hi)
@@ -195,14 +195,14 @@ def main() -> None:
               f"raw={raw_p_win[mask].mean():.3f}  "
               f"cal={cal_p_win[mask].mean():.3f}")
     print()
-    print("  ── Paste into run_picks.py ───────────────────────────────")
+    print("  -- Paste into run_picks.py ----------------------------------")
     print(f"  PLATT_A = {a:.4f}   # slope")
     print(f"  PLATT_B = {b:.4f}  # intercept")
     print()
     # M16: hard exit when OOS Brier improvement is negative — do NOT paste bad constants
     if not (brier_oos_pct != brier_oos_pct):  # check not NaN
         if brier_oos_pct < 0:
-            print("  ⚠  OOS Brier improvement is NEGATIVE — calibration hurts out-of-sample.")
+            print("  WARNING: OOS Brier improvement is NEGATIVE -- calibration hurts out-of-sample.")
             print("  Do NOT update PLATT_A/PLATT_B.  Keep existing constants.")
             print("  Root causes: double-calibration bias, too few picks, or distribution shift.")
             sys.exit(1)
