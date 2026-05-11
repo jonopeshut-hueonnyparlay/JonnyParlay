@@ -368,32 +368,34 @@ BLEND_BIAS_CORRECTION = 0.0    # no additive correction — fix root causes stru
 # Regular season: calibrated from 2024-25 DB (min>=10, Regular Season) — P15 2026-05-01.
 # Playoff: R6 Brief 7 values — tighter rotations, fewer possessions, lower F/C reb rates.
 # R6 changed priors proportionally: G×1.054, F×0.832, C×0.806.  RS values = PO / scale.
-_REB_POS_OREB_PRIOR_RS = {"G": 0.02042, "F": 0.03248, "C": 0.07047}  # RS: OREB per team miss/48 — pre-R6 empirical
-_REB_POS_DREB_PRIOR_RS = {"G": 0.08086, "F": 0.10572, "C": 0.17163}  # RS: DREB per opp miss/48 — pre-R6 empirical
-_REB_POS_OREB_PRIOR_PO = {"G": 0.02154, "F": 0.02701, "C": 0.05681}  # PO: OREB per team miss/48 — R6 Brief 7
-_REB_POS_DREB_PRIOR_PO = {"G": 0.08527, "F": 0.08792, "C": 0.13836}  # PO: DREB per opp miss/48 — R6 Brief 7
+#
+# 5-position split (2026-05-10): G→PG/SG, F→SF/PF using StatMuse per-36 ratios.
+# Weighted averages preserved: (PG+SG)/2 == G_calibrated, (SF+PF)/2 == F_calibrated.
+# OREB ratios: PG=0.6, SG=0.7, SF=1.1, PF=1.7, C=1.9 per 36 min (StatMuse 2024-25).
+# DREB ratios: PG=2.0, SG=2.1, SF=2.9, PF=3.9, C=4.1 per 36 min.
+_REB_POS_OREB_PRIOR_RS = {"PG": 0.01885, "SG": 0.02199, "SF": 0.02553, "PF": 0.03943, "C": 0.07047}
+_REB_POS_DREB_PRIOR_RS = {"PG": 0.07892, "SG": 0.08280, "SF": 0.09018, "PF": 0.12126, "C": 0.17163}
+_REB_POS_OREB_PRIOR_PO = {"PG": 0.01988, "SG": 0.02320, "SF": 0.02123, "PF": 0.03279, "C": 0.05681}
+_REB_POS_DREB_PRIOR_PO = {"PG": 0.08322, "SG": 0.08732, "SF": 0.07499, "PF": 0.10084, "C": 0.13836}
 _REB_PRIOR_N_OREB   = 5    # prior worth ~5 pseudogames; 12 was too aggressive (50% prior weight at n=12)
 _REB_PRIOR_N_DREB   = 5    # same — positional prior has low info vs individual game data for established players
 REB_ALPHA           = 0.45  # weight on decomposed path (lean baseline until rates stabilise)
 # Per-minute baseline REB path priors (T6, Research Brief 6, 2026-05-02).
 # Bayesian shrinkage of EWMA reb/min rate — fixes cold_start baseline of 0.0.
-# RS: calibrated from 2024-25 DB (min>=10, Regular Season): G=0.055, F=0.095, C=0.165 reb/min.
-# PO: R6 Brief 7 empirical playoff values (tighter rotations).
-_REB_RATE_PRIOR_RS = {"G": 0.055, "F": 0.095, "C": 0.165}  # RS total reb/min — pre-R6 empirical
-_REB_RATE_PRIOR_PO = {"G": 0.058, "F": 0.079, "C": 0.133}  # PO total reb/min — R6 Brief 7
+# RS calibrated from 2024-25 DB; PO from R6 Brief 7. Split using per-36 ratios:
+# REB/36: PG=2.6, SG=2.8, SF=4.0, PF=5.6, C=6.0 (StatMuse 2024-25).
+_REB_RATE_PRIOR_RS = {"PG": 0.053, "SG": 0.057, "SF": 0.079, "PF": 0.111, "C": 0.165}
+_REB_RATE_PRIOR_PO = {"PG": 0.056, "SG": 0.060, "SF": 0.066, "PF": 0.092, "C": 0.133}
 _REB_RATE_PRIOR_N  = 12   # equivalent games of prior weight (same order of magnitude as reb EWMA span)
 
 # AST decomposition constants (Brief P3, Sec. 3 — 2026-05-01)
 # AST rate per team possession: normalises for pace naturally; avoids per-FGA over-normalisation.
-# Position-conditional EWMA span: non-PGs have volatile AST roles → shorter span + stronger shrinkage.
-# G/F/C grouping: G prior = midpoint of brief's PG(0.140) and SG(0.075) = 0.110.
-_AST_EWMA_SPAN = {"G": 10, "F": 6, "C": 5}
-# Priors calibrated from 2024-25 DB (min>=20, Regular Season) — 2026-05-01.
-# Brief uses PG/SG split (0.140/0.075); our G bucket is dominated by SGs and combo
-# guards, so the midpoint (0.110) massively overstates the actual DB average (0.073).
-# Empirical: G=0.073, F=0.050, C=0.045. Re-calibrate annually from DB.
-_AST_POS_PRIOR = {"G": 0.073, "F": 0.050, "C": 0.045}  # AST per team possession
-_AST_PRIOR_N   = {"G":  12,  "F":  14,    "C":  14}    # Research Brief 5: AST k=10-12; was 22/32/35
+# 5-position split (2026-05-10): PG role is stable (span=10, N=14); SG volatile (span=8, N=10).
+# AST ratios from StatMuse per-36: PG=4.4, SG=2.5, SF=1.9, PF=1.5, C=1.3.
+# Priors derived by splitting calibrated G=0.073/F=0.050 using these ratios, preserving averages.
+_AST_EWMA_SPAN = {"PG": 10, "SG": 8, "SF": 6, "PF": 6, "C": 5}
+_AST_POS_PRIOR = {"PG": 0.0929, "SG": 0.0529, "SF": 0.0559, "PF": 0.0441, "C": 0.0450}
+_AST_PRIOR_N   = {"PG": 14, "SG": 10, "SF": 14, "PF": 14, "C": 14}
 AST_ALPHA      = 0.40   # lean toward baseline until rates stabilise over longer sample
 FG3M_BLEND_ALPHA = 0.50  # weight on FGA-decomp path for 3PM; re-evaluate after grid search
 
@@ -404,51 +406,75 @@ FG3M_BLEND_ALPHA = 0.50  # weight on FGA-decomp path for 3PM; re-evaluate after 
 # (team_pace * min / 48) — matching the per-possession basis used by compute_ast_rate().
 # Projection: rate_per_poss * proj_poss * matchup  (pace_factor multiplier removed).
 # P15 (2026-05-01): re-calibrated from 2024-25 DB (min>=10, Regular Season).
-# Denominator: team_pace * min / 48 — matches compute_stl_blk_rates().
-_STL_POS_PRIOR = {"G": 0.01830, "F": 0.01664, "C": 0.01405}  # STL per possession
+# 5-position split (2026-05-10): STL/36 ratios: PG=1.5, SG=1.2, SF=1.2, PF=1.05, C=0.9.
+_STL_POS_PRIOR = {"PG": 0.02033, "SG": 0.01627, "SF": 0.01775, "PF": 0.01552, "C": 0.01405}
 _STL_PRIOR_N   = 5   # Research Brief 5: STL k=4-6; was 25 (severely overshrunken)
 
-# BLK priors: centers split into non-blockers (C_low) and rim protectors (C_high).
-# Classification still uses career BLK/min vs _BLK_CENTER_SPLIT_THRESHOLD (per-minute
-# threshold unchanged — classification is independent of the rate training basis).
-_BLK_CENTER_SPLIT_THRESHOLD = 0.030   # BLK/min cutoff for center classification (per-minute)
+# BLK priors: centers split C_low/C_high; PFs split PF/PF_high (rim-running bigs).
+# Classification uses career BLK/min vs threshold (>=10 games required for reliable split).
+# BLK/36 ratios: PG=0.45, SG=0.45, SF=0.6, PF=0.75, C=1.35 (StatMuse 2024-25).
+_BLK_CENTER_SPLIT_THRESHOLD = 0.030   # BLK/min cutoff for C classification (per-minute)
+_BLK_PF_SPLIT_THRESHOLD     = 0.020   # BLK/min cutoff for PF_high (rim-running bigs like Turner/JJJ)
 _BLK_POS_PRIOR = {
-    # P15 (2026-05-01): re-calibrated from 2024-25 DB (min>=10, Regular Season).
-    # C_low/C_high split uses same _BLK_CENTER_SPLIT_THRESHOLD=0.030 BLK/min.
-    "G":      0.00537,  # guards
-    "F":      0.00805,  # forwards
-    "C_low":  0.00886,  # non-blockers
-    "C_high": 0.02415,  # rim protectors
+    # P15 (2026-05-01) base; 5-position split (2026-05-10).
+    "PG":     0.00537,  # same as SG — BLK/36 identical (0.45 each)
+    "SG":     0.00537,
+    "SF":     0.00716,  # F_calibrated × (0.6/0.675)
+    "PF":     0.00894,  # F_calibrated × (0.75/0.675); baseline before PF_high check
+    "PF_high":0.01500,  # rim-running PFs (Turner/JJJ type) — between PF and C_low
+    "C_low":  0.00886,
+    "C_high": 0.02415,
 }
 _BLK_PRIOR_N = {
-    "G":      5,   # Research Brief 5: BLK k=4-6; was 30
-    "F":      5,   # was 30
-    "C_low":  6,   # near-zero rate — slightly more shrinkage; was 20
-    "C_high": 5,   # rim protectors converge quickly; was 25
+    "PG":      5,
+    "SG":      5,
+    "SF":      5,
+    "PF":      5,
+    "PF_high": 5,
+    "C_low":   6,   # near-zero rate — slightly more shrinkage
+    "C_high":  5,
 }
 
-# TOV per-possession priors — derived from per-36 archetypes / LEAGUE_AVG_PACE * 48.
-_TOV_POS_PRIOR = {"G": 0.0335, "F": 0.0241, "C": 0.0268}
+# TOV per-possession priors — 5-position split (2026-05-10).
+# TOV/36 ratios: PG=1.8, SG=1.4, SF=1.4, PF=1.3, C=1.3 (StatMuse 2024-25).
+_TOV_POS_PRIOR = {"PG": 0.03769, "SG": 0.02931, "SF": 0.02499, "PF": 0.02321, "C": 0.0268}
 _TOV_PRIOR_N   = 15  # Research Brief 5 guidance; was 20
 
 LEAGUE_AVG_TOV_RATE        = 0.136  # turnovers per possession, league-wide (2024-25 calibrated)
 LEAGUE_AVG_RIM_ATTEMPT_RATE = 56.0   # non-3pt FGA per game, league-wide (2024-25 calibrated)
 
+# Cold-start per-36 archetypes — 5-position split (2026-05-10).
+# Derived from StatMuse per-36 ratios applied to calibrated G/F/C averages.
+# Weighted averages preserved: (PG+SG)/2 == old G, (SF+PF)/2 == old F.
 _ARCHETYPE_PER36 = {
-    "G": {"pts": 14.5, "reb": 3.2, "ast": 5.8, "fg3m": 1.8, "stl": 1.2, "blk": 0.3, "tov": 2.5},
-    "F": {"pts": 13.8, "reb": 5.8, "ast": 2.8, "fg3m": 1.2, "stl": 0.9, "blk": 0.6, "tov": 1.8},
-    "C": {"pts": 13.2, "reb": 9.4, "ast": 1.8, "fg3m": 0.4, "stl": 0.7, "blk": 1.8, "tov": 2.0},
+    "PG": {"pts": 14.8, "reb": 3.1, "ast": 7.4, "fg3m": 1.7, "stl": 1.3, "blk": 0.2, "tov": 2.8},
+    "SG": {"pts": 14.2, "reb": 3.3, "ast": 4.2, "fg3m": 1.9, "stl": 1.1, "blk": 0.4, "tov": 2.2},
+    "SF": {"pts": 14.0, "reb": 4.8, "ast": 3.1, "fg3m": 1.4, "stl": 1.0, "blk": 0.5, "tov": 1.9},
+    "PF": {"pts": 13.6, "reb": 6.8, "ast": 2.5, "fg3m": 1.0, "stl": 0.8, "blk": 0.7, "tov": 1.7},
+    "C":  {"pts": 13.2, "reb": 9.4, "ast": 1.8, "fg3m": 0.4, "stl": 0.7, "blk": 1.8, "tov": 2.0},
 }
 
 def _pos_group(pos):
+    """G/F/C — used only for team_def_splits DB matchup queries (stored as G/F/C)."""
     if not pos: return "F"
     p = str(pos).strip().upper()
     if p.startswith("G"): return "G"
     if p.startswith("C"): return "C"
     return "F"
 
+def _pos_group5(pos):
+    """PG/SG/SF/PF/C — used for all Bayesian priors (finer-grained than matchup DB)."""
+    if not pos: return "SF"
+    p = str(pos).strip().upper()
+    if p == "PG":              return "PG"
+    if p in ("SG", "G"):       return "SG"
+    if p in ("SF", "F", "G-F", "F-G"): return "SF"
+    if p in ("PF", "F-C", "C-F"):      return "PF"
+    if p == "C":               return "C"
+    return "SF"
+
 def cold_start_rates(position):
-    return dict(_ARCHETYPE_PER36[_pos_group(position)])
+    return dict(_ARCHETYPE_PER36[_pos_group5(position)])
 
 def classify_role(df):
     """Classify a player's role from the most recent 10 games.
@@ -754,22 +780,32 @@ def compute_stl_blk_rates(df_clean: pd.DataFrame,
     """
     stl_prior = _STL_POS_PRIOR.get(pos_group, 0.025)
 
-    # --- BLK prior resolution: classify centers before shrinkage ---
+    # --- BLK prior resolution: classify C and PF before shrinkage ---
+    # Require >=10 games for reliable classification; <10 falls back to conservative tier.
     if pos_group == "C" and not df_clean.empty and "blk" in df_clean.columns:
-        mins_all  = df_clean["min"].clip(lower=1.0)
+        mins_all = df_clean["min"].clip(lower=1.0)
         career_blk_per_min = float(
             (df_clean["blk"].fillna(0) / mins_all)
             .replace([np.inf, -np.inf], np.nan)
             .mean()
         )
-        # Require at least 5 games for a reliable classification; otherwise
-        # the mean is too noisy and we fall back to the C population midpoint.
-        if len(df_clean) >= 5 and not np.isnan(career_blk_per_min):
+        if len(df_clean) >= 10 and not np.isnan(career_blk_per_min):
             blk_key = "C_high" if career_blk_per_min >= _BLK_CENTER_SPLIT_THRESHOLD else "C_low"
         else:
-            blk_key = "C_low"   # conservative fallback — under-projection is safer than over
+            blk_key = "C_low"
+    elif pos_group == "PF" and not df_clean.empty and "blk" in df_clean.columns:
+        mins_all = df_clean["min"].clip(lower=1.0)
+        career_blk_per_min = float(
+            (df_clean["blk"].fillna(0) / mins_all)
+            .replace([np.inf, -np.inf], np.nan)
+            .mean()
+        )
+        if len(df_clean) >= 10 and not np.isnan(career_blk_per_min):
+            blk_key = "PF_high" if career_blk_per_min >= _BLK_PF_SPLIT_THRESHOLD else "PF"
+        else:
+            blk_key = "PF"
     else:
-        blk_key = pos_group   # G or F — lookup unchanged
+        blk_key = pos_group   # PG, SG, SF — direct lookup
 
     blk_prior   = _BLK_POS_PRIOR.get(blk_key, 0.017)
     blk_prior_n = _BLK_PRIOR_N.get(blk_key, 5)
@@ -1292,7 +1328,8 @@ def project_player(
     _proj_poss_blk  = (game_pace ** _e_stl  * LEAGUE_AVG_PACE ** (1.0 - _e_stl)
                        * 1.0)              # M5: separate from STL (same elasticity, independent future tuning)
 
-    pg = _pos_group(position)
+    pg  = _pos_group(position)   # G/F/C — matchup DB queries only
+    pg5 = _pos_group5(position)  # PG/SG/SF/PF/C — Bayesian priors
     matchup_pts = float(np.clip(
         get_team_def_ratio(opp_team_id, pg, "pts", season, db_path), *MATCHUP_CLIP))
     matchup_reb = float(np.clip(
@@ -1397,7 +1434,7 @@ def project_player(
     # possession are nearly constant; pace sensitivity is weak.
     # Separate rates for OREB and DREB — different stabilisation timescales
     # and different contextual drivers (OREB = own-miss recovery; DREB = opp-miss recovery).
-    oreb_rate, dreb_rate = compute_reb_rates(df_clean, avail_oreb_pg, avail_dreb_pg, pg,
+    oreb_rate, dreb_rate = compute_reb_rates(df_clean, avail_oreb_pg, avail_dreb_pg, pg5,
                                              avail_weights=avail_weights, is_playoff=is_playoff)
     proj_oreb       = oreb_rate * avail_oreb_pg * (proj_min / 48.0) * pace_reb
     proj_dreb       = dreb_rate * avail_dreb_pg * (proj_min / 48.0) * pace_reb
@@ -1411,7 +1448,7 @@ def project_player(
     _reb_rate_raw  = rates.get("reb", 0.0)
     if _reb_n_games == 0:
         _reb_rate_prior_dict = _REB_RATE_PRIOR_PO if is_playoff else _REB_RATE_PRIOR_RS
-        _reb_rate_prior  = _reb_rate_prior_dict.get(pg, 0.090)
+        _reb_rate_prior  = _reb_rate_prior_dict.get(pg5, 0.090)
         _reb_rate_shrunk = (
             (_reb_n_games * _reb_rate_raw + _REB_RATE_PRIOR_N * _reb_rate_prior)
             / max(1, _reb_n_games + _REB_RATE_PRIOR_N)
@@ -1427,7 +1464,7 @@ def project_player(
     # Position-conditional EWMA span + Bayesian shrinkage (non-PGs volatile).
     # M3: use game_pace as denominator so training basis matches projection basis.
     # game_pace = (team_pace + opp_pace) / 2 — same value used in _proj_poss_ast.
-    ast_rate        = compute_ast_rate(df_clean, game_pace, pg, avail_weights=avail_weights)
+    ast_rate        = compute_ast_rate(df_clean, game_pace, pg5, avail_weights=avail_weights)
     # Q8.4: AST uses pace^0.50 elasticity. Formula: game_pace^e × LEAGUE_AVG^(1-e)
     # preserves the absolute possession count at league-average pace for any e.
     proj_poss_ast   = _proj_poss_ast * proj_min / 48.0
@@ -1443,7 +1480,7 @@ def project_player(
     # BLK DvP (P7): opponents who attack the paint more give rim protectors more chances.
     proj_poss_stl   = _proj_poss_stl * proj_min / 48.0
     proj_poss_blk   = _proj_poss_blk * proj_min / 48.0  # M5: separate from STL
-    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg, game_pace,  # C1: was team_pace
+    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg5, game_pace,  # C1: was team_pace
                                                 avail_weights=avail_weights)
     projections["stl"] = max(0.0, round(stl_rate * proj_poss_stl * matchup_stl, 2))
     projections["blk"] = max(0.0, round(blk_rate * proj_poss_blk * matchup_blk, 2))  # M5
@@ -1451,7 +1488,7 @@ def project_player(
     # TOV: per-possession rate (P5). Use linear game_pace (TOV scales proportionally
     # with possessions — turnovers are directly possession-limited).
     proj_poss_tov   = game_pace * proj_min / 48.0
-    tov_rate = compute_tov_rate(df_clean, game_pace, pg, avail_weights=avail_weights)  # C2: was team_pace
+    tov_rate = compute_tov_rate(df_clean, game_pace, pg5, avail_weights=avail_weights)  # C2: was team_pace
     projections["tov"] = max(0.0, round(tov_rate * proj_poss_tov, 2))
 
     # Q8.7 — trade archetype blending.
