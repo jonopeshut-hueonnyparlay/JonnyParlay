@@ -455,31 +455,20 @@ _ARCHETYPE_PER36 = {
 }
 
 def _pos_group(pos):
-    """PG/SG/SF/PF/C — matches _position_group() in projections_db.py for team_def_splits queries.
-    Requires --pull-positions + --recompute-splits after this change to populate 5-position DB rows.
+    """PG/SG/SF/PF/C — used for both matchup DB queries and Bayesian priors.
+    Mirrors _position_group() in projections_db.py and injury_parser._normalise_position().
     """
     if not pos: return "SF"
     p = str(pos).strip().upper()
-    if p == "PG":              return "PG"
-    if p in ("SG", "G"):       return "SG"
+    if p == "PG":                       return "PG"
+    if p in ("SG", "G"):                return "SG"
     if p in ("SF", "F", "G-F", "F-G"): return "SF"
     if p in ("PF", "F-C", "C-F"):      return "PF"
-    if p == "C":               return "C"
-    return "SF"
-
-def _pos_group5(pos):
-    """PG/SG/SF/PF/C — used for all Bayesian priors (finer-grained than matchup DB)."""
-    if not pos: return "SF"
-    p = str(pos).strip().upper()
-    if p == "PG":              return "PG"
-    if p in ("SG", "G"):       return "SG"
-    if p in ("SF", "F", "G-F", "F-G"): return "SF"
-    if p in ("PF", "F-C", "C-F"):      return "PF"
-    if p == "C":               return "C"
+    if p == "C":                        return "C"
     return "SF"
 
 def cold_start_rates(position):
-    return dict(_ARCHETYPE_PER36[_pos_group5(position)])
+    return dict(_ARCHETYPE_PER36[_pos_group(position)])
 
 def classify_role(df):
     """Classify a player's role from the most recent 10 games.
@@ -1333,8 +1322,7 @@ def project_player(
     _proj_poss_blk  = (game_pace ** _e_stl  * LEAGUE_AVG_PACE ** (1.0 - _e_stl)
                        * 1.0)              # M5: separate from STL (same elasticity, independent future tuning)
 
-    pg  = _pos_group(position)   # G/F/C — matchup DB queries only
-    pg5 = _pos_group5(position)  # PG/SG/SF/PF/C — Bayesian priors
+    pg = _pos_group(position)
     matchup_pts = float(np.clip(
         get_team_def_ratio(opp_team_id, pg, "pts", season, db_path), *MATCHUP_CLIP))
     matchup_reb = float(np.clip(
@@ -1439,7 +1427,7 @@ def project_player(
     # possession are nearly constant; pace sensitivity is weak.
     # Separate rates for OREB and DREB — different stabilisation timescales
     # and different contextual drivers (OREB = own-miss recovery; DREB = opp-miss recovery).
-    oreb_rate, dreb_rate = compute_reb_rates(df_clean, avail_oreb_pg, avail_dreb_pg, pg5,
+    oreb_rate, dreb_rate = compute_reb_rates(df_clean, avail_oreb_pg, avail_dreb_pg, pg,
                                              avail_weights=avail_weights, is_playoff=is_playoff)
     proj_oreb       = oreb_rate * avail_oreb_pg * (proj_min / 48.0) * pace_reb
     proj_dreb       = dreb_rate * avail_dreb_pg * (proj_min / 48.0) * pace_reb
@@ -1453,7 +1441,7 @@ def project_player(
     _reb_rate_raw  = rates.get("reb", 0.0)
     if _reb_n_games == 0:
         _reb_rate_prior_dict = _REB_RATE_PRIOR_PO if is_playoff else _REB_RATE_PRIOR_RS
-        _reb_rate_prior  = _reb_rate_prior_dict.get(pg5, 0.090)
+        _reb_rate_prior  = _reb_rate_prior_dict.get(pg, 0.090)
         _reb_rate_shrunk = (
             (_reb_n_games * _reb_rate_raw + _REB_RATE_PRIOR_N * _reb_rate_prior)
             / max(1, _reb_n_games + _REB_RATE_PRIOR_N)
@@ -1469,7 +1457,7 @@ def project_player(
     # Position-conditional EWMA span + Bayesian shrinkage (non-PGs volatile).
     # M3: use game_pace as denominator so training basis matches projection basis.
     # game_pace = (team_pace + opp_pace) / 2 — same value used in _proj_poss_ast.
-    ast_rate        = compute_ast_rate(df_clean, game_pace, pg5, avail_weights=avail_weights)
+    ast_rate        = compute_ast_rate(df_clean, game_pace, pg, avail_weights=avail_weights)
     # Q8.4: AST uses pace^0.50 elasticity. Formula: game_pace^e × LEAGUE_AVG^(1-e)
     # preserves the absolute possession count at league-average pace for any e.
     proj_poss_ast   = _proj_poss_ast * proj_min / 48.0
@@ -1485,7 +1473,7 @@ def project_player(
     # BLK DvP (P7): opponents who attack the paint more give rim protectors more chances.
     proj_poss_stl   = _proj_poss_stl * proj_min / 48.0
     proj_poss_blk   = _proj_poss_blk * proj_min / 48.0  # M5: separate from STL
-    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg5, game_pace,  # C1: was team_pace
+    stl_rate, blk_rate = compute_stl_blk_rates(df_clean, pg, game_pace,  # C1: was team_pace
                                                 avail_weights=avail_weights)
     projections["stl"] = max(0.0, round(stl_rate * proj_poss_stl * matchup_stl, 2))
     projections["blk"] = max(0.0, round(blk_rate * proj_poss_blk * matchup_blk, 2))  # M5
@@ -1493,7 +1481,7 @@ def project_player(
     # TOV: per-possession rate (P5). Use linear game_pace (TOV scales proportionally
     # with possessions — turnovers are directly possession-limited).
     proj_poss_tov   = game_pace * proj_min / 48.0
-    tov_rate = compute_tov_rate(df_clean, game_pace, pg5, avail_weights=avail_weights)  # C2: was team_pace
+    tov_rate = compute_tov_rate(df_clean, game_pace, pg, avail_weights=avail_weights)  # C2: was team_pace
     projections["tov"] = max(0.0, round(tov_rate * proj_poss_tov, 2))
 
     # Q8.7 — trade archetype blending.
