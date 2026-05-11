@@ -61,14 +61,21 @@ _STATUS_MAP: Dict[str, Tuple[str, float]] = {
 # ---------------------------------------------------------------------------
 # Fraction of an OUT player's minutes that flow to each position group.
 # Rows = absent player's position group; cols = recipient group.
+#
+# Refit 2026-05-10 on 84k player-game rows (3 seasons, n=681 absent events,
+# roll_avg>=15 absent / roll_avg>=10 recipients).  Key findings:
+#   - Same-position self-replacement is minimal (old: 45-55%, empirical: 8-40%)
+#   - SG+SF absorb ~78% of displaced minutes regardless of absent position
+#   - PG receiver weight was structurally wasted (NBA API never returns PG) →
+#     set to 0.00 and folded into SG so 100% of minutes are redistributed
 _POS_FLOW: Dict[str, Dict[str, float]] = {
-    "PG": {"PG": 0.55, "SG": 0.25, "SF": 0.12, "PF": 0.05, "C": 0.03},
-    "SG": {"SG": 0.45, "PG": 0.22, "SF": 0.20, "PF": 0.08, "C": 0.05},
-    "SF": {"SF": 0.45, "PF": 0.25, "SG": 0.18, "PG": 0.07, "C": 0.05},
-    "PF": {"PF": 0.45, "SF": 0.25, "C": 0.20, "SG": 0.07, "PG": 0.03},
-    "C":  {"C":  0.55, "PF": 0.30, "SF": 0.10, "SG": 0.03, "PG": 0.02},
+    "PG": {"PG": 0.00, "SG": 0.40, "SF": 0.38, "PF": 0.11, "C": 0.11},  # PG≡SG in practice
+    "SG": {"PG": 0.00, "SG": 0.40, "SF": 0.38, "PF": 0.11, "C": 0.11},  # n=305
+    "SF": {"PG": 0.00, "SG": 0.42, "SF": 0.36, "PF": 0.10, "C": 0.12},  # n=264
+    "PF": {"PG": 0.00, "SG": 0.42, "SF": 0.35, "PF": 0.08, "C": 0.15},  # n=53
+    "C":  {"PG": 0.00, "SG": 0.42, "SF": 0.37, "PF": 0.12, "C": 0.09},  # n=59
 }
-_DEFAULT_POS_FLOW: Dict[str, float] = {"PG": 0.20, "SG": 0.20, "SF": 0.20, "PF": 0.20, "C": 0.20}
+_DEFAULT_POS_FLOW: Dict[str, float] = {"PG": 0.00, "SG": 0.41, "SF": 0.37, "PF": 0.10, "C": 0.12}
 
 REDISTRIB_PRIMARY_SHARE = 0.50   # primary backup's share of same-pos pool
 REDISTRIB_EFFICIENCY    = 0.90   # efficiency discount on incremental usage
