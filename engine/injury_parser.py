@@ -351,11 +351,21 @@ def redistribute_minutes(
     out_pos   = _normalise_position(out_player_position)
     pos_flow  = _POS_FLOW.get(out_pos, _DEFAULT_POS_FLOW)
 
-    for pos_group, flow_share in pos_flow.items():
+    # Renormalize flow weights to only position groups that have eligible players.
+    # Without this, groups with no eligible players (e.g. C when no backup center
+    # is in rotation) silently discard their pool — the absent player's minutes
+    # just disappear instead of flowing to groups that do have players.
+    eligible_pos = set(eligible["norm_pos"].unique())
+    active_flow = {pos: share for pos, share in pos_flow.items()
+                   if pos in eligible_pos and share > 0}
+    total_active = sum(active_flow.values())
+    if total_active <= 0:
+        return existing_bumps
+    normalized_flow = {pos: share / total_active for pos, share in active_flow.items()}
+
+    for pos_group, flow_share in normalized_flow.items():
         group = eligible[eligible["norm_pos"] == pos_group].sort_values(
             "avg_min", ascending=False)
-        if group.empty:
-            continue
 
         pool = out_player_avg_min * flow_share
 
