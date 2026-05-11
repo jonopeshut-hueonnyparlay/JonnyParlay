@@ -257,7 +257,7 @@ def _regenerate_projections(game_date, db_path):
         game_date=game_date, season="2025-26",
         implied_totals={}, spreads={},
         injury_statuses={}, injury_minutes_overrides={},
-        db_path=db_path, persist=True,
+        db_path=db_path, persist=False,
     )
     _proj_cache[game_date] = projs
     name_map = {fold_name(p["player_name"]): p for p in projs}
