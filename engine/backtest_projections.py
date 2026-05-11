@@ -522,6 +522,11 @@ def run_backtest_all_projections(
     stat_cols = list(_PROJ_COL_MAP.values())  # proj_pts, proj_ast, ...
     stat_cols_sql = ", ".join(f"p.{c}" for c in stat_cols)
 
+    # Join via player_id + date rather than game_id so that projections stored
+    # with a SCHED-prefixed game_id (seeded before tip-off) correctly match
+    # player_game_stats rows that carry the real NBA game_id (populated after
+    # the game completes). A player plays at most one game per date, so the
+    # player_id + game_date join is unambiguous.
     rows = conn.execute(
         f"""
         SELECT
@@ -530,9 +535,8 @@ def run_backtest_all_projections(
             pgs.pts, pgs.ast, pgs.reb, pgs.fg3m, pgs.blk, pgs.stl,
             pgs.min AS actual_min
         FROM projections p
-        JOIN games g   ON g.game_id  = p.game_id
-        JOIN player_game_stats pgs
-             ON pgs.game_id = g.game_id AND pgs.player_id = p.player_id
+        JOIN player_game_stats pgs ON pgs.player_id = p.player_id
+        JOIN games g ON g.game_id = pgs.game_id AND g.game_date = p.run_date
         WHERE p.run_date >= ? AND p.run_date <= ?
         ORDER BY p.run_date, p.player_name
         """,
