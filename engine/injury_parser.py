@@ -81,7 +81,8 @@ _DEFAULT_POS_FLOW: Dict[str, float] = {"PG": 0.00, "SG": 0.25, "SF": 0.25, "PF":
 REDISTRIB_PRIMARY_SHARE = 0.50   # primary backup's share of same-pos pool
 REDISTRIB_EFFICIENCY    = 0.90   # efficiency discount on incremental usage
 REDISTRIB_MIN_ELIGIBLE  = 8.0    # min avg minutes to qualify as recipient
-REDISTRIB_MAX_MIN       = 42.0   # hard ceiling on any player's projected minutes
+# Note: per-player ceiling is enforced by ROLE_MAX_MIN in project_player(),
+# not here. Bumps are also M16-clamped to 48.0 in get_injury_context().
 
 def _parse_status(raw: str) -> Tuple[str, float]:
     """Map raw Current Status string to (code, play_probability)."""
@@ -513,7 +514,23 @@ def get_injury_context(
              len(injury_statuses),
              sum(1 for c in injury_statuses.values() if c == "O"))
 
+    # Deduplicate by player_id — injury PDFs occasionally list the same player
+    # twice (different game entries), which would double-redistribute their minutes.
+    seen_pids: set = set()
+    deduped: List[Tuple[int, int, str]] = []
+    for entry in out_players:
+        if entry[0] not in seen_pids:
+            seen_pids.add(entry[0])
+            deduped.append(entry)
+    if len(deduped) < len(out_players):
+        log.warning("Deduplicated %d duplicate OUT player entries",
+                    len(out_players) - len(deduped))
+    out_players = deduped
+
     # Minutes redistribution for OUT players (P13 — position-aware)
+    # Assumes players.team_id is current as of before_date. If a player was
+    # traded after their last DB pull, _get_team_rotation() may use the wrong
+    # team. Re-run --pull-players after trades to keep team_id current.
     for out_pid, team_id, out_pos in out_players:
         df = get_player_recent_games(
             out_pid, date_str, n_games=15, season_filter=season, db_path=db_path)
