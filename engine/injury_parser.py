@@ -62,20 +62,21 @@ _STATUS_MAP: Dict[str, Tuple[str, float]] = {
 # Fraction of an OUT player's minutes that flow to each position group.
 # Rows = absent player's position group; cols = recipient group.
 #
-# Refit 2026-05-10 on 84k player-game rows (3 seasons, n=681 absent events,
-# roll_avg>=15 absent / roll_avg>=10 recipients).  Key findings:
-#   - Same-position self-replacement is minimal (old: 45-55%, empirical: 8-40%)
-#   - SG+SF absorb ~78% of displaced minutes regardless of absent position
-#   - PG receiver weight was structurally wasted (NBA API never returns PG) →
-#     set to 0.00 and folded into SG so 100% of minutes are redistributed
+# 2026-05-10: PG receiver weight folded into SG (NBA API never returns
+# position=PG, so PG receiver slots were always skipped → silent bug where
+# SG injuries only redistributed 78% of missing minutes).  Same-position
+# weights unchanged from original intuitive values: empirical surplus analysis
+# measured collective team surplus (64% of C-absent events have no backup C,
+# so small-ball dilution makes C→C look near-zero), not primary-backup
+# replacement, which is what the code's REDISTRIB_PRIMARY_SHARE logic models.
 _POS_FLOW: Dict[str, Dict[str, float]] = {
-    "PG": {"PG": 0.00, "SG": 0.40, "SF": 0.38, "PF": 0.11, "C": 0.11},  # PG≡SG in practice
-    "SG": {"PG": 0.00, "SG": 0.40, "SF": 0.38, "PF": 0.11, "C": 0.11},  # n=305
-    "SF": {"PG": 0.00, "SG": 0.42, "SF": 0.36, "PF": 0.10, "C": 0.12},  # n=264
-    "PF": {"PG": 0.00, "SG": 0.42, "SF": 0.35, "PF": 0.08, "C": 0.15},  # n=53
-    "C":  {"PG": 0.00, "SG": 0.42, "SF": 0.37, "PF": 0.12, "C": 0.09},  # n=59
+    "PG": {"PG": 0.00, "SG": 0.80, "SF": 0.12, "PF": 0.05, "C": 0.03},  # PG≡SG: PG+SG folded
+    "SG": {"PG": 0.00, "SG": 0.56, "SF": 0.31, "PF": 0.08, "C": 0.05},  # PG(0.22)→SG
+    "SF": {"PG": 0.00, "SG": 0.25, "SF": 0.45, "PF": 0.25, "C": 0.05},  # PG(0.07)→SG
+    "PF": {"PG": 0.00, "SG": 0.10, "SF": 0.25, "PF": 0.45, "C": 0.20},  # PG(0.03)→SG
+    "C":  {"PG": 0.00, "SG": 0.05, "SF": 0.10, "PF": 0.30, "C": 0.55},  # PG(0.02)→SG
 }
-_DEFAULT_POS_FLOW: Dict[str, float] = {"PG": 0.00, "SG": 0.41, "SF": 0.37, "PF": 0.10, "C": 0.12}
+_DEFAULT_POS_FLOW: Dict[str, float] = {"PG": 0.00, "SG": 0.25, "SF": 0.25, "PF": 0.25, "C": 0.25}
 
 REDISTRIB_PRIMARY_SHARE = 0.50   # primary backup's share of same-pos pool
 REDISTRIB_EFFICIENCY    = 0.90   # efficiency discount on incremental usage
