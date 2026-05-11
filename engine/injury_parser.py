@@ -62,11 +62,13 @@ _STATUS_MAP: Dict[str, Tuple[str, float]] = {
 # Fraction of an OUT player's minutes that flow to each position group.
 # Rows = absent player's position group; cols = recipient group.
 _POS_FLOW: Dict[str, Dict[str, float]] = {
-    "G": {"G": 0.60, "F": 0.30, "C": 0.10},
-    "F": {"G": 0.25, "F": 0.50, "C": 0.25},
-    "C": {"G": 0.10, "F": 0.30, "C": 0.60},
+    "PG": {"PG": 0.55, "SG": 0.25, "SF": 0.12, "PF": 0.05, "C": 0.03},
+    "SG": {"SG": 0.45, "PG": 0.22, "SF": 0.20, "PF": 0.08, "C": 0.05},
+    "SF": {"SF": 0.45, "PF": 0.25, "SG": 0.18, "PG": 0.07, "C": 0.05},
+    "PF": {"PF": 0.45, "SF": 0.25, "C": 0.20, "SG": 0.07, "PG": 0.03},
+    "C":  {"C":  0.55, "PF": 0.30, "SF": 0.10, "SG": 0.03, "PG": 0.02},
 }
-_DEFAULT_POS_FLOW: Dict[str, float] = {"G": 0.33, "F": 0.34, "C": 0.33}
+_DEFAULT_POS_FLOW: Dict[str, float] = {"PG": 0.20, "SG": 0.20, "SF": 0.20, "PF": 0.20, "C": 0.20}
 
 REDISTRIB_PRIMARY_SHARE = 0.50   # primary backup's share of same-pos pool
 REDISTRIB_EFFICIENCY    = 0.90   # efficiency discount on incremental usage
@@ -237,15 +239,21 @@ def resolve_player_ids(
 # ---------------------------------------------------------------------------
 
 def _normalise_position(pos: Optional[str]) -> str:
-    """Map raw position string to G / F / C group."""
+    """Map raw position string to PG / SG / SF / PF / C group."""
     if not pos:
-        return "F"
+        return "SF"
     p = str(pos).strip().upper()
-    if p in ("PG", "SG", "G"):
-        return "G"
-    if p in ("C", "F-C", "C-F"):
+    if p == "PG":
+        return "PG"
+    if p in ("SG", "G"):
+        return "SG"
+    if p in ("SF", "F", "G-F", "F-G"):
+        return "SF"
+    if p in ("PF", "F-C", "C-F"):
+        return "PF"
+    if p == "C":
         return "C"
-    return "F"   # SF, PF, F, G-F, F-G → forward
+    return "SF"
 
 
 def _get_team_rotation(
@@ -309,7 +317,7 @@ def redistribute_minutes(
     a role-tier cap (ROLE_MAX_MIN).
 
     Three-tier logic (unchanged):
-      1. Minutes pool is apportioned to G/F/C groups via _POS_FLOW.
+      1. Minutes pool is apportioned to PG/SG/SF/PF/C groups via _POS_FLOW.
       2. Within each group the primary backup (highest avg_min) receives
          REDISTRIB_PRIMARY_SHARE of the group pool; the residual is split
          proportionally across the rest of the group by avg_min.

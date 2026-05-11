@@ -310,16 +310,9 @@ def _proj_to_row(
     if not csv_status and proj.get("role_tier") == "starter":
         csv_status = "Confirmed"
 
-    # Map position to SaberSim-style (G/F/C)
-    pos = proj.get("position") or ""
-    if not pos:
-        # M2: map sixth_man explicitly to "F" -- role_tier[:1] would produce "S"
-        # which injury_parser._normalise_position() doesn't recognise, silently
-        # excluding sixth-men from minutes redistribution when a starter is OUT.
-        role = proj.get("role_tier", "")
-        _ROLE_POS = {"starter": "F", "sixth_man": "F", "rotation": "F", "bench": "F",
-                     "spot": "F", "cold_start": "F"}
-        pos = _ROLE_POS.get(role, role[:1].upper() if role else "") or "F"
+    # Write the actual position (PG/SG/SF/PF/C) from the players table.
+    # injury_parser._normalise_position() collapses to G/F/C at read time for redistribution.
+    pos = str(proj.get("position") or "F").strip().upper() or "F"
 
     return {
         "Name":        proj["player_name"],

@@ -1530,6 +1530,7 @@ def project_player(
         "run_date": game_date, "run_ts": run_ts,
         "player_id": player_id, "player_name": player_name,
         "team_id": team_id, "opp_team_id": opp_team_id, "game_id": game_id,
+        "position": position,
         "role_tier": role,
         "pts_cv": pts_cv,
         "proj_min":  round(proj_min, 2),
