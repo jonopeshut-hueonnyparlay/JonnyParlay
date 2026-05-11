@@ -6,7 +6,7 @@
 - `REGULAR_SEASON_STAT_SCALAR` (~line 276): pts=1.0019, ast=1.0120, reb=1.0264, fg3m=1.0231, blk=1.0608, stl=1.0017, tov=1.000.
 - `LEAGUE_AVG_PACE`=100.22 (2025-26 season-to-date; 2024-25 RS=99.58). `LEAGUE_AVG_PACE_PO`=96.5.
 - `_HOME_AWAY_DELTA`: pts=0.0235, reb=0.0088, ast=0.0333, fg3m=0.0452, blk=0.0439, tov=−0.0122.
-- `_REB_RATE_PRIOR`: G=0.058, F=0.079, C=0.133.
+- `_REB_RATE_PRIOR` (PO): PG=0.056, SG=0.060, SF=0.066, PF=0.092, C=0.133. RS: PG=0.053, SG=0.057, SF=0.079, PF=0.111, C=0.165. Split 2026-05-10 from G/F/C using StatMuse per-36 ratios.
 - `DK_STD_FLOOR`: starter=4.0, sixth_man=4.0, rotation=3.5, spot=3.0, cold_start=3.0. `DK_STD_COEFF`=0.35.
 - `HIGH_VAR_CV_THRESHOLD`=0.60, `HIGH_VAR_MIN_GAMES`=8 (3PT specialist bimodal flag, RB8 H5).
 - Blowout sigmoid: k=0.15, mid=20.0, max_reduction=0.19 (refit 2026-05-06 on 24,600 rows).
@@ -17,6 +17,7 @@
 - **H3 (Platt refit)**: gated on ~300 post-v4 `over_p_raw` rows (~13 as of 2026-05-09). Check: count non-empty `over_p_raw` in pick_log.csv.
 - **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv` (0/86 as of 2026-05-09). Daemon stable post-2026-05-09 MAX_UPTIME fix.
 - **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`): refit 2026-05-09 on 76,604 trailing-10-game snapshots. MPG threshold confirmed at 26 (24-26 MPG players project like sixth_man regardless of sr; +6.9% PO bias with starter scalar vs -4.6% with sixth_man). 20/12/5 MPG and 0.60 sr unchanged.
+- **Position model** (2026-05-10): all position groupings expanded from G/F/C → PG/SG/SF/PF/C. `_pos_group()` in nba_projector, `_position_group()` in projections_db, and `_normalise_position()` in injury_parser all consistent. NBA API only returns G/F/C + combos → effective mapping: G→SG, F→SF, G-F→SF, F-C→PF, C→C. PG tier ready for finer data. Injury redistribution `_POS_FLOW` expanded to 5-position flows. All Bayesian priors (REB/AST/STL/BLK/TOV/archetypes) split using StatMuse 2024-25 per-36 ratios; weighted averages preserved. DB migrated: 587 players re-pulled, team_def_splits recomputed (2880 rows, SG/SF/PF/C groups). PF_high BLK tier added (≥0.020 BLK/min, ~Turner/JJJ). C/PF classification threshold raised 5→10 games.
 
 ## Closed Audits
 Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
