@@ -455,12 +455,17 @@ _ARCHETYPE_PER36 = {
 }
 
 def _pos_group(pos):
-    """G/F/C — used only for team_def_splits DB matchup queries (stored as G/F/C)."""
-    if not pos: return "F"
+    """PG/SG/SF/PF/C — matches _position_group() in projections_db.py for team_def_splits queries.
+    Requires --pull-positions + --recompute-splits after this change to populate 5-position DB rows.
+    """
+    if not pos: return "SF"
     p = str(pos).strip().upper()
-    if p.startswith("G"): return "G"
-    if p.startswith("C"): return "C"
-    return "F"
+    if p == "PG":              return "PG"
+    if p in ("SG", "G"):       return "SG"
+    if p in ("SF", "F", "G-F", "F-G"): return "SF"
+    if p in ("PF", "F-C", "C-F"):      return "PF"
+    if p == "C":               return "C"
+    return "SF"
 
 def _pos_group5(pos):
     """PG/SG/SF/PF/C — used for all Bayesian priors (finer-grained than matchup DB)."""

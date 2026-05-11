@@ -55,15 +55,25 @@ _API_RETRY_BACKOFF = [2, 5, 15]
 _CLIP_LO, _CLIP_HI = 0.80, 1.20
 _DEF_STATS  = ["pts", "reb", "ast", "fg3m", "fg3a", "stl", "blk", "tov"]
 MIN_SPLIT_GAMES = 5  # M8: minimum games for a team's defensive split to be stored
-_POS_GROUPS = ["G", "F", "C"]
+_POS_GROUPS = ["PG", "SG", "SF", "PF", "C"]
 
 
 def _position_group(pos: str) -> str:
+    """Map raw NBA API position string to PG/SG/SF/PF/C.
+
+    NBA API returns values like 'Point Guard', 'PG', 'Guard', 'Forward-Center', etc.
+    Must stay consistent with _pos_group5() in nba_projector.py.
+    """
     p = str(pos).strip().upper()
-    if not p or p == "NONE": return "F"
-    if p.startswith("G"):    return "G"
-    if p.startswith("C"):    return "C"
-    return "F"
+    if not p or p == "NONE":                    return "SF"
+    if p in ("PG", "POINT GUARD"):              return "PG"
+    if p in ("SG", "SHOOTING GUARD", "G", "GUARD"): return "SG"
+    if p in ("SF", "SMALL FORWARD", "G-F", "GUARD-FORWARD", "F-G", "FORWARD-GUARD"): return "SF"
+    if p in ("PF", "POWER FORWARD", "F-C", "FORWARD-CENTER", "C-F", "CENTER-FORWARD"): return "PF"
+    if p in ("C", "CENTER"):                    return "C"
+    if p.startswith("F"):                       return "SF"
+    if p.startswith("C"):                       return "C"
+    return "SF"
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +476,16 @@ def compute_defensive_splits(conn, seasons: Optional[List[str]] = None) -> None:
     if seasons is None:
         seasons = DEFAULT_SEASONS
     log.info("Computing defensive splits for: %s", seasons)
+
+    # Remove stale rows for position groups no longer in _POS_GROUPS before recomputing.
+    valid_ph = ",".join("?" * len(_POS_GROUPS))
+    deleted = conn.execute(
+        f"DELETE FROM team_def_splits WHERE position_group NOT IN ({valid_ph})",
+        _POS_GROUPS
+    ).rowcount
+    if deleted:
+        log.info("Removed %d stale team_def_splits rows (obsolete position groups)", deleted)
+
     ph = ",".join("?" * len(seasons))
 
     df = pd.read_sql_query(
