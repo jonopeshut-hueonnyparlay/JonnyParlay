@@ -498,9 +498,41 @@ def run(
         log.info("  applied %d manual override(s) from inactives_override.json", len(_manual))
 
     # 3b. Confirmed starting lineups (~30 min before tip via NBA live API)
+    # The live scoreboard always returns today's games — filter to only teams
+    # that actually play on game_date so stale lineups from a prior game day
+    # don't get injected into a future-date projection run.
     confirmed_starters = fetch_confirmed_starters(game_date)
     if confirmed_starters:
-        log.info("Confirmed lineups available: %d teams", len(confirmed_starters))
+        try:
+            import sqlite3 as _sl3
+            _con = _sl3.connect(db_path); _con.row_factory = _sl3.Row
+            _active_abbrs = {
+                r["abbr"] for r in _con.execute(
+                    "SELECT th.abbreviation AS abbr FROM games g"
+                    " JOIN teams th ON th.team_id = g.home_team_id"
+                    " WHERE g.game_date = ?"
+                    " UNION SELECT ta.abbreviation FROM games g"
+                    " JOIN teams ta ON ta.team_id = g.away_team_id"
+                    " WHERE g.game_date = ?",
+                    (game_date, game_date),
+                ).fetchall()
+            }
+            _con.close()
+            stale = [t for t in confirmed_starters if t not in _active_abbrs]
+            if stale:
+                log.warning(
+                    "Confirmed lineups filtered: %s have no game on %s "
+                    "(live scoreboard returned today's games — running for future date?)",
+                    stale, game_date,
+                )
+                confirmed_starters = {t: v for t, v in confirmed_starters.items()
+                                      if t in _active_abbrs}
+        except Exception as _le:
+            log.debug("Lineup date-filter failed: %s", _le)
+        if confirmed_starters:
+            log.info("Confirmed lineups available: %d teams", len(confirmed_starters))
+        else:
+            log.debug("No confirmed lineups for %s after date filter", game_date)
     else:
         log.debug("No confirmed lineups yet (pre-tip or unavailable)")
 
