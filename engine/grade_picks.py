@@ -64,12 +64,14 @@ from paths import (  # noqa: E402
     PICK_LOG_PATH as _PICK_LOG_PATH_P,
     PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    PICK_LOG_CUSTOM_PATH as _PICK_LOG_CUSTOM_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
     LOG_FILE_PATH as _LOG_FILE_PATH_P,
 )
 PICK_LOG_PATH        = str(_PICK_LOG_PATH_P)
 PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
 PICK_LOG_MLB_PATH    = str(_PICK_LOG_MLB_PATH_P)
+PICK_LOG_CUSTOM_PATH = str(_PICK_LOG_CUSTOM_PATH_P)
 DISCORD_GUARD_FILE   = str(_DISCORD_GUARD_FILE_P)
 LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
 
@@ -205,7 +207,7 @@ def fetch_scores(sport, date_str):
     # API max is 40 on paid plans; cap there. Minimum 3 so same-day runs still work.
     try:
         target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        delta = (datetime.utcnow().date() - target_date).days + 1
+        delta = (datetime.now(timezone.utc).date() - target_date).days + 1
         days_from = max(3, min(delta, 40))
     except Exception:
         days_from = 3
@@ -461,6 +463,47 @@ def fetch_mlb_boxscores(date_str):
         return player_stats
     except Exception as e:
         print(f"  ⚠ MLB stats fetch failed: {e}")
+        return {}
+
+
+def fetch_mlb_game_scores(date_str):
+    """Fetch MLB final game scores from MLB Stats API — mirrors Odds API format.
+
+    Used as fallback when The Odds API /scores returns 422 (plan limit).
+    Returns dict: 'Away @ Home' → {home_team, away_team, scores, completed}.
+    """
+    try:
+        r = requests.get(f"{MLB_STATS_BASE}/schedule",
+                         params={"sportId": 1, "date": date_str,
+                                 "hydrate": "linescore,team"},
+                         headers=default_headers(), timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        result = {}
+        for date_entry in data.get("dates", []):
+            for game in date_entry.get("games", []):
+                state = game.get("status", {}).get("abstractGameState", "")
+                if state != "Final":
+                    continue
+                away_name = game.get("teams", {}).get("away", {}).get("team", {}).get("name", "")
+                home_name = game.get("teams", {}).get("home", {}).get("team", {}).get("name", "")
+                away_score = game.get("teams", {}).get("away", {}).get("score")
+                home_score = game.get("teams", {}).get("home", {}).get("score")
+                if not away_name or not home_name or away_score is None or home_score is None:
+                    continue
+                key = f"{away_name} @ {home_name}"
+                result[key] = {
+                    "home_team": home_name,
+                    "away_team": away_name,
+                    "scores": [
+                        {"name": away_name, "score": str(away_score)},
+                        {"name": home_name, "score": str(home_score)},
+                    ],
+                    "completed": True,
+                }
+        return result
+    except Exception as e:
+        logger.warning(f"[fetch_mlb_game_scores] Failed for {date_str}: {e}")
         return {}
 
 
@@ -1108,8 +1151,9 @@ def grade_prop(pick, player_stats, scores_by_game=None):
             actual = best_candidate
 
     if actual is None:
-        # Game is confirmed complete but player not in any boxscore → DNP/scratch
-        if scores_by_game is not None and _game_is_complete(pick, scores_by_game):
+        # Game is confirmed complete but player not in any boxscore → DNP/scratch.
+        # scores_by_game=None means gate was bypassed (plan-limit = game definitely done).
+        if scores_by_game is None or _game_is_complete(pick, scores_by_game):
             return "VOID"
         return None
 
@@ -1995,6 +2039,13 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
                 pstats = fetch_nhl_boxscores(date_str)
             elif sport == "MLB":
                 pstats = fetch_mlb_boxscores(date_str)
+                # MLB Stats API fallback for game scores when Odds API plan-limit
+                if scores_map is None:
+                    mlb_scores = fetch_mlb_game_scores(date_str)
+                    if mlb_scores:
+                        all_scores[(date_str, sport)] = mlb_scores
+                        if not is_shadow:
+                            print(f"    MLB fallback: {len(mlb_scores)} game scores loaded")
                 # Also fetch inning-by-inning data for F5/NRFI grading
                 ls_map = fetch_mlb_linescores(date_str)
                 all_linescores[(date_str, "MLB")] = ls_map
@@ -2017,6 +2068,15 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
         # limit). Normalise to {} so callers don't crash on .items() etc.
         # grade_prop receives None explicitly so it skips the game-complete gate.
         _raw_scores = all_scores.get((date_str, sport))
+        # Odds API only keeps recent completed games; for past dates where it
+        # returned empty (not plan-limit None), bypass the gate so player stats
+        # alone determine the result. Applies to MLB and any sport the API drops.
+        if isinstance(_raw_scores, dict) and not _raw_scores:
+            try:
+                if datetime.strptime(date_str, "%Y-%m-%d").date() < datetime.now(timezone.utc).date():
+                    _raw_scores = None
+            except Exception:
+                pass
         _scores_dict = _raw_scores if isinstance(_raw_scores, dict) else {}
 
         if row.get("run_type", "").lower() in ("longshot", "sgp"):
@@ -2054,7 +2114,9 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
                 else:               emoji = "\U0001f6ab"  # VOID
                 print(f"  {emoji} {row.get('player','')} {row.get('direction','')} {row.get('line','')} {stat} \u2192 {result}")
 
-    if not is_shadow:
+    if is_shadow:
+        print(f"  {label} Graded {graded_count}/{len(ungraded)} picks (silent)")
+    else:
         print(f"\n  {label} Graded {graded_count}/{len(ungraded)} picks")
 
     # \u2500\u2500 Write back \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -2127,7 +2189,7 @@ Examples:
 
     if args.repost and not args.date:
         print("  ❌ --repost requires --date YYYY-MM-DD")
-        import sys; sys.exit(1)
+        sys.exit(1)
 
     global _CONFIRM_MODE
     _CONFIRM_MODE = args.confirm
@@ -2150,7 +2212,7 @@ Examples:
 
     # ── Grade shadow sport logs silently (no Discord post) ────
     if not args.repost and use_default_paths:
-        for shadow_path in (PICK_LOG_MLB_PATH,):
+        for shadow_path in (PICK_LOG_MLB_PATH, PICK_LOG_CUSTOM_PATH):
             _grade_one_log(shadow_path, args, is_shadow=True)
 
 

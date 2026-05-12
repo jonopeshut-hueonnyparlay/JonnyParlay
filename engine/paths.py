@@ -101,6 +101,7 @@ def data_path(*parts: str) -> Path:
 PICK_LOG_PATH: Path = Path(os.environ["JONNYPARLAY_PICK_LOG"]) if "JONNYPARLAY_PICK_LOG" in os.environ else DATA_DIR / "pick_log.csv"
 PICK_LOG_MANUAL_PATH: Path = DATA_DIR / "pick_log_manual.csv"
 PICK_LOG_MLB_PATH: Path = DATA_DIR / "pick_log_mlb.csv"
+PICK_LOG_CUSTOM_PATH: Path = DATA_DIR / "pick_log_custom.csv"
 DISCORD_GUARD_FILE: Path = DATA_DIR / "discord_posted.json"
 LOG_FILE_PATH: Path = DATA_DIR / "jonnyparlay.log"
 CLV_DAEMON_LOG: Path = DATA_DIR / "clv_daemon.log"
@@ -113,6 +114,7 @@ __all__ = [
     "PICK_LOG_PATH",
     "PICK_LOG_MANUAL_PATH",
     "PICK_LOG_MLB_PATH",
+    "PICK_LOG_CUSTOM_PATH",
     "DISCORD_GUARD_FILE",
     "LOG_FILE_PATH",
     "CLV_DAEMON_LOG",
