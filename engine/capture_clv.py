@@ -1302,6 +1302,11 @@ def run(run_date: str):
                           f"(T{int(secs_to_start/60):+d}min) — "
                           f"write gate opens in {mins_to_gate}min "
                           f"(T-{CAPTURE_WRITE_BEFORE_SECS//60}min)")
+                    # Wake up at the write gate, not on the 30-min long-sleep cycle.
+                    # Without this, a game at T+14min sleeps 30min, wakes past T+3min
+                    # (the capture-window cutoff), and the write never fires.
+                    secs_to_next_window = min(secs_to_next_window,
+                                              secs_to_start - CAPTURE_WRITE_BEFORE_SECS)
                     continue  # retry next poll; game stays in pending list
 
                 # Group game_picks by log_path
