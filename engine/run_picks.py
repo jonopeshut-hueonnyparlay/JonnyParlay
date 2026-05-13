@@ -5161,7 +5161,8 @@ def run_context_check(pick, today_str, pregame_notes=""):
     return verdict, reason, score
 
 
-def apply_context_sanity(qualified, today_str, skip=False, mode="Default"):
+def apply_context_sanity(qualified, today_str, skip=False, mode="Default",
+                         auto_tiers=None):
     """Post-gate context sanity layer — runs after all math gates, before sizing.
 
     For each qualifying pick:
@@ -5173,6 +5174,9 @@ def apply_context_sanity(qualified, today_str, skip=False, mode="Default"):
 
     Returns (still_qualified, context_rejects).
     Pass skip=True (--no-context default) to bypass entirely.
+
+    auto_tiers: set of tier strings (e.g. {"T1"}) that are always checked
+    regardless of the skip flag. All other picks still respect skip.
 
     Audit H-11: when the feature is globally disabled (skip=True), we mark
     the verdict as ``"disabled"`` — NOT ``"skipped"``. These are different
@@ -5190,31 +5194,47 @@ def apply_context_sanity(qualified, today_str, skip=False, mode="Default"):
     context side fails loudly (unexpected verdict) instead of silently
     poisoning a blank column.
     """
-    if skip or not qualified:
-        # H-11: "disabled" when feature is globally off, not "skipped".
-        for p in qualified:
+    if not qualified:
+        return qualified, []
+
+    # Split: auto_tiers picks are always checked; everything else respects skip.
+    if auto_tiers:
+        always_check = [p for p in qualified if p.get("tier") in auto_tiers]
+        flag_check   = [p for p in qualified if p.get("tier") not in auto_tiers]
+    else:
+        always_check = []
+        flag_check   = qualified
+
+    if skip:
+        for p in flag_check:
             p["context_verdict"] = "disabled"
             p["context_reason"]  = ""
             p["context_score"]   = 0
+        to_check = always_check
+    else:
+        to_check = qualified  # all picks when --context is passed
+
+    if not to_check:
         return qualified, []
 
-    print(f"\n  [Context] Running sanity layer on {len(qualified)} qualifying picks...")
+    print(f"\n  [Context] Running sanity layer on {len(to_check)} pick(s) "
+          f"({'T1 auto' if skip else 'all'})...")
     if not _ANTHROPIC_AVAILABLE:
         logger.warning("Context: anthropic package not found — skipping (pip install anthropic)")
-        for p in qualified:
+        for p in to_check:
             p["context_verdict"] = "skipped"
             p["context_reason"]  = "anthropic not installed"
             p["context_score"]   = 0
         return qualified, []
 
     # Step 1: Pre-scan injury/lineup news per sport (one call per sport, not per pick)
-    sports_in_run = [p.get("sport", "NBA") for p in qualified]
+    sports_in_run = [p.get("sport", "NBA") for p in to_check]
     pregame_bulletins = run_pregame_scan(sports_in_run, today_str)
 
     # Step 2: Run all individual pick checks concurrently
     futures_map = {}
     with ThreadPoolExecutor(max_workers=CONTEXT_MAX_WORKERS) as ex:
-        for p in qualified:
+        for p in to_check:
             notes = pregame_bulletins.get(p.get("sport", "NBA"), "")
             fut = ex.submit(run_context_check, p, today_str, notes)
             futures_map[fut] = p
@@ -5228,12 +5248,12 @@ def apply_context_sanity(qualified, today_str, skip=False, mode="Default"):
             pick["context_reason"]  = reason
             pick["context_score"]   = score
 
-    # Only picks with 'supports' verdict make it through — neutral and conflicts are cut.
-    # If context is skipped entirely (--no-context / no anthropic), all picks pass as before.
-    still_qualified  = []
+    # Only picks with 'conflicts' verdict are cut. neutral/supports/skipped all pass.
+    # flag_check picks already have "disabled" set above and always pass through.
+    still_qualified  = list(flag_check) if skip else []
     context_rejects  = []
 
-    for p in qualified:
+    for p in to_check:
         verdict = p["context_verdict"]
 
         if verdict == "conflicts":
@@ -5903,11 +5923,14 @@ def main():
     shadow_picks  = [p for p in qualified if p.get("sport") in SHADOW_SPORTS]
     qualified     = [p for p in qualified if p.get("sport") not in SHADOW_SPORTS]
 
-    # ── Context sanity layer (disabled — pass --context to enable) ───────────
+    # ── Context sanity layer ──────────────────────────────────────────────────
+    # T1 picks are always checked (KILLSHOT risk — @everyone ping, wrong pick = brand damage).
+    # All other picks: opt-in via --context flag.
     today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     today_str_cs = today_str
     qualified, context_rejects = apply_context_sanity(
-        qualified, today_str_cs, skip=not args.context, mode=args.mode
+        qualified, today_str_cs, skip=not args.context, mode=args.mode,
+        auto_tiers={"T1"},
     )
     failed.extend(context_rejects)
 
