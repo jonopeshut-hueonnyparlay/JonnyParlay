@@ -840,6 +840,11 @@ def check_prop_gates(pick):
         else:
             return False, "G8"
 
+    # G8B: AST over at line ≤ 4.5 — 0-5 record vs 2-1 at line ≥ 5.5 (n=8).
+    # Model over-projects assists for guards/wings at sub-elite-playmaker lines.
+    if stat == "AST" and direction == "over" and line <= 4.5:
+        return False, "G8B"
+
     # G9: universal floor
     if edge < 0.03:
         return False, "G9"
@@ -5494,7 +5499,11 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     has_u25_ast = any(p["stat"] == "AST" and p["direction"] == "under" and p["line"] <= 2.5 for p in all_qualified)
     has_u25_reb = any(p["stat"] == "REB" and p["direction"] == "under" and p["line"] <= 2.5 for p in all_qualified)
     has_reb_over = any(p["stat"] == "REB" and p["direction"] == "over" for p in all_qualified)
-    has_g8_fail = any(p["stat"] in ("AST","REB","SOG","K","HA","HITS") and p["line"] <= 1.5 for p in all_qualified)
+    has_g8_fail = any(
+        (p["stat"] in ("AST","REB","SOG","K","HA","HITS") and p["line"] <= 1.5) or
+        (p["stat"] == "AST" and p["direction"] == "over" and p["line"] <= 4.5)
+        for p in all_qualified
+    )
     has_heavy_juice = any(p["odds"] <= -150 for p in all_qualified)
     def _g14_fail(p):
         s, d, ln, pr = p["stat"], p["direction"], p["line"], p.get("proj", 0.0)
@@ -5539,7 +5548,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 2),
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
-        (f"G8 enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5", not has_g8_fail),
+        (f"G8/G8B enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over at line ≤ 4.5", not has_g8_fail),
         (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
         (f"G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)", not has_g15_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
