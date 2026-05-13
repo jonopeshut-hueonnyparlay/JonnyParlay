@@ -92,7 +92,12 @@ def short_label(p: Mapping[str, Any]) -> str:
         return f"{team} {stat} {dir_} {line}".strip()
     # Prop branch.
     player = (p.get("player") or "").strip()
-    last = (player.split() or [""])[-1].upper()
+    parts = player.split() or [""]
+    last = parts[-1]
+    _SUFFIXES = {"jr.", "sr.", "ii", "iii", "iv"}
+    if last.lower() in _SUFFIXES and len(parts) >= 2:
+        last = parts[-2]
+    last = last.upper()
     dir_ = (p.get("direction") or "").strip().upper()
     line = (p.get("line") or "").strip()
     return f"{last} {dir_} {line} {stat}".strip()

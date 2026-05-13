@@ -458,13 +458,15 @@ def find_team_proj(api_name, team_proj, field="saber_team"):
     abbr = resolve_team_abbrev(api_name)
     if abbr and abbr in team_proj and team_proj[abbr].get(field, 0) > 0:
         return team_proj[abbr][field]
-    # 2. Substring fallback (existing behavior for simple cases like VAN in VANCOUVER)
-    for tk, tv in team_proj.items():
-        if tv.get(field, 0) > 0:
-            name_upper = api_name.upper()
-            if (tk in name_upper or name_upper in tk or
-                any(w in tk for w in name_upper.split()[-1:])):
-                return tv[field]
+    # 2. Last-word fallback — match on the unique last word of the team name
+    #    (e.g. "Canadiens" → "montreal canadiens" → "MTL"). Avoids the
+    #    ANA-in-CANADIENS substring collision that fired when tk="ANA" was
+    #    checked against "MONTREAL CANADIENS" via tk in name_upper.
+    last_word = api_name.strip().lower().split()[-1] if api_name.strip() else ""
+    if last_word and len(last_word) > 3:
+        for full_name, fabbr in TEAM_ABBREV.items():
+            if last_word in full_name and fabbr in team_proj and team_proj[fabbr].get(field, 0) > 0:
+                return team_proj[fabbr][field]
     return None
 
 def get_team_abbrev(game_str, team_csv=""):
@@ -636,6 +638,43 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0):
         under_p = normal_cdf(line, proj, sigma)
         over_p = 1.0 - normal_cdf(line, proj, sigma)
     return over_p, under_p
+
+def calc_tb_prob(singles: float, doubles: float, triples: float, hr: float, line: float):
+    """Discrete total-bases probability via Poisson convolution.
+
+    Models each hit type as an independent Poisson process (lambda = projected
+    count per game) and computes P(TB > line) by convolving the distributions
+    exactly. Replaces Normal(mean_TB, sigma) which misrepresents the discrete,
+    zero-inflated, right-skewed nature of total bases — the Normal model was
+    predicting ~56% for O1.5 when the empirical rate is 35-38%.
+
+    SaberSim provides 1B/2B/3B/HR separately; this function uses all four.
+    """
+    max_tb = 16  # ceiling: 4 HR = 16 TB
+    threshold = int(math.floor(line)) + 1  # P(TB >= threshold) for half-integer lines
+
+    dist = [0.0] * (max_tb + 1)
+    dist[0] = 1.0  # start with P(0 TB) = 1
+
+    for lam, weight in ((singles, 1), (doubles, 2), (triples, 3), (hr, 4)):
+        if lam <= 0:
+            continue
+        new_dist = [0.0] * (max_tb + 1)
+        max_count = max(8, int(lam * 5))
+        for count in range(max_count + 1):
+            pmf = poisson_pmf(count, lam)
+            if pmf < 1e-9:
+                continue
+            added = count * weight
+            for tb in range(max_tb + 1):
+                target = min(tb + added, max_tb)
+                new_dist[target] += dist[tb] * pmf
+        dist = new_dist
+
+    over_p = sum(dist[threshold:])
+    under_p = 1.0 - over_p
+    return over_p, under_p
+
 
 def calc_edge(model_prob, over_odds, under_odds):
     """Calculate no-vig edge for both sides. Returns (over_edge, under_edge)."""
@@ -1287,6 +1326,10 @@ def parse_csv(filepath):
                 else:
                     p["HITS"] = h
                     p["TB"] = singles + 2 * doubles + 3 * triples + 4 * hr  # Total bases
+                    p["TB_1B"] = singles   # Components preserved for discrete distribution model
+                    p["TB_2B"] = doubles
+                    p["TB_3B"] = triples
+                    p["TB_HR"] = hr
                     p["HRR"] = h + r + rbi  # Hits + Runs + RBIs
                     p["R"] = r
                     p["RBI"] = rbi
@@ -1894,7 +1937,14 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         _dk_std = prop.get("proj_player", {}).get("dk_std", 0.0) or 0.0
 
         # Calculate probabilities
-        over_p, under_p = calc_prop_prob(proj, line, stat, sigma_override=_dk_std)
+        _pp = prop.get("proj_player", {})
+        if stat == "TB" and _pp.get("TB_1B") is not None:
+            over_p, under_p = calc_tb_prob(
+                _pp.get("TB_1B", 0.0), _pp.get("TB_2B", 0.0),
+                _pp.get("TB_3B", 0.0), _pp.get("TB_HR", 0.0), line,
+            )
+        else:
+            over_p, under_p = calc_prop_prob(proj, line, stat, sigma_override=_dk_std)
 
         # v4: save raw over_p before Platt so calibrate_platt.py can fit on
         # the actual model output without double-calibration bias.
@@ -2285,11 +2335,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
         sigma = sigmas["team"]
 
         # Find team projection
-        proj = None
-        for tk, tv in team_proj.items():
-            if tk in team.upper() or team.upper() in tk:
-                proj = tv["saber_team"]
-                break
+        proj = find_team_proj(team, team_proj, "saber_team")
         if proj is None or proj <= 0:
             continue
 
@@ -2640,7 +2686,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
         return []
 
     picks = []
-    BASE_SCORING_RATE = 0.163  # League avg per-team 1st inning scoring rate
+    BASE_SCORING_RATE = 0.194  # League avg per-team 1st inning scoring rate — empirically correct: 1-sqrt(0.65) ≈ 0.194
 
     # Build pitcher and team maps
     pitcher_map = {}  # team → pitcher stats
@@ -3431,15 +3477,9 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
     run_date = _now_et.strftime("%Y-%m-%d")
     run_time = _now_et.strftime("%H:%M")
 
-    # A2 (audit 2026-05-06): shadow logs (e.g. pick_log_custom.csv,
-    # pick_log_mlb.csv) skip cross-run dedup so a same-day re-run
-    # appends fresh rows instead of silently no-op'ing.  The live
-    # pick_log.csv still dedups fully so re-running run_picks.py never
-    # double-logs to the production ledger.  Intra-run dedup (the
-    # `existing_keys.add(key)` at the bottom of the loop) keeps a
-    # single invocation from listing the same pick twice — only the
-    # cross-run path is bypassed for shadow logs.
-    is_shadow_log = log_path.name != "pick_log.csv"
+    # All logs (live and shadow) use cross-run dedup keyed on
+    # (date, player, stat, line, direction). A same-day re-run with the
+    # same CSV logs 0 new picks; a direction flip logs a new row.
 
     # Build card slot lookup: (player_lower, stat, line, direction) -> slot number
     card_slot_map = {}
@@ -3471,12 +3511,6 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
                 old_header = reader.fieldnames or []
                 for row in reader:
                     existing_rows.append(row)
-                    # Skip cross-run dedup population for shadow logs (A2):
-                    # rows are still loaded so the schema-rewrite path
-                    # below works, but we don't seed existing_keys, which
-                    # means every incoming pick is treated as new.
-                    if is_shadow_log:
-                        continue
                     if row.get("date", "") == run_date:
                         # Dedup key is a tuple of date, player, stat, line, direction.
                         key = (
@@ -3842,12 +3876,23 @@ def build_premium_embed(premium, mode, today, suppress_ping=False):
         score_str = f"{p.get('pick_score', 0):.1f}"
         tier = p.get("tier", "")
 
-        # For team totals use full player name; for props use last name only
+        # Game-line stats use full player field; props use last name only
+        _SUFFIXES = {"jr.", "sr.", "ii", "iii", "iv"}
         if stat == "TEAM_TOTAL":
-            display_name = p["player"]
-            pick_label = f"{display_name} {direction} {line_val}"
+            pick_label = f"{p['player']} {direction} {line_val}"
+        elif stat in ("ML_FAV", "ML_DOG"):
+            pick_label = p["player"]  # already "TEAM ML", e.g. "MON ML"
+        elif stat in ("SPREAD", "TOTAL", "F5_TOTAL", "F5_SPREAD", "F5_ML"):
+            pick_label = f"{p['player']} {direction} {line_val}"
+        elif stat in ("NRFI", "YRFI", "GOLF_WIN"):
+            pick_label = f"{p['player']} {direction}"
+        elif stat == "PARLAY":
+            pick_label = (p.get("player") or "Parlay").strip()
         else:
-            last = p["player"].split()[-1]
+            parts = (p.get("player") or "").split() or [""]
+            last = parts[-1]
+            if last.lower() in _SUFFIXES and len(parts) >= 2:
+                last = parts[-2]
             pick_label = f"{last} {direction} {line_val} {stat}"
 
         ctx_verdict = p.get("context_verdict", "")
@@ -3889,10 +3934,22 @@ def build_potd_embed(potd, today):
     proj = potd.get("proj", 0)
     now_et = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
 
+    _SUFFIXES = {"jr.", "sr.", "ii", "iii", "iv"}
     if stat == "TEAM_TOTAL":
         pick_label = f"{potd['player']} {direction} {line_val}"
+    elif stat in ("ML_FAV", "ML_DOG"):
+        pick_label = potd["player"]
+    elif stat in ("SPREAD", "TOTAL", "F5_TOTAL", "F5_SPREAD", "F5_ML"):
+        pick_label = f"{potd['player']} {direction} {line_val}"
+    elif stat in ("NRFI", "YRFI", "GOLF_WIN"):
+        pick_label = f"{potd['player']} {direction}"
+    elif stat == "PARLAY":
+        pick_label = (potd.get("player") or "Parlay").strip()
     else:
-        last = potd["player"].split()[-1]
+        parts = (potd.get("player") or "").split() or [""]
+        last = parts[-1]
+        if last.lower() in _SUFFIXES and len(parts) >= 2:
+            last = parts[-2]
         pick_label = f"{last} {direction} {line_val} {stat}"
 
     ctx_verdict = potd.get("context_verdict", "")
@@ -6126,7 +6183,7 @@ def main():
                     })
                 if repost_picks:
                     print(f"\n  [Discord] --repost: re-firing premium card + POTD for {today_str}\u2026")
-                    post_to_discord(repost_picks, args.mode, today_str, suppress_ping=suppress_ping)
+                    post_to_discord(repost_picks, args.mode, today_str, suppress_ping=suppress_ping, force=True)
                 else:
                     print(f"\n  [Discord] --repost: no primary picks found for {today_str}")
             else:
