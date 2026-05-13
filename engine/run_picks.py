@@ -210,7 +210,7 @@ BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636
 
 # Shadow sports — evaluated + logged internally but NEVER posted to Discord.
 # Remove a sport from this set once it's proven profitable over a meaningful sample.
-SHADOW_SPORTS = {"MLB", "WNBA"}
+SHADOW_SPORTS = {"MLB"}
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
 SHADOW_LOG_PATHS = {
@@ -841,8 +841,10 @@ def check_prop_gates(pick):
             return False, "G8"
 
     # G8B: AST over at line ≤ 4.5 — 0-5 record vs 2-1 at line ≥ 5.5 (n=8).
-    # Model over-projects assists for guards/wings at sub-elite-playmaker lines.
-    if stat == "AST" and direction == "over" and line <= 4.5:
+    # NBA-only: WNBA line 4.5 is elite-playmaker territory, not sub-elite.
+    # Model over-projects assists for NBA guards/wings at sub-elite-playmaker lines.
+    sport = pick.get("sport", "NBA")
+    if stat == "AST" and direction == "over" and line <= 4.5 and sport != "WNBA":
         return False, "G8B"
 
     # G9: universal floor
@@ -5501,7 +5503,8 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     has_reb_over = any(p["stat"] == "REB" and p["direction"] == "over" for p in all_qualified)
     has_g8_fail = any(
         (p["stat"] in ("AST","REB","SOG","K","HA","HITS") and p["line"] <= 1.5) or
-        (p["stat"] == "AST" and p["direction"] == "over" and p["line"] <= 4.5)
+        (p["stat"] == "AST" and p["direction"] == "over" and p["line"] <= 4.5
+         and p.get("sport") != "WNBA")
         for p in all_qualified
     )
     has_heavy_juice = any(p["odds"] <= -150 for p in all_qualified)

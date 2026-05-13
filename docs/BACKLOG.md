@@ -4,7 +4,7 @@ Ordered by ease of implementation / lowest risk first.
 Items that need research resolve to "ship" or "close" at end of session.
 Passive items are blocked on data accumulation — nothing to do.
 
-Last updated: 2026-05-13
+Last updated: 2026-05-13 (session 2)
 
 ---
 
@@ -25,8 +25,8 @@ Last updated: 2026-05-13
 
 | # | Item | Notes |
 |---|------|-------|
-| 7 | **Combo stats (PRA, PR, PA, RA)** | New stat type. Mean = sum of individual projections. Joint probability via correlated Normal (reuse copula infra from sgp_builder.py). Zero risk to existing prop paths. |
-| 8 | **WNBA spin-up** | Season is live now. Reuses NBA engine + same `nba_api`. Mostly config + minor new plumbing. Low risk. |
+| 7 | ~~**Combo stats (PRA, PR, PA, RA)**~~ ✅ CLOSED | Already shipped. MARKET_TO_STAT, PROP_MARKETS, COMBO_STATS, calc_combo_prob, T2 tier all in place. No combo picks in log because books haven't offered qualifying lines during 2026 playoffs — pipeline is live and ready. |
+| 8 | ~~**WNBA spin-up**~~ ✅ | Done 2026-05-13. Removed from SHADOW_SPORTS — picks now post to Discord. G8B exempted for WNBA (NBA gate calibrated on NBA data only; WNBA line 4.5 is elite-playmaker territory). SPORT_UNIT_CAP=4u. Monitor AST/PTS calibration as data accumulates. |
 | 9 | **Golf research + build** | DataGolf API has good projections. Win/top-10/top-20/matchup markets. New sport = isolated code path. |
 
 ---
@@ -66,8 +66,8 @@ Each of these is a focused session: pull data, form a verdict, implement a targe
 | 18 | **fg3a × stable_pct (3PT specialists)** | Deferred — custom engine improvement only. 3PM over bleed at line 1.5 (47% actual vs 68% predicted) not fixable by this; needs directional Platt refit (#28). Revisit when custom engine goes live. |
 | 19 | **Vegas line movement signals** | Low — additive signal, doesn't replace existing scoring |
 | 20 | **Referee tendency data** | Low — small additive multiplier in nba_projector |
-| 21 | **Line shopping gap analysis** | Medium — may change how best line is selected in evaluate_props |
-| 22 | **SGP copula deep-dive** | Medium — touches live SGP scoring in sgp_builder.py |
+| 21 | ~~**Line shopping gap analysis**~~ ✅ CLOSED | Analysed 2026-05-13. Implementation is correct: cross-book best over/under odds is industry-standard no-vig removal. Dedup keeps best adj_edge line per player/stat/direction. No multi-line duplication. No structural gap found. |
+| 22 | **SGP copula — PARTIAL / DATA-GATED** | Analysed 2026-05-13. 8W-28L actual (22.2%) vs model 30.5% indep product. Root cause: SGP builder uses raw pre-Platt leg WPs (76.1% avg model → ~69% actual). Applying current Platt over-corrects (→58%). Copula correlation structure (ρ values) is reasonable — input probs are the problem. SGPs profitable vs market (+2.2pp edge vs market's 20% implied). Fix: data-gated pending H3 Platt refit + n≥100 SGP graded slips. |
 
 ---
 
@@ -77,7 +77,7 @@ Each of these is a focused session: pull data, form a verdict, implement a targe
 |---|------|-------|
 | 23 | **Opp defensive splits for STL/BLK** | New DB columns in `projections_db.py` + `get_team_def_ratio()` call in `nba_projector.py`. Prerequisite for #24. |
 | 24 | **STL/BLK tier activation** | Add to TIERS config + evaluate_props gates. Needs #23 done first + SaberSim projection availability confirmed. |
-| 25 | **NHL props expansion** | Add saves / assists / PPP / goals to NHL eval path. Needs SaberSim NHL projection column research first. |
+| 25 | ~~**NHL props expansion**~~ ✅ CLOSED | Researched 2026-05-13. SaberSim NHL CSV confirmed columns: G, A, SOG, SV, GA, SO, W. Odds API only offers `player_shots_on_goal` + `player_assists` for NHL — no player_saves or player_goals markets exist. AST is already fully plumbed (PROP_MARKETS, MARKET_TO_STAT, CSV parsing all in place); gates (G8/G8B) appropriately block the low NHL lines (0.5–2.5). No new code needed. Monitor for AST picks when NHL lines move above 2.5. |
 
 ---
 

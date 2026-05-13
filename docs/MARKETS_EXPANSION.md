@@ -14,7 +14,7 @@ and estimated build effort. Ordered by priority (monetization impact × build re
 | NBA | **Live** | PTS, REB, AST, 3PM + combos (PRA/PR/PA/RA) | Totals, spreads, ML, team totals, daily lay | SaberSim + custom engine (nba_projector.py) |
 | NHL | **Live** | SOG | Totals, spreads, ML, F5, team totals | SaberSim (no custom engine) |
 | MLB | Shadow | K, OUTS, HITS, HA, HRR, TB | F5/full totals, spreads, ML, NRFI/YRFI | SaberSim |
-| WNBA | Shadow | PTS, REB, AST, 3PM + combos | Totals, spreads, ML | Reuses NBA engine (nba_api basketball_wnba) |
+| WNBA | **Live** | PTS, REB, AST, 3PM + combos | Totals, spreads, ML | Reuses NBA engine (nba_api basketball_wnba) |
 
 ---
 
