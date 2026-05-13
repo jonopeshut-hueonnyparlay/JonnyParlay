@@ -88,11 +88,12 @@ def test_live_log_dedups_today_picks(tmp_path):
     )
 
 
-def test_shadow_log_appends_on_rerun(tmp_path):
-    """A2 fix: pick_log_custom.csv allows same-day re-runs to add rows."""
+def test_shadow_log_deduplicates_on_rerun(tmp_path):
+    """Shadow logs use the same cross-run dedup as the live log.
+    A same-day re-run with an identical pick should not append a 2nd row."""
     import run_picks
 
-    log_path = tmp_path / "pick_log_custom.csv"  # shadow log → bypass dedup
+    log_path = tmp_path / "pick_log_custom.csv"
     today = _today_et()
     seed = [{
         "date": today, "run_type": "primary", "sport": "NBA",
@@ -102,15 +103,15 @@ def test_shadow_log_appends_on_rerun(tmp_path):
     _seed_log(log_path, seed)
     assert _row_count(log_path) == 1
 
-    # Resubmit the same pick under shadow path — should append a 2nd row
+    # Resubmit the same pick — cross-run dedup should block it
     run_picks.log_picks(
         qualified=[_make_pick("Jaylen Brown", "PTS", 23.5)],
         mode="Default",
         log_path_override=log_path,
     )
 
-    assert _row_count(log_path) == 2, (
-        f"shadow log re-run must append; got {_row_count(log_path)}"
+    assert _row_count(log_path) == 1, (
+        f"shadow log re-run must not duplicate; got {_row_count(log_path)}"
     )
 
 

@@ -223,7 +223,11 @@ SPORT_ALT_MARKET = {
 }
 
 PROP_MARKETS = {
-    "NBA": ["player_assists", "player_rebounds", "player_points", "player_threes"],
+    "NBA": [
+        "player_assists", "player_rebounds", "player_points", "player_threes",
+        "player_points_rebounds_assists", "player_points_rebounds",
+        "player_points_assists", "player_rebounds_assists",
+    ],
     "NHL": ["player_shots_on_goal", "player_assists"],
     "MLB": ["pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed",
             "batter_hits", "batter_total_bases",
@@ -234,6 +238,10 @@ PROP_MARKETS = {
 MARKET_TO_STAT = {
     "player_assists": "AST", "player_rebounds": "REB",
     "player_points": "PTS", "player_threes": "3PM",
+    "player_points_rebounds_assists": "PRA",
+    "player_points_rebounds": "PR",
+    "player_points_assists": "PA",
+    "player_rebounds_assists": "RA",
     "player_shots_on_goal": "SOG",
     # MLB
     "pitcher_strikeouts": "K", "pitcher_outs": "OUTS",
@@ -278,6 +286,23 @@ NB_R = {
     "3PM": 12.3,   # within-player conditional r; calibrated 2024-25 DB
 }
 
+# Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
+# Projection = sum of individual components. Probability via correlated Normal.
+COMBO_STATS = {"PRA", "PR", "PA", "RA"}
+COMBO_COMPONENTS = {
+    "PRA": ("PTS", "REB", "AST"),
+    "PR":  ("PTS", "REB"),
+    "PA":  ("PTS", "AST"),
+    "RA":  ("REB", "AST"),
+}
+# Intra-player pairwise ρ — all three stats scale with minutes → positive correlation.
+# Conservative estimates; refine once 2025-26 DB accumulates enough combo-game rows.
+COMBO_RHO = {
+    ("PTS", "REB"): 0.28,
+    ("PTS", "AST"): 0.22,
+    ("REB", "AST"): 0.15,
+}
+
 # MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
 # G11/G11b: max 1 prop per player within each correlated group
 PITCHER_STATS = {"K", "OUTS", "HA"}                 # All functions of IP — r ≈ 0.70+ between K/OUTS
@@ -317,7 +342,7 @@ F5_SIGMA = {"total": 2.6, "spread": 2.5, "team": 2.0}
 BLEND_ALPHA = 0.25
 
 TIERS = {
-    "T1":  {"stats": {"AST", "SOG", "REC", "K", "HRR"}, "min_edge": 0.03},
+    "T1":  {"stats": {"AST", "SOG", "REC", "K", "HRR", "PRA", "PR", "PA", "RA"}, "min_edge": 0.03},
     "T1B": {"stats": {"REB", "HITS", "HA"},              "min_edge": 0.03},  # unders 3.5+ only / low volume
     "T2":  {"stats": {"PTS", "YARDS", "TOTAL", "SPREAD", "TEAM_TOTAL", "ML_FAV",
                        "TB", "OUTS", "F5_TOTAL", "F5_SPREAD", "F5_ML"}, "min_edge": 0.05},
@@ -676,6 +701,36 @@ def calc_tb_prob(singles: float, doubles: float, triples: float, hr: float, line
     return over_p, under_p
 
 
+def _combo_mu_sigma(proj_player: dict, stat: str) -> tuple:
+    """Returns (mu, sigma) for a combo stat using correlated Normal sum.
+
+    Var(X+Y) = Var(X) + Var(Y) + 2·ρ·σ(X)·σ(Y).
+    Individual σ from SIGMA dict; pairwise ρ from COMBO_RHO.
+    """
+    components = COMBO_COMPONENTS[stat]
+    mus, sigmas = [], []
+    for c in components:
+        mu = float(proj_player.get(c, 0) or 0)
+        s = SIGMA.get(c, {"mult": 0.40, "min": 2.0})
+        mus.append(mu)
+        sigmas.append(max(mu * s["mult"], s["min"]))
+    mu_combo = sum(mus)
+    var = sum(s * s for s in sigmas)
+    for i in range(len(components)):
+        for j in range(i + 1, len(components)):
+            pair = (components[i], components[j])
+            rho = COMBO_RHO.get(pair, COMBO_RHO.get((pair[1], pair[0]), 0.20))
+            var += 2.0 * rho * sigmas[i] * sigmas[j]
+    return mu_combo, max(var ** 0.5, 2.0)
+
+
+def calc_combo_prob(proj_player: dict, stat: str, line: float) -> tuple:
+    """Correlated Normal probability for combo props (PRA, PR, PA, RA)."""
+    mu, sigma = _combo_mu_sigma(proj_player, stat)
+    over_p = 1.0 - normal_cdf(line, mu, sigma)
+    return over_p, 1.0 - over_p
+
+
 def calc_edge(model_prob, over_odds, under_odds):
     """Calculate no-vig edge for both sides. Returns (over_edge, under_edge)."""
     imp_over = implied_prob(over_odds)
@@ -792,6 +847,12 @@ def check_prop_gates(pick):
         _s = SIGMA[stat]
         _sigma = max(proj * _s["mult"], _s["min"])
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
+        if _z < 0.10:
+            return False, "G14"
+    if stat in COMBO_STATS:
+        _pp = pick.get("proj_player", {}) or {}
+        _, _sigma_c = _combo_mu_sigma(_pp, stat)
+        _z = (line - proj) / _sigma_c if direction == "under" else (proj - line) / _sigma_c
         if _z < 0.10:
             return False, "G14"
 
@@ -1902,6 +1963,11 @@ def match_props_to_projections(props, players):
         if pk in player_map:
             proj_player = player_map[pk]
             proj_val = proj_player.get(prop["stat"], 0)
+            if proj_val == 0 and prop["stat"] in COMBO_STATS:
+                proj_val = sum(
+                    float(proj_player.get(c, 0) or 0)
+                    for c in COMBO_COMPONENTS[prop["stat"]]
+                )
             if proj_val > 0:
                 prop["proj"] = proj_val
                 prop["proj_player"] = proj_player
@@ -1943,6 +2009,8 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 _pp.get("TB_1B", 0.0), _pp.get("TB_2B", 0.0),
                 _pp.get("TB_3B", 0.0), _pp.get("TB_HR", 0.0), line,
             )
+        elif stat in COMBO_STATS:
+            over_p, under_p = calc_combo_prob(_pp, stat, line)
         else:
             over_p, under_p = calc_prop_prob(proj, line, stat, sigma_override=_dk_std)
 
