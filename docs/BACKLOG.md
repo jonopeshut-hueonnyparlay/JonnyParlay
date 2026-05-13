@@ -14,10 +14,10 @@ Last updated: 2026-05-13
 |---|------|-------|
 | 1 | ~~**Position API refresh**~~ ✅ | Done 2026-05-12. 587 players refreshed, 0 height fallback. |
 | 2 | ~~**Edge decay analysis**~~ ✅ | Done 2026-05-12. Key findings: overs bleeding (-5.28u) vs unders crushing (+20.79u); T1 calibration gap (59%→50%); FanDuel worst book (-6.50u); Slot 4 weak (-5.17u). See backlog items added to Tier 5. |
-| 3 | **Sports/markets expansion planning doc** | Inventory every sport/market we want to offer, what projection source is needed, and estimated timeline. Strategic input for monetization. |
-| 4 | **MMA/UFC research** | What projection sources exist? Is method-of-victory complexity worth it? Decide yes/no. |
-| 5 | **College basketball research** | KenPom/BartTorvik available. Line markets only (no props). Decide yes/no. |
-| 6 | **Soccer research** | FBref/Opta. Goals/assists/SOT markets. Decide yes/no. |
+| 3 | ~~**Sports/markets expansion planning doc**~~ ✅ | Done 2026-05-13. See `docs/MARKETS_EXPANSION.md`. Priority order: NFL (Jul deadline) → Golf → NCAAB game lines → NHL props → Soccer (deferred) → MMA (pass). Key decisions for Jono: MLB go-live, WNBA live, DataGolf sub ($30/mo), PFF ($70/mo), KenPom ($20/yr). |
+| 4 | ~~**MMA/UFC research**~~ ✅ CLOSED | Researched 2026-05-13. No systematic projection source. Method-of-victory complexity too high. Pass. |
+| 5 | ~~**College basketball research**~~ ✅ | Researched 2026-05-13. KenPom/BartTorvik = A+ game projections. Game lines only (no player props). ~1 session to build. Season Nov–Apr. Add to NCAAB roadmap post-NFL. |
+| 6 | ~~**Soccer research**~~ ✅ CLOSED | Researched 2026-05-13. No reliable public player-level projection source. xG/xA modeling is high-effort. Defer until post-NFL launch. |
 
 ---
 
@@ -57,8 +57,8 @@ Each of these is a focused session: pull data, form a verdict, implement a targe
 | # | Item | Risk if shipped |
 |---|------|----------------|
 | 15 | **Over/under directional bias — PARTIAL FIX** | Root cause: AST overs (line ≤4.5) were 0-5; AST overs (line ≥5.5) are 2-1. G8B gate added 2026-05-13: bans AST overs at line ≤4.5. 3PM overs (8-9, 47%) no clean gate — data too noisy for threshold. Remaining fix: directional Platt refit (data-gated, see #28). |
-| 15b | **FanDuel line quality** | Low — add FanDuel min_edge premium or deprioritize in line shopping. 13 picks, -41.3% ROI vs +18.3% BetMGM. |
-| 15c | **Slot 4 card position** | Low — 4th premium pick -5.17u. Investigate whether card-building is forcing a weak 4th pick. |
+| 15b | ~~**FanDuel line quality**~~ ✅ CLOSED | Analysed 2026-05-13. The 2 FanDuel AST losses (Randle, Daniels at line 4.5) are already fixed by G8B. Remaining FanDuel losses scattered across stats/edges with no pattern. n=13 too thin. Monitor. |
+| 15c | ~~**Slot 4 card position**~~ ✅ CLOSED | Analysed 2026-05-13. Slot 4 decomposed into: (a) 2 AST over losses → fixed by G8B; (b) 11 SOG picks at 36% — high variance n=11, lower-confidence SOG expected near 50%; no structural card-building issue. |
 | 15d | **T1/AST calibration — PARTIAL FIX** | AST over ban at line ≤4.5 (G8B, 2026-05-13) resolves the main calibration drag. Monitor T1 hit rate going forward. Full Platt refit data-gated (#28). |
 | 16 | **PTS distribution audit** | Low — may change `calc_prop_prob` for PTS at low lines only |
 | 16 | **Schedule density (3-in-4, West Coast swings)** | Low-medium — touches `project_minutes()` in nba_projector |
