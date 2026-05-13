@@ -295,12 +295,14 @@ COMBO_COMPONENTS = {
     "PA":  ("PTS", "AST"),
     "RA":  ("REB", "AST"),
 }
-# Intra-player pairwise ρ — all three stats scale with minutes → positive correlation.
-# Conservative estimates; refine once 2025-26 DB accumulates enough combo-game rows.
+# Intra-player pairwise ρ — calibrated from 75,367 player-games (595 players,
+# n>=20, min>=5) across all seasons in projections.db. Weighted average of
+# within-player Pearson correlations; reflects total game-to-game covariance
+# including minute variance (correct, since SIGMA already captures total σ).
 COMBO_RHO = {
-    ("PTS", "REB"): 0.28,
-    ("PTS", "AST"): 0.22,
-    ("REB", "AST"): 0.15,
+    ("PTS", "REB"): 0.333,
+    ("PTS", "AST"): 0.233,
+    ("REB", "AST"): 0.251,
 }
 
 # MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
@@ -342,10 +344,11 @@ F5_SIGMA = {"total": 2.6, "spread": 2.5, "team": 2.0}
 BLEND_ALPHA = 0.25
 
 TIERS = {
-    "T1":  {"stats": {"AST", "SOG", "REC", "K", "HRR", "PRA", "PR", "PA", "RA"}, "min_edge": 0.03},
+    "T1":  {"stats": {"AST", "SOG", "REC", "K", "HRR"}, "min_edge": 0.03},
     "T1B": {"stats": {"REB", "HITS", "HA"},              "min_edge": 0.03},  # unders 3.5+ only / low volume
-    "T2":  {"stats": {"PTS", "YARDS", "TOTAL", "SPREAD", "TEAM_TOTAL", "ML_FAV",
-                       "TB", "OUTS", "F5_TOTAL", "F5_SPREAD", "F5_ML"}, "min_edge": 0.05},
+    "T2":  {"stats": {"PTS", "PRA", "PR", "PA", "RA", "YARDS", "TOTAL", "SPREAD",
+                       "TEAM_TOTAL", "ML_FAV", "TB", "OUTS",
+                       "F5_TOTAL", "F5_SPREAD", "F5_ML"}, "min_edge": 0.05},
     "T3":  {"stats": {"TDS", "GOALS", "3PM", "ML_DOG", "NRFI", "YRFI"}, "min_edge": 0.06},
     # T4 (GOLF_WIN) removed — see archived_golf_code.py
 }
