@@ -87,6 +87,7 @@ from paths import (  # noqa: E402
     PICK_LOG_PATH as _PICK_LOG_PATH_P,
     PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
     LOG_FILE_PATH as _LOG_FILE_PATH_P,
     project_path as _project_path,
@@ -127,6 +128,7 @@ API_SLEEP    = 1.3  # seconds between calls
 
 SPORT_KEYS = {"NBA": "basketball_nba", "NHL": "icehockey_nhl",
               "NFL": "americanfootball_nfl", "MLB": "baseball_mlb",
+              "WNBA": "basketball_wnba",
               "NCAAB": "basketball_ncaab", "NCAAF": "americanfootball_ncaaf"}
 
 # Colorado-legal sportsbooks — line shopping filtered to these only.
@@ -208,11 +210,12 @@ BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636
 
 # Shadow sports — evaluated + logged internally but NEVER posted to Discord.
 # Remove a sport from this set once it's proven profitable over a meaningful sample.
-SHADOW_SPORTS = {"MLB"}
+SHADOW_SPORTS = {"MLB", "WNBA"}
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
 SHADOW_LOG_PATHS = {
-    "MLB": str(_PICK_LOG_MLB_PATH_P),
+    "MLB":  str(_PICK_LOG_MLB_PATH_P),
+    "WNBA": str(_PICK_LOG_WNBA_PATH_P),
 }
 
 # Per-sport alt spread market names for the parlay builder
@@ -224,6 +227,11 @@ SPORT_ALT_MARKET = {
 
 PROP_MARKETS = {
     "NBA": [
+        "player_assists", "player_rebounds", "player_points", "player_threes",
+        "player_points_rebounds_assists", "player_points_rebounds",
+        "player_points_assists", "player_rebounds_assists",
+    ],
+    "WNBA": [
         "player_assists", "player_rebounds", "player_points", "player_threes",
         "player_points_rebounds_assists", "player_points_rebounds",
         "player_points_assists", "player_rebounds_assists",
@@ -327,9 +335,10 @@ GAME_SIGMA = {
     # NHL puck-line spread sigma (1.5 goals) inflates ML win probs to 80%+ when used for
     # P(margin > 0). Need a wider sigma (~4.0) to produce realistic 55-65% win probs
     # for typical NHL favorites. Calibrated so -150 fav (55% nv) with ~0.5-goal margin ≈ 55%.
-    "NBA": {"total": 12.0, "spread": 12.0, "team": 9.0,  "ml": 12.0},
-    "NHL": {"total": 1.2,  "spread": 1.5,  "team": 1.8,  "ml": 4.0},
-    "MLB": {"total": 4.0,  "spread": 3.8,  "team": 3.0,  "ml": 6.0},
+    "NBA":  {"total": 12.0, "spread": 12.0, "team": 9.0,  "ml": 12.0},
+    "WNBA": {"total": 10.0, "spread": 10.0, "team": 7.5,  "ml": 10.0},
+    "NHL":  {"total": 1.2,  "spread": 1.5,  "team": 1.8,  "ml": 4.0},
+    "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,  "ml": 6.0},
 }
 
 # First 5 innings sigmas (MLB only — starter matchup, no bullpen noise)
@@ -1119,7 +1128,7 @@ def apply_caps(picks, sport_totals, max_per_game=2):
     STAT_CAP = defaultdict(lambda: 2)
     STAT_CAP["SOG"] = 6
 
-    SPORT_UNIT_CAP = {"NBA": 8.0, "NHL": 5.0, "NFL": 8.0, "MLB": 8.0}
+    SPORT_UNIT_CAP = {"NBA": 8.0, "WNBA": 4.0, "NHL": 5.0, "NFL": 8.0, "MLB": 8.0}
 
     for p in picks:
         stat = p["stat"]
@@ -1313,22 +1322,22 @@ def parse_csv(filepath):
 
     headers = {h.strip().lower() for h in rows[0].keys()}
 
-    # Detect sport
-    if "sog" in headers or any("shot" in h for h in headers):
+    # Detect sport — filename wins over headers (WNBA has identical headers to NBA)
+    fname = path.name.lower()
+    if "wnba" in fname:
+        sport = "WNBA"
+    elif "sog" in headers or any("shot" in h for h in headers):
         sport = "NHL"
     elif "ip" in headers and ("er" in headers or "k" in headers or "qs" in headers):
         sport = "MLB"
     elif "rb" in headers or "ast" in headers or "3pt" in headers:
         sport = "NBA"
+    elif "mlb" in fname:
+        sport = "MLB"
+    elif "nhl" in fname:
+        sport = "NHL"
     else:
-        # Fallback: check filename
-        fname = path.name.lower()
-        if "mlb" in fname:
-            sport = "MLB"
-        elif "nhl" in fname:
-            sport = "NHL"
-        else:
-            sport = "NBA"
+        sport = "NBA"
 
     players = []
     for row in rows:
@@ -1348,7 +1357,7 @@ def parse_csv(filepath):
                 "status": raw_status,  # "confirmed" for confirmed starters, "" otherwise
             }
 
-            if sport == "NBA":
+            if sport in ("NBA", "WNBA"):
                 p["AST"] = float(clean.get("AST", clean.get("ast", 0)) or 0)
                 p["REB"] = float(clean.get("RB", clean.get("rb", clean.get("REB", 0))) or 0)
                 p["PTS"] = float(clean.get("PTS", clean.get("pts", 0)) or 0)
@@ -5006,6 +5015,12 @@ def run_pregame_scan(sports, today_str):
     _sport_prompts = {
         "NBA": (
             f"Today is {today_str}. Search for today's NBA injury report and lineup news. "
+            "List any players who are OUT, QUESTIONABLE, or DOUBTFUL. "
+            "Also note any confirmed starters or key role changes. "
+            "Be concise — 4-8 bullet points max."
+        ),
+        "WNBA": (
+            f"Today is {today_str}. Search for today's WNBA injury report and lineup news. "
             "List any players who are OUT, QUESTIONABLE, or DOUBTFUL. "
             "Also note any confirmed starters or key role changes. "
             "Be concise — 4-8 bullet points max."
