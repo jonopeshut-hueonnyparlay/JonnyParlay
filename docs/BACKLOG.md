@@ -36,7 +36,7 @@ Last updated: 2026-05-13
 | # | Item | Notes |
 |---|------|-------|
 | 10 | ~~**Round-stratified playoff scalars v2**~~ ✅ CLOSED | Analysed 2026-05-12. Round effect is real but CF=82 rows, Finals=108 rows — too thin for reliable separate scalars. Revisit after 2-3 more full playoff seasons. Pooled 1.075 stays. |
-| 11 | **Context system re-enable (KILLSHOT only)** | System already exists, just disabled. Re-enable for T1 tier only. Adds one Haiku API call per KILLSHOT pick to check for OUT/scratched. |
+| 11 | ~~**Context system re-enable (KILLSHOT only)**~~ ✅ | Done (prev session). `auto_tiers={"T1"}` live in apply_context_sanity — T1 picks always context-checked regardless of --context flag. |
 
 ---
 
@@ -60,10 +60,10 @@ Each of these is a focused session: pull data, form a verdict, implement a targe
 | 15b | ~~**FanDuel line quality**~~ ✅ CLOSED | Analysed 2026-05-13. The 2 FanDuel AST losses (Randle, Daniels at line 4.5) are already fixed by G8B. Remaining FanDuel losses scattered across stats/edges with no pattern. n=13 too thin. Monitor. |
 | 15c | ~~**Slot 4 card position**~~ ✅ CLOSED | Analysed 2026-05-13. Slot 4 decomposed into: (a) 2 AST over losses → fixed by G8B; (b) 11 SOG picks at 36% — high variance n=11, lower-confidence SOG expected near 50%; no structural card-building issue. |
 | 15d | **T1/AST calibration — PARTIAL FIX** | AST over ban at line ≤4.5 (G8B, 2026-05-13) resolves the main calibration drag. Monitor T1 hit rate going forward. Full Platt refit data-gated (#28). |
-| 16 | **PTS distribution audit** | Low — may change `calc_prop_prob` for PTS at low lines only |
+| 16 | ~~**PTS distribution audit**~~ ✅ CLOSED | Analysed 2026-05-13. PTS healthy at all line buckets and both directions: 68% overall, +7.33u. No changes to `calc_prop_prob`. |
 | 16 | **Schedule density (3-in-4, West Coast swings)** | Low-medium — touches `project_minutes()` in nba_projector |
 | 17 | **EWMA span ramp (returning players)** | Low-medium — touches `project_minutes()` |
-| 18 | **fg3a × stable_pct (3PT specialists)** | Low — touches 3PM projection only |
+| 18 | **fg3a × stable_pct (3PT specialists)** | Deferred — custom engine improvement only. 3PM over bleed at line 1.5 (47% actual vs 68% predicted) not fixable by this; needs directional Platt refit (#28). Revisit when custom engine goes live. |
 | 19 | **Vegas line movement signals** | Low — additive signal, doesn't replace existing scoring |
 | 20 | **Referee tendency data** | Low — small additive multiplier in nba_projector |
 | 21 | **Line shopping gap analysis** | Medium — may change how best line is selected in evaluate_props |
