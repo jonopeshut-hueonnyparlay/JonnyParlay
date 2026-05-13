@@ -14,7 +14,7 @@ Usage:
 """
 
 import csv, os, sys, argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
 from zoneinfo import ZoneInfo
@@ -284,6 +284,57 @@ def calibration_section(picks):
     return "\n".join(lines)
 
 
+def clv_summary(picks):
+    """Show CLV (Closing Line Value) summary — how often we beat the close."""
+    clv_picks = [p for p in picks if p.get("clv", "").strip()]
+    if not clv_picks:
+        return ""
+    clvs = []
+    for p in clv_picks:
+        try:
+            clvs.append((float(p["clv"]), p))
+        except (ValueError, TypeError):
+            pass
+    if not clvs:
+        return ""
+
+    vals = [c for c, _ in clvs]
+    beat = sum(1 for c in vals if c > 0)
+    avg  = sum(vals) / len(vals)
+    lines = [f"\n  {'─'*60}", "  CLV SUMMARY (Closing Line Value):", f"  {'─'*60}"]
+    lines.append(f"    Beat the close: {beat}/{len(vals)} ({beat/len(vals):.0%}) | Avg CLV: {avg:+.4f}")
+
+    # By tier
+    tier_clv = defaultdict(list)
+    for c, p in clvs:
+        tier_clv[p.get("tier","?")].append(c)
+    tier_lines = []
+    for tier, tc in sorted(tier_clv.items(), key=lambda x: -sum(x[1])/len(x[1])):
+        if len(tc) < 3:
+            continue
+        b = sum(1 for c in tc if c > 0)
+        tier_lines.append(f"      {tier:<10} n={len(tc):2d}  beat={b/len(tc):.0%}  avg={sum(tc)/len(tc):+.4f}")
+    if tier_lines:
+        lines.append("    By tier:")
+        lines.extend(tier_lines)
+
+    if len(vals) < 100:
+        lines.append(f"    ℹ  {len(vals)} CLV rows — need ~100+ for reliable calibration signal.")
+    return "\n".join(lines)
+
+
+def recent_form(picks, days=14):
+    """Show performance over the last N days vs all-time."""
+    cutoff = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days)).strftime("%Y-%m-%d")
+    recent = [p for p in picks if p.get("date","") >= cutoff]
+    if len(recent) < 5:
+        return ""
+    m = calc_metrics(recent)
+    lines = [f"\n  {'─'*60}", f"  RECENT FORM (last {days} days, {len(recent)} picks):", f"  {'─'*60}"]
+    lines.append(f"    {format_record(m, warn_sample=len(recent) < MIN_SAMPLE_NOTE)}")
+    return "\n".join(lines)
+
+
 def main():
     # Ensure UTF-8 output on Windows (cp1252 console can't encode box-drawing chars)
     if hasattr(sys.stdout, "reconfigure"):
@@ -360,6 +411,19 @@ def main():
     report.append(breakdown(picks, lambda p: p.get("mode", "?"),       "BY MODE",                   min_count=1))
     report.append(breakdown(picks, lambda p: p.get("book", "?"),       "BY BOOK",                   min_count=2))
 
+    # Stat × Direction crosstab (props only — skip parlays/game lines)
+    _PROP_STATS = {"PTS","REB","AST","3PM","SOG","REC","K","HITS","HA","HRR","TB","OUTS",
+                   "PRA","PR","PA","RA","STL","BLK"}
+    prop_picks = [p for p in picks if p.get("stat","") in _PROP_STATS
+                  and p.get("direction","") in ("over","under")]
+    if prop_picks:
+        report.append(breakdown(
+            prop_picks,
+            lambda p: f"{p.get('stat','?')} {p.get('direction','?')}",
+            "BY STAT × DIRECTION (props only)",
+            min_count=2,
+        ))
+
     # Card slot breakdown (primary picks only)
     primary_with_slot = [p for p in picks
                          if p.get("run_type", "") in ("primary", "", None)
@@ -368,6 +432,16 @@ def main():
         report.append(breakdown(primary_with_slot,
                                 lambda p: f"Slot {p.get('card_slot','')}",
                                 "BY CARD SLOT (primary only)", min_count=1))
+
+    # Recent form
+    rf = recent_form(picks)
+    if rf:
+        report.append(rf)
+
+    # CLV summary
+    clv = clv_summary(picks)
+    if clv:
+        report.append(clv)
 
     # Calibration
     report.append(calibration_section(picks))
