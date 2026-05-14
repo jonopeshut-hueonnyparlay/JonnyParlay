@@ -542,7 +542,7 @@ def post_results_graphic(date_str, day_picks, webhook_url=None, suppress_ping=Fa
 
 # Shadow sports never appear on the public results graphic (CLAUDE.md contract).
 # Keep this mirrored with run_picks.SHADOW_SPORTS.
-SHADOW_SPORTS = frozenset({"MLB"})
+SHADOW_SPORTS = frozenset({"MLB", "WNBA"})
 
 # Run types allowed on the PUBLIC graphic. "manual" is excluded (audit H-6 —
 # CLAUDE.md says manual picks never appear in Discord output; the graphic

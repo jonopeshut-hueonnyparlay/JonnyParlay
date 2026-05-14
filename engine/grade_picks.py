@@ -64,6 +64,7 @@ from paths import (  # noqa: E402
     PICK_LOG_PATH as _PICK_LOG_PATH_P,
     PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
     PICK_LOG_CUSTOM_PATH as _PICK_LOG_CUSTOM_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
     LOG_FILE_PATH as _LOG_FILE_PATH_P,
@@ -71,15 +72,16 @@ from paths import (  # noqa: E402
 PICK_LOG_PATH        = str(_PICK_LOG_PATH_P)
 PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
 PICK_LOG_MLB_PATH    = str(_PICK_LOG_MLB_PATH_P)
+PICK_LOG_WNBA_PATH   = str(_PICK_LOG_WNBA_PATH_P)
 PICK_LOG_CUSTOM_PATH = str(_PICK_LOG_CUSTOM_PATH_P)
 DISCORD_GUARD_FILE   = str(_DISCORD_GUARD_FILE_P)
 LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
 
 # All log paths — main log first, then shadow sport logs.
 # Manual picks excluded: no manual tracking going forward.
-ALL_LOG_PATHS = [PICK_LOG_PATH, PICK_LOG_MLB_PATH]
+ALL_LOG_PATHS = [PICK_LOG_PATH, PICK_LOG_MLB_PATH, PICK_LOG_WNBA_PATH]
 # Shadow sports: grade silently, no Discord post
-SHADOW_SPORTS = {"MLB"}
+SHADOW_SPORTS = {"MLB", "WNBA"}
 
 BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636209221566625/JonnyParlaylogoRedBlack.png"
 
@@ -2212,7 +2214,7 @@ Examples:
 
     # ── Grade shadow sport logs silently (no Discord post) ────
     if not args.repost and use_default_paths:
-        for shadow_path in (PICK_LOG_MLB_PATH, PICK_LOG_CUSTOM_PATH):
+        for shadow_path in (PICK_LOG_MLB_PATH, PICK_LOG_WNBA_PATH, PICK_LOG_CUSTOM_PATH):
             _grade_one_log(shadow_path, args, is_shadow=True)
 
 

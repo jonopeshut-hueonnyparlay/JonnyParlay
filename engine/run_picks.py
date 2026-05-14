@@ -210,7 +210,7 @@ BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636
 
 # Shadow sports — evaluated + logged internally but NEVER posted to Discord.
 # Remove a sport from this set once it's proven profitable over a meaningful sample.
-SHADOW_SPORTS = {"MLB"}
+SHADOW_SPORTS = {"MLB", "WNBA"}
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
 SHADOW_LOG_PATHS = {
@@ -854,6 +854,13 @@ def check_prop_gates(pick):
     # G13: sub-50% win probability ban — proven 1-3 record, negative PS
     if prob < 0.50:
         return False, "G13"
+
+    # G13B: stat-specific minimum win probability (empirical from shadow log, n=2000+).
+    # TB: 29% actual at WP 50-55% (n=115), 39% at 55-60% (n=71), profitable only ≥60%.
+    # HRR: 45% actual at WP 50-55% (n=450), below break-even at +115 avg odds; 51%+ above.
+    _STAT_MIN_WIN_PROB = {"TB": 0.60, "HRR": 0.55}
+    if stat in _STAT_MIN_WIN_PROB and prob < _STAT_MIN_WIN_PROB[stat]:
+        return False, "G13B"
 
     # G14: projection clearance gate — ensures model has directional conviction.
     # Normal/SIGMA stats (PTS, OUTS, HA, TB, HRR): proj must clear line by ≥0.10σ.
@@ -5508,6 +5515,12 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         for p in all_qualified
     )
     has_heavy_juice = any(p["odds"] <= -150 for p in all_qualified)
+    _STAT_MIN_WIN_PROB = {"TB": 0.60, "HRR": 0.55}
+    has_g13b_fail = any(
+        p.get("stat") in _STAT_MIN_WIN_PROB
+        and p.get("win_prob", 0) < _STAT_MIN_WIN_PROB[p["stat"]]
+        for p in all_qualified
+    )
     def _g14_fail(p):
         s, d, ln, pr = p["stat"], p["direction"], p["line"], p.get("proj", 0.0)
         # Poisson stats exempt — G13 handles direction failures; discrete dist
@@ -5552,6 +5565,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8/G8B enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over at line ≤ 4.5", not has_g8_fail),
+        (f"G13B enforced: TB WP≥60%, HRR WP≥55%", not has_g13b_fail),
         (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
         (f"G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)", not has_g15_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
