@@ -271,16 +271,17 @@ SIGMA = {
     "PTS": {"mult": 0.35, "min": 4.5},
     # "3PM" not here — P16 routes 3PM through NB_STATS/NB_R (Negative Binomial). Do NOT add to SIGMA.
     # MLB — RECALIBRATED to match real-world variance (2024 season data)
-    "K":    {"mult": 0.45, "min": 1.5},   # Pitcher Ks — Poisson is a good fit
-    "OUTS": {"mult": 0.22, "min": 3.0},   # Pitcher outs — was overestimating variance (conservative)
-    "HA":   {"mult": 0.50, "min": 2.5},   # Pitcher hits allowed — MOVED to Normal (15% overdispersed vs Poisson)
+    # "K" not here — moved to NB_STATS (Negative Binomial, r=5.0). SaberSim conservative IP bias kills unders.
+    "OUTS": {"mult": 0.30, "min": 3.0},   # Pitcher outs — actual σ ≈ 4.5-5.0 outs/start (was 0.22 → 3.3, too tight)
+    "HA":   {"mult": 0.50, "min": 2.5},   # Pitcher hits allowed — Normal (15% overdispersed vs Poisson)
     "HITS": {"mult": 0.90, "min": 0.7},   # Batter hits — Poisson is good at low counts
     "TB":   {"mult": 1.20, "min": 1.5},   # Batter total bases — was 41% UNDER real variance (lumpy dist)
-    "HRR":  {"mult": 0.75, "min": 1.3},   # Batter H+R+RBI — was 11% under real variance
+    # "HRR" not here — moved to NB_STATS (Negative Binomial, r=1.5). Normal gave P(HRR>1.5)=63% vs actual 48%.
 }
 
 # HA removed from Poisson — overdispersed at typical lines (std 2.70 vs Poisson-predicted 2.35)
-POISSON_STATS = {"AST", "REB", "SOG", "REC", "K", "HITS"}
+# K removed from Poisson — moved to NB_STATS (overdispersed; SaberSim conservative IP bias)
+POISSON_STATS = {"AST", "REB", "SOG", "REC", "HITS"}
 POISSON_CUTOFF = 8.5
 
 # P16 — Negative binomial distribution for overdispersed count stats.
@@ -288,10 +289,16 @@ POISSON_CUTOFF = 8.5
 # (avg_var / avg_mu per player across 2024-25 DB), NOT population-level cross-player variance.
 #   3PM: avg(var/mu)=1.119 across n=418 player-seasons → r = mu²/(var-mu) = avg_mu²/(avg_mu*0.119)
 #        avg_mu=1.457  → r = 1.457/0.119 ≈ 12.3
+#   HRR: r=1.5 calibrated from shadow log: NB(r=1.5, μ=2.0) gives P(X≥2)=47.8% matching empirical 48% WR.
+#        Normal was giving 63% for same projection — structural zero-inflation (batter 0-H/R/RBI ~37% of games).
+#   K:   r=5.0 — pitcher Ks overdispersed vs Poisson (bimodal: early hook vs deep start).
+#        SaberSim projects conservative median IP; market prices to mode IP → K unders structurally lose.
 # STL/BLK not in any TIERS tier — included for completeness, no production impact yet.
-NB_STATS = {"3PM"}
+NB_STATS = {"3PM", "HRR", "K"}
 NB_R = {
     "3PM": 12.3,   # within-player conditional r; calibrated 2024-25 DB
+    "HRR": 1.5,    # calibrated from shadow log empirical WR at line 1.5 (n=1810)
+    "K":   5.0,    # overdispersion estimate for pitcher K/start; K overs only at line ≥6.0
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
@@ -338,11 +345,11 @@ GAME_SIGMA = {
     "NBA":  {"total": 12.0, "spread": 12.0, "team": 9.0,  "ml": 12.0},
     "WNBA": {"total": 10.0, "spread": 10.0, "team": 7.5,  "ml": 10.0},
     "NHL":  {"total": 1.2,  "spread": 1.5,  "team": 1.8,  "ml": 4.0},
-    "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,  "ml": 6.0},
+    "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,  "ml": 4.75},  # ml: 6.0→4.75 (empirical run-diff σ≈3.8; 6.0 was artificially wide)
 }
 
 # First 5 innings sigmas (MLB only — starter matchup, no bullpen noise)
-F5_SIGMA = {"total": 2.6, "spread": 2.5, "team": 2.0}
+F5_SIGMA = {"total": 2.6, "spread": 2.75, "team": 2.0}  # spread: 2.5→2.75 (empirical F5 run-diff σ≈2.7-2.8)
 
 # Game line projection blending: anchor SaberSim to the market line.
 # Formula in prose: the blended projection equals the market line plus
@@ -847,6 +854,20 @@ def check_prop_gates(pick):
     if stat == "AST" and direction == "over" and line <= 4.5 and sport != "WNBA":
         return False, "G8B"
 
+    # G_MLB_STRUCT: MLB structural direction gates based on known SaberSim biases.
+    # K: SaberSim projects conservative median IP; market prices to mode IP → K unders always lose.
+    #    Only bet K overs, and only at meaningful lines where ace throughput is predictable.
+    if stat == "K" and direction == "under":
+        return False, "G_K_NO_UNDERS"
+    if stat == "K" and direction == "over" and line < 6.0:
+        return False, "G_K_MIN_LINE"
+    # OUTS: Same conservative IP bias as K — unders structurally lose (actual IP > SaberSim median).
+    if stat == "OUTS" and direction == "under":
+        return False, "G_OUTS_UNDER"
+    # HA: T1B tier definition is unders 3.5+ only. The tier routing allows overs through by default — block here.
+    if stat == "HA" and direction == "over":
+        return False, "G_HA_DIR"
+
     # G9: universal floor
     if edge < 0.03:
         return False, "G9"
@@ -855,12 +876,8 @@ def check_prop_gates(pick):
     if prob < 0.50:
         return False, "G13"
 
-    # G13B: stat-specific minimum win probability (empirical from shadow log, n=2000+).
-    # TB: 29% actual at WP 50-55% (n=115), 39% at 55-60% (n=71), profitable only ≥60%.
-    # HRR: 45% actual at WP 50-55% (n=450), below break-even at +115 avg odds; 51%+ above.
-    _STAT_MIN_WIN_PROB = {"TB": 0.60, "HRR": 0.55}
-    if stat in _STAT_MIN_WIN_PROB and prob < _STAT_MIN_WIN_PROB[stat]:
-        return False, "G13B"
+    # G13B removed: TB uses correct Poisson convolution (calc_tb_prob). HRR uses NB(r=1.5).
+    # Both distributions now produce calibrated win_prob — WP floor gates are redundant.
 
     # G14: projection clearance gate — ensures model has directional conviction.
     # Normal/SIGMA stats (PTS, OUTS, HA, TB, HRR): proj must clear line by ≥0.10σ.
@@ -1144,6 +1161,8 @@ def apply_caps(picks, sport_totals, max_per_game=2):
 
     SPORT_UNIT_CAP = {"NBA": 8.0, "WNBA": 4.0, "NHL": 5.0, "NFL": 8.0, "MLB": 8.0}
 
+    hrr_team_game = defaultdict(int)   # (team, game) → count of HRR picks; max 1 per team per game
+
     for p in picks:
         stat = p["stat"]
         game = p.get("game", "")
@@ -1165,6 +1184,12 @@ def apply_caps(picks, sport_totals, max_per_game=2):
             if pitcher_game_dir[pgd_key] >= 2:
                 continue
 
+        # G_HRR_TEAM: HRR within-lineup correlation (r≈0.25-0.35). Max 1 HRR per team per game.
+        if stat == "HRR":
+            team = p.get("team", p.get("team_abbrev", ""))
+            if hrr_team_game[(team, game)] >= 1:
+                continue
+
         result.append(p)
         stat_count[stat] += 1
         game_count[game] += 1
@@ -1172,6 +1197,9 @@ def apply_caps(picks, sport_totals, max_per_game=2):
         total_units += size
         if stat in PITCHER_STATS:
             pitcher_game_dir[(game, p["direction"])] += 1
+        if stat == "HRR":
+            team = p.get("team", p.get("team_abbrev", ""))
+            hrr_team_game[(team, game)] += 1
 
     return result
 
@@ -2654,9 +2682,9 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                             t2_proj = tv["saber_team"]
 
                     if t1_proj and t2_proj and t1_proj > 0 and t2_proj > 0:
-                        # F5 team runs scaled
-                        f5_t1 = t1_proj * 0.54
-                        f5_t2 = t2_proj * 0.54
+                        # F5 team runs scaled (0.51 = empirical F5/full ratio: 4.41/8.76; was 0.54 — inconsistent)
+                        f5_t1 = t1_proj * 0.51
+                        f5_t2 = t2_proj * 0.51
                         margin = f5_t1 - f5_t2
                         sigma = sigmas["spread"]
                         t1_wp = 1.0 - normal_cdf(0, margin, sigma)
@@ -2780,12 +2808,12 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
         return []
 
     picks = []
-    BASE_SCORING_RATE = 0.194  # League avg per-team 1st inning scoring rate — empirically correct: 1-sqrt(0.65) ≈ 0.194
+    BASE_SCORING_RATE = 0.1633  # 1 - sqrt(0.70): actual 2024-25 MLB 1st-inning NRFI baseline is 70%
+    _LEAGUE_AVG_RUNS = 4.39     # 2024-25 MLB average runs/game/team (for offense_factor normalisation)
 
-    # Build pitcher and team maps
-    pitcher_map = {}  # team → pitcher stats
-    # R9: team_quality removed — SaberSim saber_team already prices in the matchup/starter,
-    # so multiplying by opponent offensive quality was double-counting that signal.
+    # Build pitcher and team offense maps
+    pitcher_map = {}       # team → pitcher stats
+    team_saber_runs = {}   # team → projected runs/game (from SaberSim saber_team column)
     for p in players:
         team = p["team"].upper()
         if p.get("is_pitcher") and p.get("status") == "confirmed":  # R10: use confirmed starter
@@ -2796,7 +2824,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
             hr = p.get("HR", 0)  # R4: HR allowed — now correctly stored for pitchers in parse_csv
             bb = p.get("BB", 0)
             k_val = p.get("K", 0)
-            fip_raw = ((13 * hr + 3 * bb - 2 * k_val) / ip) + 3.20 if ip > 0 else 4.50
+            fip_raw = ((13 * hr + 3 * bb - 2 * k_val) / ip) + 3.17 if ip > 0 else 4.50  # FIP constant 3.17 (2024 lgERA=4.08)
             # Blend ERA proxy and FIP: 60% FIP, 40% ERA (FIP is more stable)
             fip_per_ip = fip_raw / 9.0  # Convert FIP (per 9) to per-inning rate
             blended_rate = 0.40 * er_per_ip + 0.60 * fip_per_ip
@@ -2805,6 +2833,21 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
                 "blended_rate": blended_rate,
                 "name": p["name"], "K": k_val, "IP": ip,
             }
+        # Accumulate saber_team for each team (first batter entry wins; all rows same value per team)
+        st = p.get("saber_team")
+        if team and st and team not in team_saber_runs:
+            try:
+                team_saber_runs[team] = float(st)
+            except (TypeError, ValueError):
+                pass
+
+    def _team_runs(team_name):
+        """Look up projected runs for a team using same partial-match logic as pitcher lookup."""
+        u = team_name.upper()
+        for tk, rv in team_saber_runs.items():
+            if tk in u or u in tk or any(w in tk for w in u.split()[-1:]):
+                return rv
+        return _LEAGUE_AVG_RUNS  # fallback: treat as league-average offense
 
     # Extract NRFI odds from the _nrfi keyed entries (totals_1st_1_innings)
     events = odds_data.get("events", [])
@@ -2866,14 +2909,17 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
             continue
 
         # Adjust scoring rate per team (I4: use blended ERA/FIP rate for stability)
-        # R9: team_quality multiplier removed — SaberSim saber_team already bakes in the matchup
         avg_er_per_ip = 0.46  # R2: 2025 MLB ERA ≈ 4.16 → 4.16/9 = 0.462
         home_pitch_factor = home_pitcher.get("blended_rate", home_pitcher["er_per_ip"]) / avg_er_per_ip
         away_pitch_factor = away_pitcher.get("blended_rate", away_pitcher["er_per_ip"]) / avg_er_per_ip
 
-        # Away bats vs HOME pitcher, home bats vs AWAY pitcher
-        p_away_scores = min(0.45, max(0.05, BASE_SCORING_RATE * home_pitch_factor))
-        p_home_scores = min(0.45, max(0.05, BASE_SCORING_RATE * away_pitch_factor))
+        # Offense factor: batting team's projected run output vs league average.
+        # Away bats in top of 1st vs home pitcher; home bats in bottom of 1st vs away pitcher.
+        off_away = _team_runs(away) / _LEAGUE_AVG_RUNS
+        off_home = _team_runs(home) / _LEAGUE_AVG_RUNS
+
+        p_away_scores = min(0.45, max(0.05, BASE_SCORING_RATE * home_pitch_factor * off_away))
+        p_home_scores = min(0.45, max(0.05, BASE_SCORING_RATE * away_pitch_factor * off_home))
 
         p_nrfi = (1.0 - p_away_scores) * (1.0 - p_home_scores)
         p_yrfi = 1.0 - p_nrfi
