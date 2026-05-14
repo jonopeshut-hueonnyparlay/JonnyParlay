@@ -255,13 +255,24 @@ def fetch_scores(sport, date_str):
         return []
 
 
-ESPN_NBA_BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
+ESPN_NBA_BASE  = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
+ESPN_WNBA_BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba"
 
-def fetch_nba_boxscore(date_str):
-    """Fetch NBA player stats using ESPN's public API (no auth required)."""
+_COMBO_COMPONENTS = {"PRA": ("PTS","REB","AST"), "PR": ("PTS","REB"), "PA": ("PTS","AST"), "RA": ("REB","AST")}
+
+def _add_combo_stats(player_stats):
+    """Add derived combo stats (PA/PR/PRA/RA) from base stats in-place."""
+    for stats in player_stats.values():
+        for combo, parts in _COMBO_COMPONENTS.items():
+            if all(p in stats for p in parts):
+                stats[combo] = sum(stats[p] for p in parts)
+
+
+def _parse_espn_boxscore(base_url, date_str, sport_label):
+    """Shared ESPN scoreboard+summary parser for NBA and WNBA."""
     espn_date = date_str.replace("-", "")
     try:
-        r = requests.get(f"{ESPN_NBA_BASE}/scoreboard",
+        r = requests.get(f"{base_url}/scoreboard",
                          params={"dates": espn_date},
                          headers=default_headers(), timeout=15)
         r.raise_for_status()
@@ -271,7 +282,7 @@ def fetch_nba_boxscore(date_str):
         for event in events:
             event_id = event.get("id")
             try:
-                box = requests.get(f"{ESPN_NBA_BASE}/summary",
+                box = requests.get(f"{base_url}/summary",
                                    params={"event": event_id},
                                    headers=default_headers(), timeout=15)
                 box.raise_for_status()
@@ -291,7 +302,6 @@ def fetch_nba_boxscore(date_str):
                                 try: entry[our_key] = int(d[espn_key])
                                 except (KeyError, ValueError, TypeError) as _e:
                                     logger.debug("ESPN stat parse failed %s/%s: %s", espn_key, name, _e)
-                            # 3PT is "made-att" string e.g. "3-7"
                             if "3PT" in d:
                                 try: entry["3PM"] = int(str(d["3PT"]).split("-")[0])
                                 except (ValueError, IndexError) as _e:
@@ -299,13 +309,24 @@ def fetch_nba_boxscore(date_str):
                             if entry:
                                 player_stats[name.lower()] = entry
                 time.sleep(0.2)
-            except Exception as e:
+            except Exception:
                 continue
 
+        _add_combo_stats(player_stats)
         return player_stats
     except Exception as e:
-        print(f"  ⚠ NBA (ESPN) stats fetch failed: {e}")
+        print(f"  ⚠ {sport_label} (ESPN) stats fetch failed: {e}")
         return {}
+
+
+def fetch_nba_boxscore(date_str):
+    """Fetch NBA player stats using ESPN's public API (no auth required)."""
+    return _parse_espn_boxscore(ESPN_NBA_BASE, date_str, "NBA")
+
+
+def fetch_wnba_boxscore(date_str):
+    """Fetch WNBA player stats using ESPN's public API (no auth required)."""
+    return _parse_espn_boxscore(ESPN_WNBA_BASE, date_str, "WNBA")
 
 
 def fetch_espn_game_scores(date_str):
@@ -2037,6 +2058,8 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
                         all_scores[(date_str, sport)] = espn_scores
                         if not is_shadow:
                             print(f"    ESPN fallback: {len(espn_scores)} game scores loaded")
+            elif sport == "WNBA":
+                pstats = fetch_wnba_boxscore(date_str)
             elif sport == "NHL":
                 pstats = fetch_nhl_boxscores(date_str)
             elif sport == "MLB":
