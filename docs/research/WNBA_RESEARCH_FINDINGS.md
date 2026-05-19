@@ -11,8 +11,8 @@
 | 4 | Combo stat correlations (COMBO_RHO) | **DONE** |
 | 5 | Market structure — books, line sharpness, coverage | OPEN |
 | 6 | Opening day / early-season projection effects | **DONE** |
-| 7 | Gate review — which NBA gates apply/don't apply to WNBA | OPEN |
-| 8 | Platt scaling validity for WNBA | OPEN |
+| 7 | Gate review — which NBA gates apply/don't apply to WNBA | **DONE** |
+| 8 | Platt scaling validity for WNBA | **DONE** |
 | 9 | WNBA-specific structural differences vs NBA | **DONE** |
 
 ---
@@ -847,10 +847,162 @@ All gates in `check_prop_gates()` were designed for NBA (and some for NHL/MLB). 
 8. Are there WNBA-specific correlation concerns (like MLB's PITCHER_STATS group) that need a new correlation gate?
 
 **Findings:**
-<!-- Fill in here -->
+
+### G8B — AST over ban at line ≤ 4.5 (WNBA exempted)
+
+**Code:** Line 854 — `if stat == "AST" and direction == "over" and line <= 4.5 and sport != "WNBA": return False, "G8B"`
+
+The exemption is correctly coded. The threshold of 4.5 is the right dividing line:
+- NBA rationale: model has 0-5 record on AST overs at line ≤4.5, 2-1 at line ≥5.5. Few NBA players average >4.5 APG at a betting line, and those who do are elite passers where the model still underestimates.
+- WNBA rationale: Caitlin Clark averages 8.4 APG (2024), Sabrina Ionescu averages ~5-6 APG. Typical WNBA AST prop lines span 2.5-6.5. A 4.5 AST line in WNBA is mid-tier (not "sub-elite") — entirely legitimate to pick.
+- **Verdict: 4.5 exemption threshold is correct for WNBA. No change needed.**
+
+Additional calibration note: WNBA AST CV is 0.56 (Section 2), higher than NBA. Low-AST players (2-4 APG) are particularly volatile (CV 0.53-0.67). The model should be cautious on AST overs at lines 2.5-3.5 for non-primary-ballhandlers — not from a gate perspective, but the Poisson model may understate variance at this range.
+
+### G8 — Low-line ban (line ≤ 1.5 for AST/REB/SOG/K/HA/HITS)
+
+**Code:** Line 844 — `if stat in ("AST", "REB", "SOG", "K", "HA", "HITS") and line <= 1.5: return False, "G8"`
+
+The 1.5 threshold was calibrated for NBA/NHL where AST lines of 1.5 represent poor-passing role players and REB lines of 1.5 are virtually nonexistent on the prop market. For WNBA:
+
+- **AST at 1.5**: WNBA secondary players (role forwards, big women) do average only 1-2 APG. A 1.5 AST line is a real market line for WNBA non-guards. The ban is correct — these are fragile count stats with high zero-floor probability.
+- **REB at 1.5**: No WNBA player who gets a prop line averages fewer than 3-4 RPG. A 1.5 REB line would be extremely rare/anomalous. Ban is moot but correct.
+- **G8 threshold at 1.5**: Appropriate for WNBA. The types of picks that fail this gate (AST 1.5 for a wing) are genuinely fragile. No change needed.
+
+**What about WNBA-specific low-line risks above 1.5?**
+
+The G10 gate (line ≤ 2.5 under, edge < 0.08) already provides secondary protection. WNBA-specific concern: AST unders at 2.5 for non-ballhandlers are structurally weak (similar binary-count fragility). The existing G8/G10 combination handles this adequately.
+
+**Verdict: G8 at line ≤ 1.5 is appropriate for WNBA. No change needed.**
+
+### G9 — Universal edge floor (edge < 0.03)
+
+**Code:** Line 872 — `if edge < 0.03: return False, "G9"`
+
+This is the universal minimum edge floor (3%). For WNBA with wider vig (~6-9% margin vs NBA ~4.5%), Section 5 recommended raising the effective edge threshold to 3.5%. G9 is a universal constant — the correct place to impose sport-specific edge minimums is via `adj_edge` modification or a sport-level override checked before G9, not within G9 itself. **This is a gap — no WNBA-specific edge gate currently exists.**
+
+### G15 — HIGH-VAR 3PM gate (pts_cv ≥ 0.60)
+
+**Code:** Lines 902-909:
+```python
+if stat == "3PM":
+    _cv = pick.get("pts_cv")
+    if _cv and float(_cv) >= 0.60:
+        return False, "G15"
+```
+
+Key findings:
+1. **pts_cv source**: The comment at line 903-905 is explicit: "Only triggers when custom engine provides pts_cv; SaberSim CSV leaves the column empty so this gate is a no-op in non-custom-engine runs." Since WNBA picks come from SaberSim (not the custom engine), **G15 is always a no-op for WNBA picks**. The pts_cv field will be empty.
+
+2. **Threshold at 0.60**: Section 3 found WNBA top shooters (Ionescu, Clark) have 3PM CV ~0.48 — below the 0.60 threshold, so they would NOT trigger G15 even if cv were populated. Low-volume WNBA shooters (Collier: CV 0.87) would correctly trigger G15 if cv were available. The 0.60 threshold is appropriate for WNBA.
+
+3. **Section 3 calibration finding**: WNBA 3PM is underdispersed (var/mean ~0.7 for top shooters), the opposite of NBA (var/mean >1.0). The HIGH-VAR flag is conceptually sound for WNBA — just currently inoperable because SaberSim doesn't provide pts_cv.
+
+**Verdict: G15 threshold (0.60) is appropriate for WNBA. Gate is currently a no-op (SaberSim provides no pts_cv). When custom WNBA projection engine is built, populate pts_cv and this gate will work correctly.**
+
+### STAT_CAP — Per-stat pick limits
+
+**Code:** Lines 1158-1160 in `apply_caps()`:
+```python
+STAT_CAP = defaultdict(lambda: 2)
+STAT_CAP["SOG"] = 6
+```
+
+Current state: All stats default to max 2 picks per run. SOG (NHL) gets 6. There is no WNBA-specific `STAT_CAP` entry, and `STAT_CAP` is a local dict inside `apply_caps()` — not sport-aware at all.
+
+**Problem for WNBA**: STAT_CAP is sport-agnostic. On a 4-game WNBA slate, STAT_CAP=2 for PTS means at most 2 PTS picks regardless of how many qualified. This may be fine since WNBA has fewer total picks (20-30 props across 4-6 games). However, AST and REB are already limited to 2 each — appropriate given the smaller player pool.
+
+**STL/BLK consideration**: STL and BLK are not in any TIERS dict (confirmed: TIERS only covers AST, REB, PTS, 3PM, SOG, and combos). The `get_tier()` function returns `None` for any stat not in TIERS, which causes picks to be skipped at line 2116 (`if tier is None: continue`). **STL and BLK picks are effectively blocked system-wide regardless of sport — they cannot pass the tier gate.** No separate gate is needed.
+
+**Verdict: Current STAT_CAP=2 per stat is fine for WNBA. The smaller player pool naturally limits total pick volume. No WNBA-specific STAT_CAP needed. STL/BLK are already system-blocked via the tier gate.**
+
+**Note on combo-pick concentration (Section 1 finding)**: Clark had 4 combo picks (PRA/PA/PR/RA) on opening day. STAT_CAP=2 per stat means at most 2 PRA picks, 2 PR picks, etc. — but Clark could still appear in multiple combo markets simultaneously. A per-player pick cap (max 2 picks per player per run) would address this. The existing `max_per_game=2` cap only limits picks per game, not per player.
+
+### KILLSHOT gate — WNBA exposure
+
+**Code:** Lines 6010-6011, before KILLSHOT selection:
+```python
+shadow_picks  = [p for p in qualified if p.get("sport") in SHADOW_SPORTS]
+qualified     = [p for p in qualified if p.get("sport") not in SHADOW_SPORTS]
+```
+
+Since `SHADOW_SPORTS = {"MLB", "WNBA"}` (line 213), WNBA picks are split OUT of the `qualified` pool before `select_killshots()` is called at line 6083. **WNBA picks can never reach the KILLSHOT gate — they are permanently excluded by the shadow sports filter.** No separate sport-check is needed in `_passes_killshot_v2_gate()`.
+
+This is the correct behavior: WNBA has thin markets ($250-500 limits), soft/uncalibrated pricing, and a model that has only 43 shadow log picks. A WNBA pick would never generate the @everyone brand-risk ping.
+
+**Verdict: WNBA is already KILLSHOT-excluded via SHADOW_SPORTS filter. No code change needed. When/if WNBA goes live (exits SHADOW_SPORTS), an explicit WNBA sport exclusion should be added to `_passes_killshot_v2_gate()` before removing WNBA from SHADOW_SPORTS.**
+
+### All other WNBA-specific exemptions visible in the code
+
+Complete inventory of WNBA-specific handling in run_picks.py:
+
+| Location | Code | WNBA Treatment |
+|----------|------|----------------|
+| Line 131 | `"WNBA": "basketball_wnba"` | API sport key mapping |
+| Line 213 | `SHADOW_SPORTS = {"MLB", "WNBA"}` | Shadow logging, no Discord, excludes from KILLSHOT |
+| Lines 234-238 | `PROP_MARKETS["WNBA"]` | Same markets as NBA (AST/REB/PTS/3PM + combos) |
+| Line 218 | `SHADOW_LOG_PATHS["WNBA"]` | Separate log file (pick_log_custom.csv path) |
+| Line 346 | `GAME_SIGMA["WNBA"]` | Reduced game sigmas (total 10.0 vs NBA 12.0) |
+| Line 854 | `G8B... and sport != "WNBA"` | AST over ≤4.5 exempted for WNBA |
+| Line 1162 | `SPORT_UNIT_CAP["WNBA"] = 4.0` | Lower unit cap (NBA=8.0) |
+| Line 1370 | `sport = "WNBA"` | Filename-based sport detection |
+| Lines 5082-5083 | Context prompt for WNBA | Injury/lineup pregame scan |
+| Lines 6010-6011 | SHADOW_SPORTS split | WNBA removed from qualified before KILLSHOT |
+
+**Notable absences** (no WNBA-specific handling):
+- No WNBA-specific `SIGMA` override (uses NBA values as fallback)
+- No WNBA-specific `COMBO_RHO` (uses NBA values — Section 4 found WNBA rho 0.04-0.13 vs NBA 0.23-0.33)
+- No WNBA-specific `NB_R["3PM"]` (Section 3 found WNBA 3PM should use Normal, not NB)
+- No WNBA-specific edge threshold (G9 flat 3% regardless of sport)
+- No WNBA early-season dampener (Section 6 recommendation)
+
+### Reasonable WNBA line ranges for low-line ban calibration
+
+For context on which props are legitimate vs fragile in the WNBA market (from Section 9 league averages and Section 5 market research):
+
+| Stat | WNBA typical prop range | "Too low to pick" threshold | Rationale |
+|------|-------------------------|-----------------------------|-----------|
+| PTS | 10.5-20.5 | < 8.5 | Sub-8.5 PTS is a bench/role player; binary zero-game risk elevated |
+| REB | 4.5-9.5 | < 3.5 | Below 3.5 REB means a non-rebounding guard; fragile count |
+| AST | 2.5-6.5 | ≤ 1.5 (G8 already) | Current G8 threshold is correct |
+| 3PM | 1.5-2.5 | < 1.5 (G8 adjacent) | 1.5 is the minimum market line; below this doesn't exist |
+
+**Current G8 ban at ≤ 1.5 for AST and REB is appropriate.** A case can be made for a WNBA-specific extended ban: REB ≤ 2.5 for non-big-player types (guards with 2-3 RPG projections), but the existing G10 gate (line ≤ 2.5 under, edge < 0.08) provides partial coverage. No new gate needed for WNBA specifically.
+
+### STL/BLK: Should they be excluded for WNBA?
+
+STL and BLK are not in TIERS. Any pick with stat="STL" or stat="BLK" returns `tier=None` from `get_tier()`, causing it to be skipped at line 2116. **They are already system-excluded.** No WNBA-specific gate is needed.
+
+If STL/BLK props were added to TIERS in future, they should NOT be added for WNBA specifically (thin market, high variance, no shadow data to calibrate CV or NB_R parameters). Section 5 confirmed WNBA prop depth is limited to PTS/REB/AST/3PM plus combos.
+
+### WNBA-specific correlation concerns (MLB-style group gate)
+
+For MLB, `PITCHER_STATS` and `BATTER_CORR_STATS` groups prevent picking multiple highly-correlated stats from the same player (K/OUTS/HA all driven by IP; HITS/TB/HRR all correlated).
+
+For WNBA, analogous correlation groups exist:
+- **Combo + component conflict**: If the model picks Clark PRA over AND Clark PTS over, the PTS failure drives both losses. Section 4 found WNBA COMBO_RHO is near-zero (0.04-0.13), which means combo props behave nearly additively — but the individual component (PTS) is the same in PRA, PR, and PA.
+- **Mechanism**: A single player can appear in PRA, PR, PA as separate prop markets. If PTS is wrong, all three fail together.
+
+**Current code**: The `max_per_game=2` cap limits picks per game but not per player. The STAT_CAP=2 per stat limits how many PRA picks appear, but a player could still have PRA + PA + PR (different stat keys, each under cap=2).
+
+**Verdict**: No new gate required immediately (small shadow log, needs more data), but a `per_player_cap=2` constraint in `apply_caps()` would be a practical WNBA improvement. MLB's PITCHER_STATS group logic is the right template.
 
 **Implementation verdict:**
-<!-- List of gate changes needed for WNBA -->
+
+| Gate | Action | Priority |
+|------|--------|----------|
+| G8B (AST over ≤4.5 exempt for WNBA) | NO CHANGE — correct as-is | — |
+| G8 (low-line ban ≤1.5) | NO CHANGE — appropriate for WNBA | — |
+| G15 (HIGH-VAR 3PM, cv≥0.60) | NO CHANGE — threshold correct; gate is no-op until custom WNBA engine built | — |
+| STAT_CAP (default 2) | NO CHANGE — adequate for WNBA's smaller player pool | — |
+| KILLSHOT exclusion | NO CHANGE — already excluded via SHADOW_SPORTS; add explicit sport gate when WNBA goes live | Low (future) |
+| STL/BLK exclusion | NO CHANGE — already excluded via tier gate | — |
+| WNBA-specific edge floor | ADD: WNBA minimum edge 3.5% (vs NBA 3%) — implement as adj_edge modifier pre-G9 or sport-level override | Medium |
+| COMBO_RHO for WNBA | ADD: COMBO_RHO_WNBA = {PTS-REB:0.13, PTS-AST:0.04, REB-AST:0.05} — use when sport==WNBA in `_combo_mu_sigma()` | High |
+| SIGMA for WNBA | ADD: SIGMA_WNBA = {PTS:mult=0.38/min=3.5, AST:mult=0.55/min=1.1, REB:mult=0.45/min=2.0} — use when dk_std=0 and sport==WNBA | High |
+| NB_R for WNBA 3PM | ADD: Route WNBA 3PM through Normal (SIGMA_WNBA) instead of NB_R["3PM"] | Medium |
+| Per-player pick cap | ADD: max 2 picks per player per run in `apply_caps()` — prevents Clark PRA+PA+PR stacking | Medium |
+| Early-season edge dampener | ADD: WNBA_EARLY_SEASON_EDGE_SCALAR (Section 6) — block days 1-3, 0.80x days 4-14 | High (already designed) |
 
 ---
 
@@ -877,10 +1029,154 @@ The Platt scaler (`PLATT_A=1.4988, PLATT_B=-0.8102`) was fit on NBA `over_p_raw`
 - This could be Platt mis-calibration OR genuine edge that isn't materializing (thin sample)
 
 **Findings:**
-<!-- Fill in here -->
+
+### Exact Platt transform formula
+
+**Code:** Lines 609-618 in `_platt_calibrate_prop()`:
+```python
+def _platt_calibrate_prop(over_p: float) -> float:
+    raw = PLATT_A * over_p + PLATT_B
+    raw = max(-30.0, min(30.0, raw))
+    return 1.0 / (1.0 + math.exp(-raw))
+```
+
+**Applied at line 2077:** `over_p = _platt_calibrate_prop(over_p)` — called on the raw `over_p` directly, after `calc_prop_prob()` returns it.
+
+**The transform is: sigmoid(A × over_p_raw + B), NOT sigmoid(A × logit(over_p_raw) + B).**
+
+With A=1.4988, B=-0.8102:
+- Input: `over_p_raw` (the raw over probability from Normal/Poisson/NB distribution, range ~0.0-1.0)
+- Linear combination: `raw = 1.4988 × over_p_raw − 0.8102`
+- Output: `sigmoid(raw)` = calibrated over probability
+
+**Key distinction**: This is a linear regression on the probability itself (not on the logit), making it a proper Platt scaling variant where the sigmoid acts as a bounded squashing function. The NBA fit: over_p_raw input of 0.696 average compressed to output 0.579 (matching actual hit rate).
+
+### What happens when over_p_raw ≈ 0.5 (WNBA scenario)
+
+For WNBA, larger σ relative to the line means over_p_raw values cluster more tightly near 0.50 compared to NBA. Work through the math for a representative WNBA over_p_raw = 0.50:
+
+```
+raw = 1.4988 × 0.50 + (−0.8102)
+    = 0.7494 − 0.8102
+    = −0.0608
+
+sigmoid(−0.0608) = 1 / (1 + exp(0.0608))
+                 = 1 / (1 + 1.0627)
+                 = 0.4848
+```
+
+**At over_p_raw = 0.50, the NBA Platt outputs 0.4848 — BELOW 0.50.** This means the model would assign a slight UNDER win_prob of 0.515. This is the correct direction of the compression — the Platt was fit to recognize that raw model probs near 0.50 are slightly overconfident (actual hit rate at those probs is below 50%).
+
+Now check over_p_raw = 0.55 (slightly above 0.50, typical for a marginal over pick):
+```
+raw = 1.4988 × 0.55 − 0.8102 = 0.8243 − 0.8102 = 0.0141
+sigmoid(0.0141) = 1 / (1 + exp(−0.0141)) = 0.5035
+```
+
+**At over_p_raw = 0.55, calibrated over_p ≈ 0.503.** The Platt barely boosts this above 0.50.
+
+Contrast with NBA behavior at over_p_raw = 0.70 (a confident NBA pick):
+```
+raw = 1.4988 × 0.70 − 0.8102 = 1.0492 − 0.8102 = 0.2390
+sigmoid(0.239) = 0.559
+```
+
+**At over_p_raw = 0.70, calibrated over_p ≈ 0.559.** This is a meaningful boost from the compressed Platt.
+
+**Key insight**: The NBA Platt was fit on over_p_raw values that frequently ranged 0.60-0.80 (NBA has lower relative sigma → model is more decisive → more extreme raw probs). For WNBA with higher CV, over_p_raw values cluster tightly near 0.50-0.60. In this narrow range:
+- The Platt is nearly linear (sigmoid ≈ linear near x=0)
+- A=1.4988 > 1.0 means the Platt amplifies deviations from 0.50 by a factor of ~1.5
+- For WNBA over_p_raw ∈ [0.52, 0.62]: calibrated output ≈ 0.505 to 0.538
+
+**The NBA Platt does NOT systematically OVER-inflate WNBA win_probs. If anything, it slightly under-inflates them in the 0.52-0.62 over_p_raw range.** The model says 0.551 avg win_prob; the Platt with A=1.4988 is actually doing mild compression in this range, not expansion.
+
+### Is the 0.551 avg win_prob vs 44% actual WR gap explained by Platt?
+
+Observed: avg model win_prob = 0.551, actual WR = 44.3% (27W/34L, all 43 picks from opening day May 13, 2026).
+
+**The gap of ~10.7 percentage points is NOT primarily explained by Platt miscalibration.** The math shows why:
+
+For win_prob 0.551 to arise from the Platt, the over_p_raw would be:
+```
+0.551 = sigmoid(1.4988 × over_p_raw − 0.8102)
+logit(0.551) = 0.0040 = 1.4988 × over_p_raw − 0.8102
+over_p_raw = (0.0040 + 0.8102) / 1.4988 = 0.5434
+```
+
+So the average over_p_raw was ~0.543 for WNBA picks. The Platt boosted this 0.543 → 0.551 — a boost of only 0.8 percentage points. That's not the source of the 10.7pp gap between 0.551 and 0.443.
+
+**The 10.7pp gap is explained by factors (B) and the combination:**
+
+**Root cause analysis of 27W/34L on opening day:**
+
+1. **(B) Genuine bad picks on an anomalous opening day**: Section 1 established that stars dramatically outperformed SaberSim projections (Carter +19.8, Mabrey +10.1, Plum +7.7, Clark +6.9). The model correctly computed under probabilities given SaberSim projections, but SaberSim was systematically wrong for stars and new-team players. This is not a Platt problem — it's a projection input problem.
+
+2. **(A) Platt bias contribution (minor)**: The Platt boosts win_prob by ~0.8pp for typical WNBA picks (over_p_raw 0.54 → win_prob 0.551). If the "correct" win_prob should be 0.543, the overstatement is 0.8pp. This is negligible against the 10.7pp gap.
+
+3. **(C) Both — but (B) dominates**: The residual after accounting for projection errors is likely noise from a single-day sample (n=43, binomial std ≈ ±7.6pp at 0.50 WR). A 44.3% WR on 43 picks is within 1 standard deviation of 50%, and well within 1.5 standard deviations of the model's predicted 55.1% — not statistically distinguishable from chance.
+
+**Conclusion**: The 0.551 vs 44.3% gap on 43 picks is explained primarily by (B) — projection input failures from SaberSim on opening day with extreme player-role changes — with a negligible contribution from (A) Platt miscalibration (~0.8pp of the 10.7pp gap). The 43-pick sample is too thin to reach any conclusion about systematic Platt bias for WNBA.
+
+### Does higher WNBA PTS CV systematically bias win_probs toward overconfidence?
+
+**No — the direction of the bias is the opposite of what the question assumes.**
+
+The logic chain often assumed: higher CV → over_p_raw closer to 0.50 → Platt with A>1 pushes win_prob AWAY from 0.50 → overconfidence. Let's verify this carefully.
+
+The Platt with A=1.4988, B=-0.8102 has its fixed point (where output = input) at:
+```
+x = sigmoid(1.4988x − 0.8102) → solve numerically
+At x = 0.549: raw = 1.4988(0.549) − 0.8102 = 0.823 − 0.810 = 0.013; sigmoid(0.013) = 0.503 ≠ 0.549 
+Try x = 0.52: raw = 1.4988(0.52) − 0.8102 = 0.779 − 0.810 = −0.031; sigmoid(−0.031) = 0.492
+The Platt maps over_p_raw < ~0.55 to LOWER calibrated values (compression below neutral)
+```
+
+More precisely: for over_p_raw ∈ [0.45, 0.60], the NBA Platt maps these to calibrated values that are slightly LOWER than the raw value near the bottom of this range and nearly equal near 0.60. The A>1 effect only amplifies ABOVE the neutral region (~0.55 over_p_raw → calibrated 0.51). It is not amplifying overconfidence for WNBA — it is applying mild compression.
+
+The real risk is a different one: if WNBA over_p_raw values cluster tightly near 0.52-0.58 (which Section 2's higher CV confirms), then the Platt's slope of A=1.4988 amplifies small errors in over_p_raw more than it would for NBA. A model that is 2% wrong on over_p_raw (0.54 when true is 0.52) produces a win_prob error of ~3pp after Platt (because the slope amplifies). This is the "amplification risk" for a mis-specified distribution model, but it is not directionally biased — it amplifies errors in both directions.
+
+**Net verdict on overconfidence bias**: The NBA Platt does NOT systematically over-inflate WNBA win_probs as a structural artifact. The 44.3% opening-day WR is better explained by projection errors than Platt artifact.
+
+### How many WNBA over_p_raw rows to refit a WNBA-specific Platt?
+
+The NBA Platt was gated at ~300 rows (H3 gate), with 76 rows used for the initial fit. Platt scaling (2-parameter sigmoid fit) needs:
+- Minimum for stable fit: ~50-75 rows (original NBA fit at n=76)
+- Recommended for WNBA-specific: **~200-300 rows** to match NBA gate quality
+
+At ~10-15 WNBA picks/day:
+- 200 rows: **~14-20 days** = 2-3 weeks of season data
+- 300 rows: **~20-30 days** = 3-4 weeks of season data
+
+The WNBA 2026 season started May 13. At 10-15 picks/day, 300 rows is reachable by **early to mid-June 2026**, assuming shadow logging captures over_p_raw correctly (it does — line 2073 sets `over_p_raw = over_p` before Platt is applied, and column 29 is populated for all prop picks including WNBA shadow picks).
+
+**Practical timeline**: ~4-6 weeks from season start. Check `pick_log_custom.csv` non-empty over_p_raw count weekly.
+
+### Practical recommendation: NBA Platt vs WNBA patch
+
+Three options:
+1. **Use NBA Platt as-is** (current behavior): Accept calibration imprecision on the ~43-300 pick ramp. The Platt bias is ~0.8pp on typical WNBA picks — not material.
+2. **Apply a sport-specific win_prob damping factor for WNBA**: Set calibrated win_prob for WNBA = 0.5 + (platt_output − 0.5) × WNBA_DAMPING, where WNBA_DAMPING < 1.0 compresses WNBA win_probs toward 0.5. This is a manual override that acknowledges we have less certainty about WNBA model calibration without having the data to refit Platt.
+3. **Wait for 300 WNBA over_p_raw rows, then refit WNBA-specific Platt A/B**: The cleanest solution. At current pace (~10-15/day), achievable in 4-6 weeks.
+
+**Recommendation**: Use option 1 (NBA Platt as-is) for now because:
+- The 0.8pp win_prob overstatement from Platt is far smaller than the noise in a 43-pick sample
+- Option 2 (manual damping) is arbitrary without data to calibrate the damping factor; it could introduce bias rather than remove it
+- The real calibration problem (SaberSim projection bias for WNBA stars on opening day) is not addressable by Platt tuning
+- Once 300 WNBA over_p_raw rows accumulate (~mid-June 2026), run `calibrate_platt.py` on WNBA rows separately to check if A/B differ meaningfully from NBA values; if yes, implement WNBA-specific constants
 
 **Implementation verdict:**
-<!-- Whether to use sport-specific Platt for WNBA, or validate NBA Platt is acceptable -->
+
+1. **Exact Platt formula confirmed**: `sigmoid(A × over_p_raw + B)` — linear input (not logit). A=1.4988, B=-0.8102. Applied once after `calc_prop_prob()` returns `over_p`.
+
+2. **NBA Platt does NOT systematically over-inflate WNBA win_probs**. For typical WNBA over_p_raw values (0.52-0.60), the Platt applies mild compression, not amplification. The Platt output for over_p_raw=0.55 is only 0.503 — barely above 0.50.
+
+3. **The 0.551 avg win_prob vs 44.3% actual WR gap (opening day) is NOT primarily a Platt artifact**. It is explained by SaberSim projection failures for star/new-team players on opening day (Section 1 and 6 findings). The Platt contributes only ~0.8pp of the 10.7pp gap.
+
+4. **No Platt patch recommended now**. Use the existing NBA Platt for WNBA shadow picks. The calibration error is within the noise of the current sample.
+
+5. **WNBA Platt refit gate**: Trigger when WNBA over_p_raw count in `pick_log_custom.csv` reaches 300 (matching NBA H3 gate at ~300 rows). Expected timeline: ~mid-June 2026 at 10-15 WNBA picks/day. Run `calibrate_platt.py --sport WNBA` (or filter rows) and check if new WNBA A/B differ from NBA values by more than ±0.2 in either parameter. If they do, implement `PLATT_A_WNBA` / `PLATT_B_WNBA` constants and add sport-branch in `_platt_calibrate_prop()`.
+
+6. **Shadow log validation**: Next available WNBA data day, check that `over_p_raw` column is non-empty for WNBA shadow picks (it should be — the column is populated at line 2073 before any sport branching). Count accumulated over_p_raw rows in `pick_log_custom.csv` to track progress toward the 300-row gate.
 
 ---
 
