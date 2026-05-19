@@ -58,7 +58,7 @@ try:
     _ANTHROPIC_AVAILABLE = True
 except ImportError:
     _ANTHROPIC_AVAILABLE = False
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from collections import defaultdict, OrderedDict
@@ -319,6 +319,34 @@ COMBO_RHO = {
     ("PTS", "AST"): 0.233,
     ("REB", "AST"): 0.251,
 }
+
+# WNBA-specific sigma fallback (used when dk_std=0 from SaberSim CSV).
+# Research §2: WNBA PTS CV ~0.36 (+44% vs NBA ~0.25); AST CV ~0.56 (+12%);
+# REB CV ~0.43 (-9%); 3PM var/mean ~0.70 (underdispersed — use Normal not NB).
+SIGMA_WNBA = {
+    "PTS": {"mult": 0.38, "min": 3.5},
+    "AST": {"mult": 0.55, "min": 1.1},
+    "REB": {"mult": 0.45, "min": 2.0},
+    "3PM": {"mult": 0.48, "min": 0.70},  # Normal model; NB_R not used for WNBA
+}
+
+# WNBA combo correlations — calibrated from 9 players / 336 games (2024 season).
+# All pairs ~0.20 lower than NBA; near-zero correlation means combos are nearly additive.
+COMBO_RHO_WNBA = {
+    ("PTS", "REB"): 0.13,
+    ("PTS", "AST"): 0.04,
+    ("REB", "AST"): 0.05,
+}
+
+# WNBA early-season gate — opening-day extreme variance is structural (SaberSim cannot
+# price new-team/new-role stars; Section 1 + 6 research). Days counted from season start.
+WNBA_SEASON_START = date(2026, 5, 13)   # update each season
+WNBA_OPENING_GATE_DAYS = 3              # days 1-3: no picks at all
+WNBA_EARLY_SEASON_EDGE_MULT = [         # (day_threshold, multiplier) — ascending
+    (14, 0.80),   # days 4-14: effective edge × 0.80
+    (21, 0.90),   # days 15-21: effective edge × 0.90
+]
+WNBA_EDGE_FLOOR = 0.035                 # compensates for wider WNBA vig (~-115/-115)
 
 # MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
 # G11/G11b: max 1 prop per player within each correlated group
@@ -618,7 +646,7 @@ def _platt_calibrate_prop(over_p: float) -> float:
     return 1.0 / (1.0 + math.exp(-raw))
 
 
-def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0):
+def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = ""):
     """Calculate over/under probability for a player prop.
     FIX M1: For integer lines, properly handle push probability.
     Push at exactly the line is excluded (DK rules: push = refund),
@@ -628,6 +656,8 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0):
     P16: NB_STATS (3PM) use negative binomial CDF instead of Normal.
     NB_R[stat] is the within-player conditional dispersion parameter r,
     calibrated from per-player avg(var/mu) over the 2024-25 DB sample.
+    Exception: WNBA 3PM is underdispersed (var/mean ~0.70) — routes to
+    Normal via SIGMA_WNBA["3PM"] instead of NB.
 
     H3: sigma_override — when > 0, replaces the default SIGMA[stat] formula for
     Normal-distribution stats (PTS etc.). Used to pass dk_std from the custom
@@ -649,8 +679,9 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0):
         else:  # Half-integer line — no push possible
             under_p = poisson_cdf(k, proj)
             over_p = 1.0 - poisson_cdf(k, proj)
-    elif stat in NB_STATS:
-        # P16 — Negative binomial path for overdispersed count stats (3PM).
+    elif stat in NB_STATS and not (sport == "WNBA" and stat == "3PM"):
+        # P16 — Negative binomial path for overdispersed count stats (3PM, HRR, K).
+        # WNBA 3PM is underdispersed (var/mean ~0.70) and falls through to Normal below.
         r = NB_R[stat]
         k = math.floor(line)
         if line == k:  # Integer line — push-adjusted
@@ -674,9 +705,10 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0):
             # More accurate than the flat 0.35×proj formula for non-starters and high-CV players.
             sigma = sigma_override
         else:
-            s = SIGMA.get(stat)
+            # WNBA uses sport-specific sigma calibrated from 2024 season game logs.
+            s = (SIGMA_WNBA.get(stat) if sport == "WNBA" else None) or SIGMA.get(stat)
             if s is None:  # L11: warn on unknown stat so calibration gaps surface early
-                logger.warning("calc_prop_prob: no SIGMA entry for stat=%r — using default fallback {mult:0.40, min:2.0}", stat)
+                logger.warning("calc_prop_prob: no SIGMA entry for stat=%r sport=%r — using default fallback {mult:0.40, min:2.0}", stat, sport)
                 s = {"mult": 0.40, "min": 2.0}
             sigma = max(proj * s["mult"], s["min"])
         under_p = normal_cdf(line, proj, sigma)
@@ -720,17 +752,19 @@ def calc_tb_prob(singles: float, doubles: float, triples: float, hr: float, line
     return over_p, under_p
 
 
-def _combo_mu_sigma(proj_player: dict, stat: str) -> tuple:
+def _combo_mu_sigma(proj_player: dict, stat: str, sport: str = "") -> tuple:
     """Returns (mu, sigma) for a combo stat using correlated Normal sum.
 
     Var(X+Y) = Var(X) + Var(Y) + 2·ρ·σ(X)·σ(Y).
-    Individual σ from SIGMA dict; pairwise ρ from COMBO_RHO.
+    Individual σ from SIGMA dict (SIGMA_WNBA for WNBA); pairwise ρ from COMBO_RHO
+    (COMBO_RHO_WNBA for WNBA — all pairs ~0.20 lower than NBA).
     """
     components = COMBO_COMPONENTS[stat]
+    rho_table = COMBO_RHO_WNBA if sport == "WNBA" else COMBO_RHO
     mus, sigmas = [], []
     for c in components:
         mu = float(proj_player.get(c, 0) or 0)
-        s = SIGMA.get(c, {"mult": 0.40, "min": 2.0})
+        s = (SIGMA_WNBA.get(c) if sport == "WNBA" else None) or SIGMA.get(c, {"mult": 0.40, "min": 2.0})
         mus.append(mu)
         sigmas.append(max(mu * s["mult"], s["min"]))
     mu_combo = sum(mus)
@@ -738,14 +772,14 @@ def _combo_mu_sigma(proj_player: dict, stat: str) -> tuple:
     for i in range(len(components)):
         for j in range(i + 1, len(components)):
             pair = (components[i], components[j])
-            rho = COMBO_RHO.get(pair, COMBO_RHO.get((pair[1], pair[0]), 0.20))
+            rho = rho_table.get(pair, rho_table.get((pair[1], pair[0]), 0.10 if sport == "WNBA" else 0.20))
             var += 2.0 * rho * sigmas[i] * sigmas[j]
     return mu_combo, max(var ** 0.5, 2.0)
 
 
-def calc_combo_prob(proj_player: dict, stat: str, line: float) -> tuple:
+def calc_combo_prob(proj_player: dict, stat: str, line: float, sport: str = "") -> tuple:
     """Correlated Normal probability for combo props (PRA, PR, PA, RA)."""
-    mu, sigma = _combo_mu_sigma(proj_player, stat)
+    mu, sigma = _combo_mu_sigma(proj_player, stat, sport=sport)
     over_p = 1.0 - normal_cdf(line, mu, sigma)
     return over_p, 1.0 - over_p
 
@@ -854,6 +888,27 @@ def check_prop_gates(pick):
     if stat == "AST" and direction == "over" and line <= 4.5 and sport != "WNBA":
         return False, "G8B"
 
+    # WNBA structural gates — applied after sport is known
+    if sport == "WNBA":
+        today_date = datetime.now().date()
+        season_day = (today_date - WNBA_SEASON_START).days + 1  # day 1 = opening day
+
+        # G_WNBA_OPEN: no picks in first N days — opening-day extreme variance from
+        # new-team/new-role players that SaberSim cannot price (May 13 2026: -19.8 PTS miss)
+        if 1 <= season_day <= WNBA_OPENING_GATE_DAYS:
+            return False, "G_WNBA_OPEN"
+
+        # G_WNBA_EDGE: higher edge floor to compensate for wider WNBA vig (~-115/-115 vs NBA -110)
+        # Early-season dampener: edge is effectively reduced in weeks 1-3 to account for
+        # higher projection uncertainty (new lineups, new teams, first games of season).
+        effective_edge = edge
+        for day_cap, mult in WNBA_EARLY_SEASON_EDGE_MULT:
+            if 0 < season_day <= day_cap:
+                effective_edge = edge * mult
+                break
+        if effective_edge < WNBA_EDGE_FLOOR:
+            return False, "G_WNBA_EDGE"
+
     # G_MLB_STRUCT: MLB structural direction gates based on known SaberSim biases.
     # K: SaberSim projects conservative median IP; market prices to mode IP → K unders always lose.
     #    Only bet K overs, and only at meaningful lines where ace throughput is predictable.
@@ -885,16 +940,23 @@ def check_prop_gates(pick):
     # handles cases where the discrete distribution favors the pick even when proj
     # slightly crosses the line (e.g. AST 4.5 under with proj=4.6 still gives ~51%
     # under probability). G13 (prob≥0.50) already handles true direction failures.
-    # NB stats (3PM) are exempt — Negative Binomial distribution handles these correctly.
+    # NB stats (3PM) are exempt for NBA/NHL — NB distribution handles these correctly.
+    # WNBA 3PM uses Normal (underdispersed), so it gets G14 like other Normal stats.
     if stat in SIGMA and stat not in POISSON_STATS:
-        _s = SIGMA[stat]
+        _s = (SIGMA_WNBA.get(stat) if sport == "WNBA" else None) or SIGMA[stat]
+        _sigma = max(proj * _s["mult"], _s["min"])
+        _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
+        if _z < 0.10:
+            return False, "G14"
+    if stat == "3PM" and sport == "WNBA":
+        _s = SIGMA_WNBA["3PM"]
         _sigma = max(proj * _s["mult"], _s["min"])
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
         if _z < 0.10:
             return False, "G14"
     if stat in COMBO_STATS:
         _pp = pick.get("proj_player", {}) or {}
-        _, _sigma_c = _combo_mu_sigma(_pp, stat)
+        _, _sigma_c = _combo_mu_sigma(_pp, stat, sport=sport)
         _z = (line - proj) / _sigma_c if direction == "under" else (proj - line) / _sigma_c
         if _z < 0.10:
             return False, "G14"
@@ -1063,6 +1125,12 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
         if p["stat"] in PITCHER_STATS:
             pgd_key = (game, p["direction"])
             if pitcher_game_dir_count[pgd_key] >= 2:
+                return False
+        # R_COMBO: Max 1 combo pick per player — prevents correlated-loss stacking
+        # (e.g., Clark PRA+PA+PR all fail when PTS component misses, as on opening day 2026).
+        if p["stat"] in COMBO_STATS:
+            player = p.get("player", "")
+            if player and any(q.get("player") == player and q["stat"] in COMBO_STATS for q in premium):
                 return False
         return True
 
@@ -2055,6 +2123,7 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         # use their empirically observed σ instead of the flat 0.35×proj formula.
         # Only applies to Normal-distribution stats (PTS etc.); Poisson/NB paths ignore it.
         _dk_std = prop.get("proj_player", {}).get("dk_std", 0.0) or 0.0
+        _sport = prop.get("sport", "")
 
         # Calculate probabilities
         _pp = prop.get("proj_player", {})
@@ -2064,9 +2133,9 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 _pp.get("TB_3B", 0.0), _pp.get("TB_HR", 0.0), line,
             )
         elif stat in COMBO_STATS:
-            over_p, under_p = calc_combo_prob(_pp, stat, line)
+            over_p, under_p = calc_combo_prob(_pp, stat, line, sport=_sport)
         else:
-            over_p, under_p = calc_prop_prob(proj, line, stat, sigma_override=_dk_std)
+            over_p, under_p = calc_prop_prob(proj, line, stat, sigma_override=_dk_std, sport=_sport)
 
         # v4: save raw over_p before Platt so calibrate_platt.py can fit on
         # the actual model output without double-calibration bias.
@@ -5569,10 +5638,13 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     )
     def _g14_fail(p):
         s, d, ln, pr = p["stat"], p["direction"], p["line"], p.get("proj", 0.0)
-        # Poisson stats exempt — G13 handles direction failures; discrete dist
-        # correctly prices picks even when proj slightly crosses the line.
+        sp = p.get("sport", "")
         if s in SIGMA and s not in POISSON_STATS:
-            _s = SIGMA[s]; _sig = max(pr * _s["mult"], _s["min"])
+            _s = (SIGMA_WNBA.get(s) if sp == "WNBA" else None) or SIGMA[s]
+            _sig = max(pr * _s["mult"], _s["min"])
+            return ((ln - pr) / _sig if d == "under" else (pr - ln) / _sig) < 0.10
+        if s == "3PM" and sp == "WNBA":
+            _s = SIGMA_WNBA["3PM"]; _sig = max(pr * _s["mult"], _s["min"])
             return ((ln - pr) / _sig if d == "under" else (pr - ln) / _sig) < 0.10
         return False
     has_g14_fail = any(_g14_fail(p) for p in all_qualified)
