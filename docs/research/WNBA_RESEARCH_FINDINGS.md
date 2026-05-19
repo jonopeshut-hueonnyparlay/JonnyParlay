@@ -5,10 +5,10 @@
 
 | Section | Topic | Status |
 |---------|-------|--------|
-| 1 | SaberSim WNBA projection accuracy + biases | OPEN |
-| 2 | PTS/REB/AST sigma calibration | OPEN |
-| 3 | 3PM distribution + NB_R | OPEN |
-| 4 | Combo stat correlations (COMBO_RHO) | OPEN |
+| 1 | SaberSim WNBA projection accuracy + biases | DONE |
+| 2 | PTS/REB/AST sigma calibration | **DONE** |
+| 3 | 3PM distribution + NB_R | **DONE** |
+| 4 | Combo stat correlations (COMBO_RHO) | **DONE** |
 | 5 | Market structure — books, line sharpness, coverage | OPEN |
 | 6 | Opening day / early-season projection effects | OPEN |
 | 7 | Gate review — which NBA gates apply/don't apply to WNBA | OPEN |
@@ -60,10 +60,52 @@
 7. What projection format does SaberSim WNBA CSV use — same columns as NBA or different?
 
 **Findings:**
-<!-- Fill in here -->
+
+**Opening day actual vs SS projection audit (May 13 2026, all 4 games):**
+
+Four box scores retrieved and cross-referenced against shadow log projections. Key PTS misses:
+
+| Player | SS PTS Proj | Actual PTS | Error | Context |
+|--------|------------|------------|-------|---------|
+| Chennedy Carter (LAV) | 7.21 | 27 | **-19.8** | New Aces acquisition, Sun had 5 out |
+| Marina Mabrey (TOR) | 15.93 | 26 | **-10.1** | Opening night explosion |
+| Kelsey Plum (LAS) | 17.28 | 25 | **-7.7** | First game in LA |
+| Caitlin Clark (IND) | 17.12 | 24 | **-6.9** | Season opener |
+| Veronica Burton (GSV) | 15.60 | 16 | -0.4 | Accurate |
+| Flau'jae Johnson (SEA) | ~11.57 | 7 | +4.6 | Under-performed |
+| Kamilla Cardoso (CHI) | ~13.40 | 8 | +5.4 | Quiet game |
+| Aliyah Boston (IND) | ~15.02 | 4 | **+11.0** | Very quiet night |
+
+REB projections: mixed (no systematic direction). AST: close. 3PM: slight over-projection (Clark: 2.87→1, Jackson: 2.18→1).
+
+**Directional summary:**
+- SS under-projected PTS for star scoring guards by 7-20 pts on opening day
+- SS over-projected PTS for role/secondary players (Boston, Cardoso)
+- Net opening day PTS error: SS averaged ~-3.1 pts below actual (mean of 8 players)
+- Shadow log picks almost all unders because SS proj < lines — but star-explosion losses dominated
+
+**Root cause analysis:**
+1. **SaberSim conservatism on stars**: SS likely uses prior-season averages as anchor. Stars who have new context (new team, elevated role, opener adrenaline) explode past SS projections AND past the betting lines.
+2. **Opening day extreme variance**: All 43 picks from a single day. Carter's 27-pt game (SS: 7.21) is an obvious outlier — she was newly signed by the Aces and the Sun had 5 key players out (including Griner). SS doesn't dynamically model opponent-absence magnification.
+3. **"Almost exclusively unders" finding is correct but diagnosis was wrong**: SS is NOT systematically over-projecting WNBA stats. Rather, SS under-projects star PTS while the lines are set closer to actual. The model sees SS<line and picks under, but SS is the wrong anchor.
+4. **dk_std column**: SaberSim WNBA uses same platform/format as NBA. NBA CSVs have dk_std populated (Jokic: 11.37, Edwards: 11.28). WNBA dk_std should be populated in the CSV — but this column is SaberSim's internal std, which may itself be calibrated on NBA-like data. If SS proj is systematically low for WNBA stars, dk_std will also be anchored too low (std is proportional to proj).
+5. **SaberSim WNBA model**: Appears to use same simulation platform as NBA. WNBA training data is sparser. No published accuracy metrics found. Community DFS feedback not found via search — WNBA DFS is a smaller market with less public accuracy discussion.
+6. **Opening day effect (WNBA-specific)**: WNBA plays 40-game RS vs NBA 82. The longer offseason relative to season length means opening games have higher variance than NBA openers. Players arrive at different readiness levels. No published research found on WNBA opening day statistical underperformance vs season average.
+7. **Injury redistribution gap**: When the Sun lost 5 players (Griner etc.), Morrow's actual role and minutes expanded dramatically. SS doesn't reflect this — it projected Morrow at 8.01 REB but she grabbed 11 in extended duty. This is a systematic weakness for WNBA because roster depth is shallower (injuries affect remaining players more than in NBA).
+
+**What the 43-pick sample tells us:**
+- WR by stat: AST-under 4/5 (80%), REB-under 6/12 (50%), 3PM-under 3/3 (100%), PTS-under 1/5 (20%), PRA-under 2/7 (29%), PA-under 1/4 (25%), PR-under 3/4 (75%)
+- PTS unders are the problem (1W/5L). Stars outperformed lines badly.
+- Combo props fail when PTS component fails (Clark PRA/PA/PR lost 4/4 because Clark's PTS alone exceeded lines)
+- The combo-pick concentration on star guard combos (Clark: 4 combo picks, Plum: 3 combo picks, Mabrey: 3 combo picks) magnified the damage
 
 **Implementation verdict:**
-<!-- What changes needed, if any -->
+
+1. **SS dk_std likely populated for WNBA** — confirm by examining an actual WNBA CSV before adjusting SIGMA. No code change needed unless dk_std is 0.
+2. **Opening day gate**: Add a gate to limit or avoid WNBA picks in the first 2-3 games of the season (opening night extreme variance). Simple date-based guard OR minimum-games-played filter on players. This is the single biggest learnable fix from day 1.
+3. **SS projection bias for WNBA stars**: SS under-projects star guard PTS by 5-10+ pts on opening day. Consider a WNBA-specific projection "warm-up" scalar for early-season (first 2 weeks) that modestly inflates lines or reduces perceived edge, forcing the model toward neutral rather than strong unders.
+4. **Combo picks on same player**: Clark had 4 combo picks (PRA/PA/PR/PRA again). These are all driven by the same PTS error — if SS under-projects PTS, all combos on that player fail. Need a per-player combo pick cap (max 1 combo pick per player per run) to avoid correlated-loss stacking.
+5. **No systemic change to SIGMA or COMBO_RHO yet**: One day of data is insufficient to recalibrate. Accumulate 3-4 weeks before drawing calibration conclusions.
 
 ---
 
@@ -104,10 +146,105 @@ SIGMA = {
 ```
 
 **Findings:**
-<!-- Fill in here -->
+
+**Data source:** ESPN game logs + HerHoopStats 2024 WNBA regular season. 9 players, 336 player-games total.
+Players: A'ja Wilson (~27 PPG), Breanna Stewart (~20), Napheesa Collier (~20), Arike Ogunbowale (~22), Sabrina Ionescu (~18), Caitlin Clark (~19), Jackie Young (~16), DeWanna Bonner (~15), Angel Reese (~14).
+
+**PTS sigma by player:**
+
+| Player | Avg PPG | n | Sigma | CV (sigma/mean) |
+|--------|---------|---|-------|-----------------|
+| A'ja Wilson | 26.9 | 38 | 6.64 | 0.247 |
+| Breanna Stewart | 20.5 | 39 | 7.19 | 0.350 |
+| Napheesa Collier | 20.4 | 34 | 6.14 | 0.301 |
+| Arike Ogunbowale | 22.2 | 38 | 7.11 | 0.320 |
+| Sabrina Ionescu | 18.3 | 39 | 6.32 | 0.345 |
+| Caitlin Clark | 19.2 | 40 | 7.46 | 0.388 |
+| Jackie Young | 16.4 | 37 | 8.11 | 0.496 |
+| DeWanna Bonner | 15.0 | 40 | 6.38 | 0.425 |
+| Angel Reese | 13.6 | 34 | 4.95 | 0.364 |
+
+**PTS sigma by tier (pooled):**
+- 20+ PPG tier (Wilson, Stewart, Collier, Ogunbowale): pooled mean=22.6, sigma=7.23, **CV=0.321**
+- 15-20 PPG tier (Clark, Ionescu, Young, Bonner): pooled mean=17.2, sigma=7.22, **CV=0.419**
+- 10-14 PPG tier (Reese, n=34): mean=13.6, sigma=4.95, **CV=0.364**
+- Overall PTS CV range: **0.247-0.496**, weighted average **~0.36**
+
+**PTS at specific projections:**
+- ~10 PPG player: sigma ~ 3.7-5.0 (CV ~0.37-0.50)
+- ~15 PPG player: sigma ~ 5.5-6.4 (CV ~0.37-0.43)
+- ~20 PPG player: sigma ~ 6.1-7.5 (CV ~0.30-0.37)
+- ~27 PPG player (Wilson): sigma ~ 6.6 (CV ~0.25)
+
+**REB sigma by tier:**
+
+| Tier | Mean RPG | Sigma | CV |
+|------|----------|-------|-----|
+| High REB ~9-13 RPG (Wilson, Stewart, Collier, Reese) | 10.75 | 4.20 | 0.391 |
+| Low REB ~4-6 RPG (Ionescu, Clark, Young, Bonner, Ogunbowale) | 5.09 | 2.42 | 0.476 |
+
+- ~5 RPG player: sigma ~ 2.1-2.8 (CV ~0.40-0.49)
+- ~8 RPG player: sigma ~ 3.5 (interpolated)
+- ~10 RPG player: sigma ~ 3.2-4.1 (CV ~0.33-0.48)
+- ~13 RPG player (Reese): sigma ~ 4.1 (CV ~0.31)
+- Overall REB CV: **0.43** (range 0.31-0.49)
+
+**AST sigma by tier:**
+
+| Tier | Mean APG | Sigma | CV |
+|------|----------|-------|-----|
+| High AST ~5-8 APG (Clark, Ogunbowale, Young, Ionescu) | 6.32 | 3.02 | 0.478 |
+| Low AST ~2-4 APG (Wilson, Reese, Bonner, Stewart, Collier) | 2.61 | 1.66 | 0.635 |
+
+- ~2 APG player: sigma ~ 1.1-1.5 (CV ~0.53-0.67)
+- ~4 APG player: sigma ~ 1.8-1.9 (CV ~0.45-0.55)
+- ~6 APG player: sigma ~ 2.5-2.6 (CV ~0.41-0.50)
+- ~8 APG player: sigma ~ 3.3 (CV ~0.39)
+- Overall AST CV: **0.56** (range 0.39-0.67)
+
+**NBA vs WNBA CV comparison:**
+
+| Stat | NBA (RotoGrinders 2013, starters) | WNBA 2024 | WNBA/NBA ratio |
+|------|-----------------------------------|-----------|----------------|
+| PTS | ~0.23-0.27 (sigma=4.1, avg ~15-18 PPG) | **0.36** | ~1.4x higher |
+| REB | ~0.47 (sigma=2.8, avg ~6 RPG) | **0.43** | ~0.92x (similar) |
+| AST | ~0.50 (sigma=2.0, avg ~4 APG) | **0.56** | ~1.1x higher |
+
+**Key finding: WNBA PTS CV is ~40% higher than NBA.** A WNBA player scoring 15 PPG has similar absolute sigma (~6-6.5) as an NBA player scoring 20-25 PPG. The NBA SIGMA mult for PTS (if it existed; currently using dk_std) would need to be ~0.35-0.42 for WNBA vs ~0.23-0.27 for NBA.
+
+**Poisson vs Negative Binomial for REB and AST:**
+
+Overdispersion ratio (var/mean): >1.5 indicates NB preferred over Poisson.
+
+- REB: mean var/mean = **1.21** (range 0.72-1.99). Most players borderline. Stewart REB (var/mean=1.99) clearly NB. Low-RPG guards (Ionescu, Young, Ogunbowale) near Poisson (var/mean ~0.72-0.99). Recommendation: **Poisson is a reasonable approximation for WNBA REB** — overdispersion is mild compared to NBA (where var/mean is typically 1.5-2.5 for big men). Current SIGMA approach (Normal with empirical sigma) is adequate.
+- AST: mean var/mean = **1.00** (range 0.56-1.29). Very close to Poisson. Low-AST players (Bonner 0.56, Reese 0.63) are actually underdispersed. High-AST guards (Clark 1.29) borderline. Recommendation: **Poisson is appropriate for WNBA AST** — even more so than NBA. `POISSON_STATS` including AST is valid for WNBA.
+
+**Normal distribution for WNBA PTS:**
+
+Skewness near 0 for most players (Wilson: -0.09, Ogunbowale: +0.14, Young: +0.01). Normal is a good approximation. One exception: Angel Reese had skew=+1.13 with right-tail outliers (27-pt game while averaging 13.6) — she is a role player who explodes rarely. Tails in the 20+ PPG range are slightly fatter than Normal (5.3% observed vs 2.3% expected above mean+2sd for Wilson). Normal is appropriate but slightly underestimates tail probability.
+
+The main concern for lower-scoring players (~10 PPG) is not non-normality but scale: Normal allows negative scores. For a ~10 PPG player with sigma=4, P(score<0) under Normal is ~0.6% — negligible for practical purposes. Normal remains appropriate.
 
 **Implementation verdict:**
-<!-- Updated SIGMA values for WNBA, or confirmation NBA values hold -->
+
+Current NBA SIGMA dict (AST: mult=0.45/min=1.3, REB: mult=0.58/min=2.5) needs adjustment for WNBA:
+
+```python
+# Recommended WNBA SIGMA overrides (when dk_std=0):
+SIGMA_WNBA = {
+    "PTS": {"mult": 0.38, "min": 3.5},   # NBA uses dk_std; WNBA needs own formula
+                                           # CV=0.36 avg; 0.38 adds slight buffer for lower-tier volatility
+    "AST": {"mult": 0.55, "min": 1.1},   # NBA=0.45 — WNBA AST CV ~0.56 (25% higher mult than NBA)
+    "REB": {"mult": 0.45, "min": 2.0},   # NBA=0.58 — WNBA REB CV ~0.43 (22% LOWER mult than NBA)
+                                           # Rationale: WNBA REB variance is similar to NBA low-REB guards;
+                                           # NBA mult=0.58 was calibrated for high-RPG bigs; WNBA stars top out ~12 RPG
+}
+```
+
+Note: dk_std from SaberSim WNBA CSV should still be preferred if non-zero. These formulas are only the dk_std=0 fallback. Key changes vs NBA:
+- PTS: new formula needed (NBA doesn't have one; uses dk_std). Set mult=0.38.
+- AST: increase mult from 0.45 → 0.55 (+22%)
+- REB: decrease mult from 0.58 → 0.45 (-22%) and lower min from 2.5 → 2.0 (WNBA low-REB players average 4-5 RPG)
 
 ---
 
@@ -134,10 +271,62 @@ NBA 3PM uses Negative Binomial with r=12.3, calibrated from NBA player-game data
 - StatMuse WNBA 3PM splits
 
 **Findings:**
-<!-- Fill in here -->
+
+**Data source:** ESPN/HerHoopStats 2024 WNBA regular season game logs for Ionescu (39g), Clark (40g), Collier (34g). League-wide 3PM leaders table from FoxSports 2024.
+
+**WNBA 3PM leaders 2024 (top of market):**
+
+| Player | 3PM/g | 3PA/g | 3P% |
+|--------|-------|-------|-----|
+| Caitlin Clark | 3.05 | 8.9 | 34.4% |
+| Arike Ogunbowale | 2.9 | 8.5 | 34.6% |
+| Kelsey Plum | 2.9 | 7.9 | 36.8% |
+| Sabrina Ionescu | 2.8 | 8.4 | 33.3% |
+| Kelsey Mitchell | 2.7 | 6.8 | 40.2% |
+| Kayla McBride | 2.7 | 6.6 | 40.7% |
+
+The WNBA top-of-market 3PM/g range (~2.7-3.1) is comparable to NBA 3PM specialists. Market props will center around 1.5 and 2.5 lines.
+
+**Variance analysis (within-player):**
+
+| Player | Mean 3PM/g | Sigma | CV | Var/Mean | Distribution |
+|--------|-----------|-------|-----|-----------|-------------|
+| Ionescu | 2.79 | 1.36 | 0.487 | 0.66 | 1:8, 2:10, 3:7, 4:12, 6:2 |
+| Clark | 3.05 | 1.47 | 0.481 | 0.71 | 1:5, 2:12, 3:9, 4:7, 5:5, 6+:2 |
+| Collier (low-vol) | 0.91 | 0.79 | 0.869 | 0.69 | 0:12, 1:13, 2:9 |
+
+**Critical finding: WNBA 3PM var/mean = 0.66-0.71 (underdispersed relative to Poisson).** This is the opposite of NBA where 3PM is overdispersed (var/mean > 1.0, justifying Negative Binomial with r=12.3). For high-volume WNBA shooters, 3PM is approximately Poisson or even underdispersed.
+
+**Bimodality analysis:**
+- Ionescu and Clark: **NOT bimodal.** Zero zeros in 39-40 games each. Distribution is unimodal with right-skew. Every game they attempt 3s — consistent volume shooters.
+- Collier (0.9/g): 12/34 zeros (35%), but this matches Poisson P(0) expectation of 40%. Low-volume pattern consistent with Poisson, not bimodal boom/bust.
+- **WNBA 3PM is NOT bimodal in the NBA sense.** NBA bimodality arises when a specialist either "goes hot" (4-6 3PM) or shoots 0-1 due to game script. WNBA guards shoot more consistently — there is no quiet night pattern like NBA role players.
+
+**NB_R calibration:**
+The NBA `NB_R["3PM"] = 12.3` was calibrated for overdispersed NBA 3PM data (var/mean > 1). For WNBA 3PM with var/mean ~0.7, the data is underdispersed. Using NB with r=12.3 would produce barely-more-than-Poisson distribution. Options:
+- Use Poisson directly for WNBA 3PM (var/mean ~1.0 is the Poisson assumption; 0.7 is slightly under)
+- Use NB with much higher r (underdispersed NB r → infinity converges to Poisson)
+- Or simply use Normal approximation with sigma = 0.48 × mean (CV from data)
+
+Practical impact at a 2.5 line: under Poisson(2.79), P(3PM ≥ 3) = 42.6%. Under Normal(2.79, 1.36), P(3PM ≥ 2.75) ≈ 51.5%. The Normal with empirical sigma is actually the most defensible model here — it captures the correct variance and doesn't require choosing between Poisson/NB.
 
 **Implementation verdict:**
-<!-- Updated NB_R["3PM"] for WNBA, or flag that current value needs sport-specific override -->
+
+WNBA 3PM should use Normal approximation (not Negative Binomial) because:
+1. Var/mean < 1.0 (underdispersed), so Poisson overestimates tails
+2. NBA NB_R=12.3 was fit on overdispersed NBA data — inappropriate for WNBA
+3. Volume shooters (Ionescu, Clark) have near-Gaussian 3PM distributions (no zero-floor problem)
+4. The HIGH-VAR bimodal flag (CV ≥ 0.60, min 8 games) would NOT trigger for WNBA top shooters (CV~0.48), and WOULD trigger for low-volume shooters like Collier (CV=0.87). This is correct behavior — low-volume WNBA shooters are high-variance.
+
+Add WNBA 3PM sigma formula to SIGMA dict:
+```python
+SIGMA_WNBA["3PM"] = {"mult": 0.48, "min": 0.7}
+# sigma = max(0.48 * proj_3pm, 0.7)
+# For a 3.0/g shooter: sigma = 1.44
+# For a 1.5/g shooter: sigma = 0.72
+```
+
+`NB_R["3PM"]` does not need a WNBA-specific override — the code path for WNBA 3PM should use Normal (via SIGMA_WNBA), not NB. If the code currently routes WNBA 3PM through NB_R, add a sport-specific branch.
 
 ---
 
@@ -171,10 +360,71 @@ Higher ρ → higher combo σ → lower over probability → fewer picks. If WNB
 - Average across players (weighted by n)
 
 **Findings:**
-<!-- Fill in here -->
+
+**Data source:** 9 WNBA players × 34-40 games each (2024 RS). Within-player Pearson correlations computed for each pair, then weighted-averaged by n.
+
+**Within-player Pearson correlations:**
+
+| Player | n | rho_PTS_REB | rho_PTS_AST | rho_REB_AST |
+|--------|---|-------------|-------------|-------------|
+| A'ja Wilson | 38 | +0.110 | -0.191 | -0.277 |
+| Breanna Stewart | 39 | +0.060 | +0.020 | -0.206 |
+| Napheesa Collier | 34 | +0.006 | -0.130 | +0.107 |
+| Arike Ogunbowale | 38 | +0.216 | -0.123 | +0.060 |
+| Sabrina Ionescu | 39 | +0.162 | +0.091 | -0.025 |
+| Caitlin Clark | 40 | +0.024 | +0.374 | +0.326 |
+| Jackie Young | 37 | +0.482 | +0.333 | +0.407 |
+| DeWanna Bonner | 40 | +0.064 | +0.054 | +0.000 |
+| Angel Reese | 34 | +0.062 | -0.108 | +0.032 |
+
+**Weighted averages (n-weighted):**
+
+| Pair | WNBA 2024 | NBA baseline | Delta |
+|------|-----------|-------------|-------|
+| PTS-REB | **+0.132** | 0.333 | **-0.201** |
+| PTS-AST | **+0.041** | 0.233 | **-0.192** |
+| REB-AST | **+0.046** | 0.251 | **-0.205** |
+
+**Interpretation:**
+
+WNBA within-player correlations are dramatically lower than NBA — approximately **0.20 lower across all three pairs.** The main drivers:
+
+1. **PTS-REB near-zero correlation in WNBA**: Scoring guards (Ogunbowale, Ionescu) have very low RPG (4-5), so high-scoring games don't correspond to high-rebounding games. Wilson and Collier are the exceptions (both PTS and REB specialists), but even they show only moderate correlation. In NBA, stars like LeBron or Giannis have high cross-stat correlation because they dominate multiple categories simultaneously.
+
+2. **PTS-AST negative for post players**: Wilson (-0.191), Ogunbowale (-0.123), Collier (-0.130). In games where these players score heavily, they are in isolation/post mode, not passing. Clark and Young are exceptions (positive PTS-AST) because they are pass-first guards who also shoot.
+
+3. **REB-AST near-zero or negative**: Most WNBA stars are either rebounders (Wilson, Collier, Reese) or passers (Clark, Young, Ionescu) but rarely both. The cross-correlation is near zero.
+
+**Practical impact on combo props:**
+
+Higher COMBO_RHO → higher combo sigma → lower over probability → fewer combo picks.
+Lower COMBO_RHO → lower combo sigma → higher over probability → more combo picks (and potential over-picking).
+
+With NBA COMBO_RHO values (0.333/0.233/0.251), the model is **underestimating WNBA combo sigma** by assuming correlations that don't exist in WNBA. This means the model produces artificially high over-probabilities on combo props like PRA, PR, PA, RA.
+
+Directional formula:
+combo_sigma = sqrt(sigma_A^2 + sigma_B^2 + 2*rho*sigma_A*sigma_B)
+
+With PTS=7, REB=3, rho=0.333 (NBA): PTS+REB sigma = sqrt(49+9+14) = 8.25
+With PTS=7, REB=3, rho=0.132 (WNBA): PTS+REB sigma = sqrt(49+9+5.5) = 7.91
+
+Difference: 4.2% lower combo sigma under WNBA calibration. The effect is modest but directionally the WNBA model would be slightly more aggressive (higher over probability) on combos with NBA rho, which in context of an already over-aggressive model is a compounding error.
 
 **Implementation verdict:**
-<!-- Updated COMBO_RHO values for WNBA, or sport-specific override mechanism needed -->
+
+Add WNBA-specific `COMBO_RHO`:
+
+```python
+COMBO_RHO_WNBA = {
+    ("PTS", "REB"): 0.13,  # NBA=0.333 — dramatically lower in WNBA
+    ("PTS", "AST"): 0.04,  # NBA=0.233 — near-zero in WNBA
+    ("REB", "AST"): 0.05,  # NBA=0.251 — near-zero in WNBA
+}
+```
+
+Note: correlations this low (0.04-0.13) make combo props behave nearly additively (sigma close to sqrt of sum of squared individual sigmas). This means WNBA combo props will have higher sigma than NBA combos with the same individual sigmas, producing lower over-probabilities and fewer picks — which is the correct direction given WNBA's lower correlation structure.
+
+Caveat: 9 players is a thin sample. Player-specific variation is large (Clark PTS-AST=+0.374 vs Wilson PTS-AST=-0.191). The weighted averages are the right starting point but should be revisited after 50+ player-seasons of WNBA shadow data.
 
 ---
 
