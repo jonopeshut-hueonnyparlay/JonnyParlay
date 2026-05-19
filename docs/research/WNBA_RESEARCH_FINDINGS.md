@@ -13,7 +13,7 @@
 | 6 | Opening day / early-season projection effects | OPEN |
 | 7 | Gate review — which NBA gates apply/don't apply to WNBA | OPEN |
 | 8 | Platt scaling validity for WNBA | OPEN |
-| 9 | WNBA-specific structural differences vs NBA | OPEN |
+| 9 | WNBA-specific structural differences vs NBA | **DONE** |
 
 ---
 
@@ -747,10 +747,210 @@ WNBA is fundamentally different from NBA in ways that affect pick selection beyo
 15. Are WNBA props more correlated with game flow (blowouts, pace) than NBA props?
 
 **Findings:**
-<!-- Fill in here -->
+
+### Game Structure
+
+**Q1 — 4x10 min quarters, downstream effects on absolute stats**
+
+WNBA plays 40 min regulation vs NBA 48 min — a 16.7% shorter game. Actual 2024 league averages (HerHoopStats):
+
+| Stat | WNBA 2024 (per team/game) | NBA 2024-25 (per team/game) | WNBA/NBA ratio |
+|------|--------------------------|----------------------------|----------------|
+| PPG | 81.6 | ~113-115 | 0.71 |
+| RPG | 34.4 | ~43-44 | 0.79 |
+| APG | 20.6 | ~26-27 | 0.77 |
+| 3PM | 7.6 | ~13-14 | 0.55 |
+| FG% | 43.8% | ~47% | lower |
+| 3P% | 33.1% | ~36-37% | lower |
+| FT% | 78.9% | ~78-79% | similar |
+
+The PPG ratio (0.71) is larger than the game-length ratio (0.833), meaning WNBA scores fewer points per minute than NBA — not just from shorter games. This is confirmed by efficiency data (ORtg 101 vs NBA 115+). Scoring is structurally lower per possession, not just proportional to game length.
+
+**Q2 — WNBA pace vs NBA per-40-minute pace**
+
+WNBA 2024 possessions data (inpredictable.com):
+- Avg possessions per team per game: **~81 per 40 minutes** (range: ~79 slow to ~83 fast)
+
+WNBA 2025 early-season (StatMuse, 13 teams): **78.4 poss/game** (range: 75.9 GSV to 80.6 LAL)
+
+NBA 2024-25 pace: 99.6 poss/48 min. Converted to per-40-min basis: 99.6 × (40/48) = **83.0 poss/40 min.**
+
+Conclusion: **WNBA pace (~78-81 poss/40 min) is 2-6% slower than NBA on a per-minute basis.** The difference is real but not enormous. Lower WNBA scoring is primarily from lower efficiency per possession (ORtg 101 vs 115), not dramatically slower pace.
+
+**Q3 — Scoring rate per possession**
+
+WNBA ORtg (2024): **101.0 pts/100 poss**
+NBA ORtg (2023-24): **115.3 pts/100 poss**
+
+Gap: 14.3 points per 100 possessions — NOT explained by game length. Causes (per Sportico analysis):
+- NBA rim-finishing improved from 64% → 70%; WNBA stayed at 64% → 65% (dunking advantage)
+- 3P revolution benefited NBA more due to larger efficiency gap between 2s and 3s in NBA
+- Net: WNBA is a genuinely lower-efficiency league per possession
+
+---
+
+### Season Structure
+
+**Q4 — 40-game season and projection stability**
+
+40-game RS (vs NBA 82). Game-to-game variance is identical — individual game outcomes don't become noisier from a shorter season. But:
+- A 5-game slump = 12.5% of WNBA season vs 6.1% of NBA — larger signal-to-season weight
+- Prior-season sample is half as large, so season-start projections are noisier
+- Projection stabilization: for a rolling-average model, WNBA converges after ~5-8 games (vs NBA ~10-15) because there are fewer total games in the pool — but precision is lower throughout the season
+
+**Q5 — Back-to-back frequency**
+
+2024 WNBA: teams averaged **2.86 games/week** (up from 2.5/week in 2023, due to 4-week Olympic break compressing the calendar). Some teams played 7 games in 12 days. The league actively minimizes back-to-backs but they occur.
+
+NBA: ~3.4 games/week, ~18-20 back-to-backs per team per season.
+WNBA: fewer total back-to-backs but similar weekly density when the Olympic break removes calendar days.
+
+The official WNBA injury report has an explicit exception for "the second day of a back-to-back" — confirming they occur regularly enough to warrant scheduling exceptions.
+
+**Q6 — Late-season fatigue (August-September)**
+
+No published statistical research on WNBA late-season performance degradation found. Empirical signal:
+- Post-All-Star 2024: only 3 of 24 games decided by ≤5 pts (13%), avg margin 16 pts — suggests teams coasting or resting stars in late regular season
+- Blowout frequency spikes late, consistent with load management on locked playoff seeds
+- No empirical magnitude for PTS/REB/AST decline in August-September found in research
+
+Model implication: Monitor for "rest" designations in injury reports from late August onward.
+
+---
+
+### Roster / Role Structure
+
+**Q7 — Rotation depth vs star reliance**
+
+WNBA rosters: 11-12 players max (vs NBA 15 + 3 two-way + G League depth). No affiliate feeder league.
+
+2024 MPG distribution (top 25 players all averaged 30+ MPG):
+- WNBA starters average **32-39 MPG out of 40 available = 80-97% utilization**
+- NBA starters average **32-36 MPG out of 48 available = 67-75% utilization**
+
+WNBA stars play a **higher percentage of available game minutes** than NBA stars. This means:
+1. WNBA injuries to starters have larger per-game impact (fewer backup minutes to absorb)
+2. Approximately 7-8 players per team get meaningful minutes; players 9-12 rarely play
+3. Coaches are star-reliant by necessity — smaller roster with no developmental ladder
+
+**Q8 — International/overseas players and early-season conditioning**
+
+Most European overseas leagues run October-April/May, ending just before the WNBA season. Post-2024 prioritization rules: mandatory arrival by training camp start or May 1 (later), with season-long suspension for non-compliance. ~35 players reported late to camp per year pre-rule; ~12 missed early games.
+
+International players (Sabally, Stewart when overseas, European players) arrive mid-competitive-season:
+- Generally game-ready physically (continuous competition)
+- Risk: accumulated fatigue from near-year-round play
+- Risk: week 1 adjustment to different teammates, systems, WNBA rules
+- Benefit: no spring rust — they've been playing competitive basketball
+
+No empirical data found confirming systematic international vs domestic early-season performance gap. Opening day variance is high for all players regardless of origin. Prioritization rules should reduce this as a structural issue going forward.
+
+**Q9 — Injury reports**
+
+Official WNBA injury report: teams must designate player status and specific reason by **5 PM local time the day before a game** (exception: second day of back-to-back). Official source: wnba.com/wnba-injury-report. Third-party aggregators (RotoWire, ActionNetwork, Covers) publish consistently.
+
+Status designations: equivalent to NBA (Out/Questionable/Probable categories). Reporting consistency may be lower than NBA (no documented fine structure for non-compliance found), but official day-before reports are available and aggregated by standard sources.
+
+Same processing logic as NBA injury integration is applicable to WNBA.
+
+---
+
+### Stat Distribution
+
+**Q10 — WNBA league averages per game per player**
+
+Team averages 2024 (HerHoopStats): PPG=81.6, RPG=34.4, APG=20.6, 3PM=7.6
+
+Implied per-player averages for prop-relevant rotation (top 8 per team):
+- PTS: ~10.2/game (prop lines: 10.5-20.5; A'ja Wilson ceiling ~22.5-23.5)
+- REB: ~4.3/game (prop lines: 4.5-9.5; Reese ceiling ~11.5)
+- AST: ~2.6/game (prop lines: 2.5-6.5; Clark ceiling ~7.5-8.5)
+- 3PM: ~0.95/game (prop lines: 1.5-2.5; Clark/Ionescu/Plum may see 3.5)
+
+**Q11 — WNBA league pace**
+
+- 2024 full season: ~81 possessions per 40 minutes (team average)
+- 2025 early season: ~78.4 possessions per game
+- Team range: ~76 (slow) to ~83 (fast)
+- Per-minute: 3-6% slower than NBA
+
+**Use WNBA_LEAGUE_AVG_PACE = 80.0 possessions per 40 minutes** as model constant.
+
+**Q12 — Parity vs star concentration**
+
+WNBA competitive balance has worsened significantly:
+- Best-vs-worst team gap doubled over last 10 years
+- 2024: three teams simultaneously outscoring opponents by 8+ pts/game — unprecedented back to 2008
+- 2025: NY Liberty and Minnesota Lynx "hogging wins," leaving fewer competitive games for rest of league
+- Late-season 2024: 87% of post-All-Star games decided by 6+ points (avg margin 16 pts)
+
+Star concentration: top 2-3 players account for 60-70%+ of team scoring on many rosters. Prop-worthy player pool per slate is much smaller than NBA — expect 20-30 meaningful props across 4-6 WNBA games, vs 60-80+ for NBA.
+
+This is higher star concentration than NBA. A'ja Wilson at 26.9 PPG represents 33% of the Aces' 81.6 PPG — no NBA player represents that share of their team's scoring.
+
+---
+
+### Betting-Specific
+
+**Q13 — Prop line posting timing**
+
+No standardized posting time found in research. WNBA props are typically available **morning of game day** at major books. The day-before injury report deadline (5pm local) creates the logical floor. Unlike NBA where next-day lines often post the prior evening, WNBA props are less predictable in timing but available by ~8-10am game day.
+
+**Q14 — Limits on WNBA props vs NBA**
+
+Documented range from research (Bleacher Nation):
+- **WNBA prop limits: $500-$1,000 per bet** (industry standard across DraftKings, FanDuel, others)
+- **NBA prop limits: $1,000-$5,000 per bet**
+- WNBA limits are approximately 50-80% lower than NBA
+
+Lower limits = softer market = more exploitable edges, but also less sharp money calibrating lines. Books move lines aggressively after any significant action on thin WNBA markets.
+
+Current `SPORT_UNIT_CAP["WNBA"] = 4.0u` is appropriate. At normal sizing (1-2u), WNBA picks stay within book limits. At 3-4u with larger unit sizes, some picks may bump limits.
+
+**Q15 — WNBA props and game flow correlation**
+
+Blowout frequency: WNBA 2024 late-season had 87% of games decided by 6+ points, avg margin 16 pts. This is dramatically higher than NBA (typically 25-30% blowout rate). Implications:
+- WNBA stars play 85-97% of game minutes, so coaches bench them in garbage time more readily than NBA coaches (no room to "play through")
+- A 15-point Q3 deficit in a 40-min game is a stronger signal to bench stars than in a 48-min NBA game
+- Pace correlation: WNBA team pace range (76-83 poss/40 min) is proportionally meaningful — a high-pace vs low-pace game difference of 7 possessions represents ~8.5% more possessions, which linearly inflates counting stats
+
+Model implication: WNBA blowout sigmoid should trigger at a lower margin than NBA (recommend mid=15 vs NBA mid=20). Pace adjustment logic (same as NBA) applies within the 76-83 range.
+
+---
 
 **Implementation verdict:**
-<!-- Any structural constants, scalars, or model parameters that need WNBA-specific values -->
+
+Key structural constants for WNBA model:
+
+```python
+# Game structure
+WNBA_GAME_MINUTES = 40              # vs NBA 48
+WNBA_LEAGUE_AVG_PACE = 80.0         # possessions per 40 min (2024: ~81, 2025: ~78.4; midpoint)
+WNBA_LEAGUE_ORTG = 101.0            # points per 100 possessions (2024; vs NBA ~115)
+WNBA_PACE_RANGE = (76, 83)          # poss/40 min range slow-to-fast teams
+
+# Scoring scale (sanity check / gate threshold calibration)
+WNBA_AVG_TEAM_PPG = 81.6            # 2024 league average
+WNBA_AVG_PLAYER_PPG = 10.2          # implied top-8 rotation average
+
+# Star utilization
+WNBA_STARTER_MPG_PCT = 0.85         # avg WNBA starter plays 85% of game (vs NBA 71%)
+
+# Blowout sigmoid — tighten for WNBA vs NBA
+WNBA_BLOWOUT_MID = 15.0             # vs NBA mid=20.0; WNBA blowouts happen at lower margins
+WNBA_BLOWOUT_MAX_REDUCTION = 0.22   # slightly more aggressive than NBA 0.19
+
+# Market
+WNBA_EDGE_THRESHOLD_MIN = 0.035     # vs NBA 0.025; higher vig (~-115/-115) requires higher edge
+WNBA_PROP_LIMIT_APPROX = 750        # USD reference; not in model directly
+```
+
+Gates requiring WNBA-specific attention (Section 7 to address in detail):
+- **G8B AST exempt at 4.5**: correct — Clark averages 8.4 APG so 4.5 is well below her prop line
+- **G8 low-line ban**: WNBA PTS 8.5 lines are common (not low for this market) — may need lower absolute ban thresholds than NBA
+- **KILLSHOT**: recommend excluding WNBA — lower limits, higher uncertainty, market too thin
+- **STAT_CAP**: impose WNBA-specific cap (max 3-4 picks per stat per run) — smaller player pool
+- **Edge threshold**: raise to 0.035 minimum for WNBA vs 0.025 NBA to compensate for higher vig
 
 ---
 
