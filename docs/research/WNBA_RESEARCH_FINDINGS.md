@@ -9,7 +9,7 @@
 | 2 | PTS/REB/AST sigma calibration | **DONE** |
 | 3 | 3PM distribution + NB_R | **DONE** |
 | 4 | Combo stat correlations (COMBO_RHO) | **DONE** |
-| 5 | Market structure — books, line sharpness, coverage | OPEN |
+| 5 | Market structure — books, line sharpness, coverage | **DONE** |
 | 6 | Opening day / early-season projection effects | **DONE** |
 | 7 | Gate review — which NBA gates apply/don't apply to WNBA | **DONE** |
 | 8 | Platt scaling validity for WNBA | **DONE** |
@@ -1422,19 +1422,103 @@ Gates requiring WNBA-specific attention (Section 7 to address in detail):
 
 ---
 
-## Implementation Plan (fill after research complete)
+## Implementation Plan
 
 ### Parameter changes needed
-<!-- List every constant that needs updating with old → new value -->
 
-### Code changes needed
-<!-- List every function/dict in run_picks.py that needs modification -->
+| Constant | Location | Old value | New value | Source section |
+|----------|----------|-----------|-----------|----------------|
+| `SIGMA["AST"]` mult | run_picks.py | 0.45 | 0.55 (WNBA) | §2 |
+| `SIGMA["AST"]` min | run_picks.py | 1.3 | 1.1 (WNBA) | §2 |
+| `SIGMA["REB"]` mult | run_picks.py | 0.58 | 0.45 (WNBA) | §2 |
+| `SIGMA["REB"]` min | run_picks.py | 2.5 | 2.0 (WNBA) | §2 |
+| `COMBO_RHO[("PTS","REB")]` | run_picks.py | 0.333 | 0.13 (WNBA) | §4 |
+| `COMBO_RHO[("PTS","AST")]` | run_picks.py | 0.233 | 0.04 (WNBA) | §4 |
+| `COMBO_RHO[("REB","AST")]` | run_picks.py | 0.251 | 0.05 (WNBA) | §4 |
+| Blowout sigmoid `mid` | run_picks.py | 20.0 | 15.0 (WNBA) | §9 |
+| Blowout sigmoid `max_reduction` | run_picks.py | 0.19 | 0.22 (WNBA) | §9 |
+| `PLATT_A/B` | run_picks.py | NBA-fit (frozen) | Use as-is until 300 WNBA rows | §8 |
 
 ### New WNBA-specific constants to add
-<!-- Any new dicts/parameters that don't exist yet -->
+
+```python
+# Sport-aware SIGMA overrides (add to existing SIGMA lookup with sport branching)
+SIGMA_WNBA = {
+    "PTS": {"mult": 0.38, "min": 3.5},   # NBA uses dk_std; WNBA fallback needed
+    "AST": {"mult": 0.55, "min": 1.1},   # NBA=0.45/1.3
+    "REB": {"mult": 0.45, "min": 2.0},   # NBA=0.58/2.5
+    "3PM": {"mult": 0.48, "min": 0.70},  # Normal model, not NB (var/mean=0.7)
+}
+
+# Sport-aware combo correlations (WNBA ~0.20 lower than NBA across all pairs)
+COMBO_RHO_WNBA = {
+    ("PTS", "REB"): 0.13,   # NBA=0.333
+    ("PTS", "AST"): 0.04,   # NBA=0.233
+    ("REB", "AST"): 0.05,   # NBA=0.251
+}
+
+# WNBA structural constants
+WNBA_GAME_MINUTES = 40
+WNBA_LEAGUE_AVG_PACE = 80.0           # possessions per 40 min (2024: ~81, 2025: ~78.4)
+WNBA_LEAGUE_ORTG = 101.0              # pts/100 poss (2024; vs NBA ~115)
+WNBA_STARTER_MPG_PCT = 0.85           # 85% of game minutes (vs NBA 71%)
+
+# WNBA blowout sigmoid parameters
+WNBA_BLOWOUT_MID = 15.0               # vs NBA 20.0; WNBA blowouts at lower margins
+WNBA_BLOWOUT_MAX_REDUCTION = 0.22     # vs NBA 0.19
+
+# WNBA market / gate constants
+WNBA_EDGE_THRESHOLD = 0.035           # vs NBA 0.025; compensates for wider vig (-115/-115)
+
+# WNBA early-season gate
+WNBA_SEASON_START_GATE_DAYS = 3       # no picks in first 3 days of season
+WNBA_EARLY_SEASON_EDGE_MULT = {       # edge dampener weeks 1-3
+    (4, 14): 0.80,
+    (15, 21): 0.90,
+}
+
+# WNBA Platt refit gate (matches NBA H3 gate logic)
+WNBA_PLATT_REFIT_ROWS = 300           # check pick_log_custom.csv over_p_raw count
+
+# Per-player combo pick cap (prevents correlated-loss stacking: Clark 4-pick combo loss)
+MAX_COMBO_PICKS_PER_PLAYER = 1        # applies to both WNBA and NBA
+```
+
+### Code changes needed
+
+| Change | Function / location | Priority |
+|--------|---------------------|----------|
+| Make `SIGMA` sport-aware: branch to `SIGMA_WNBA` when `sport=="WNBA"` | `calc_prop_prob()` | **HIGH** |
+| Make `COMBO_RHO` sport-aware: branch to `COMBO_RHO_WNBA` when `sport=="WNBA"` | combo σ computation | **HIGH** |
+| 3PM routing: for WNBA skip `NB_R` path, use Normal via `SIGMA_WNBA["3PM"]` | `calc_prop_prob()` 3PM branch | **HIGH** |
+| Add `WNBA_EDGE_THRESHOLD` to edge gate: `adj_edge × 0.90` if `sport=="WNBA" and day ∈ [15,21]` | `check_prop_gates()` | **HIGH** |
+| Opening season gate: skip WNBA picks if `game_date` is within `WNBA_SEASON_START_GATE_DAYS` days of season start | `check_prop_gates()` | **HIGH** |
+| Blowout sigmoid: pass sport to `_blowout_reduction()`, use WNBA mid/max_reduction | `_blowout_reduction()` | **MEDIUM** |
+| Per-player combo cap: max 1 combo pick per player per run | `run_picks()` combo selection | **MEDIUM** |
+| Add `adj_edge` scalar for early-season WNBA: weeks 1-2 × 0.80, week 3 × 0.90 | `check_prop_gates()` | **MEDIUM** |
+| Exclude WNBA from KILLSHOT when sport exits SHADOW_SPORTS: add explicit check in `_passes_killshot_v2_gate()` | `_passes_killshot_v2_gate()` | **LOW** (deferred until go-live) |
+| WNBA Platt refit gate: count WNBA over_p_raw rows in pick_log_custom.csv, trigger `calibrate_platt.py --sport WNBA` when ≥ 300 | monitoring / manual | **LOW** (data-gated) |
 
 ### Gating / shadow removal criteria
-<!-- What does WNBA need to achieve before going live (out of shadow)? -->
+
+WNBA exits `SHADOW_SPORTS` when ALL of the following are met:
+
+1. **Minimum graded sample**: ≥ 200 graded WNBA shadow picks across ≥ 3 calendar weeks of season
+2. **PTS stat performance**: rolling 20-pick WR for PTS picks ≥ 45% (break-even direction)
+3. **No catastrophic stat**: no stat with WR < 35% over any 15-pick rolling window
+4. **Platt refit complete**: ≥ 300 WNBA `over_p_raw` rows in `pick_log_custom.csv` and WNBA Platt A/B estimated (or confirmed close to NBA values within ±0.2)
+5. **Opening gate validated**: at least one full WNBA opening week observed with gate active; no systematic disaster
+6. **Jono's call**: qualitative sign-off on model behavior (same as MLB go-live gate)
+
+Earliest realistic go-live: **late June 2026** (6-7 weeks into the 2026 WNBA season).
 
 ### Calibration data still needed
-<!-- What can't be determined from research alone and requires live data accumulation -->
+
+| Item | How to get it | Expected date |
+|------|--------------|---------------|
+| WNBA-specific Platt A/B | Count over_p_raw rows in pick_log_custom.csv; run calibrate_platt.py when ≥ 300 | ~mid-June 2026 |
+| SIGMA_WNBA validation | Pull a real 2026 WNBA SaberSim CSV, check dk_std column; if populated and accurate, SIGMA_WNBA is only needed when dk_std=0 | Next WNBA CSV download |
+| COMBO_RHO_WNBA confidence | Current estimate from 9 players / 336 games — expand to 2024-25 full season top-30 players for tighter estimates | One-time research task |
+| Blowout scalar validation | 50+ graded shadow picks where team trailed by 10+ points — check stat under-performance vs model prediction | 3-4 weeks of shadow data |
+| Opening-week gate timing | Run shadow with gate active for 2026 opening week; validate that picks in days 4-14 are materially better than days 1-3 | Retrospective after 2026 week 1 |
+| Early-season edge dampener magnitude | Compare WR in weeks 1-2 vs weeks 3-6 across 2026 shadow log | ~mid-June 2026 |
