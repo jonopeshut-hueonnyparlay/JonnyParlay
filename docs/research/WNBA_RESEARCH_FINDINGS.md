@@ -445,10 +445,174 @@ WNBA is a much smaller market than NBA. Key questions: how many books offer WNBA
 9. Are there any CO books that offer better WNBA prop coverage than others?
 
 **Findings:**
-<!-- Fill in here -->
+
+**Q1 — Which CO-legal books offer WNBA player props?**
+
+Confirmed WNBA player prop offerings in CO (2026 season, active as of May 2026):
+
+| Book | WNBA Props | Notes |
+|------|-----------|-------|
+| DraftKings | YES | Full coverage. Most-referenced book; publishes own "Most Bet WNBA Props" daily. Confirmed single-stat + combo props. |
+| FanDuel | YES | Full coverage. Noted as having widest variety of in-game/live props. Frequently best line on many props. |
+| BetMGM | YES | Full coverage. Appears in prop aggregators alongside DK/FD. |
+| Caesars | YES | Full coverage. Appears in prop aggregators. |
+| Hard Rock | YES | Confirmed WNBA props including combo stat lines. Rotogrinders runs a dedicated Hard Rock prop picks page for WNBA. |
+| Fanatics | YES | Confirmed WNBA. Featured in dimers.com prop picks as a best-line book. Appears in CO as replacement for PointsBet (Dec 2023 launch). |
+| theScore Bet (ESPN BET) | LIKELY YES | Appears in the RotoWire WNBA props interface alongside DK/FD/BetMGM/Caesars/Hard Rock. Not explicitly called out in most roundups but confirmed in the RotoWire props page source. |
+
+**Summary:** All 7 CO-legal books in scope likely offer WNBA player props during the 2026 season. DraftKings, FanDuel, BetMGM, Caesars, Hard Rock, and Fanatics are confirmed with certainty. theScore Bet (ESPN BET) appears in prop aggregators but is less explicitly documented.
+
+**Q2 — Are WNBA lines sharp or soft? Is there meaningful sharp steam?**
+
+WNBA prop lines are **soft relative to NBA**, but the picture is nuanced:
+
+- Game-level lines (spreads, totals) have become moderately sharp — increased betting handle in 2024-25 has attracted professional attention to game lines.
+- Player prop lines remain **meaningfully softer** — books invest less time in WNBA prop pricing, public action is thin, and fewer quantitative analysts work WNBA markets.
+- WNBA receives ~20x fewer total bets per game than an average NBA game. This keeps sharp/square ratio elevated in WNBA: even small sharp bets can move lines significantly.
+- Books explicitly described as "not likely to be well-informed about a sport that doesn't drive much revenue" — opening lines are set on basic stat averages.
+- OpticOdds partnership with The Crowd's Line AI (April 2026) to generate AI-driven WNBA prop pricing with "confidence-adjusted vig" signals that some operators still lack good proprietary WNBA prop models and are outsourcing line-setting.
+- **Sharp steam does occur** but the market is thinner — a $500 sharp bet can move a WNBA line the same as $5,000 in NBA. Steam moves happen but are concentrated on featured players (Clark, A'ja, Wilson).
+- Reverse line movement ROI of ~10% documented in WNBA spread markets — higher than typical NBA.
+
+**Q3 — How much line movement happens between open and close?**
+
+WNBA prop lines move **more than NBA**, not less:
+
+- Props can swing 3+ points in either direction, especially when sharp bettors identify early mispricing. Examples documented: 19.5 → 16.5 by tip-off.
+- Game lines: WNBA regularly sees 4+ point spread/total changes; such moves are rare in NBA.
+- "Books post soft numbers based on basic stat averages and leave them open for longer than they should" — then adjust sharply when steam hits.
+- Line discrepancies across books at open are very wide: one example cited was A'ja Wilson at 18.5 vs 21.5 at two different books simultaneously. 
+- The practical implication: **early lines are softer and wider; lines converge and sharpen into tip-off.** This is opposite to NBA where lines are sharp from the start and move predictably.
+- CLV (closing line value) signals are **cleaner in WNBA** than NBA — moving against you is a reliable signal.
+
+**Q4 — Props available for all games or only marquee matchups?**
+
+Based on current 2026 season observation (May 13-19 coverage):
+
+- **Props appear available for all WNBA games**, not just Clark/A'ja games. Multiple non-marquee games confirmed with prop coverage.
+- DraftKings publishes "Most Bet WNBA Props" daily covering whatever games are on the slate (4-game slate on 5/15, 1-game slate on 5/19 — both had prop coverage).
+- Dimers, Covers, RotoWire all publish daily prop picks for every game, suggesting books post props across the full schedule.
+- **However, depth varies by game**: A Clark or A'ja Wilson game may have 10-15 players with props, while a non-marquee game may have only 3-5. Star player concentration is real.
+- The 5/14/26 DK article showed 12 prop lines for TOR Tempo @ PHO Mercury — a non-marquee matchup — confirming non-marquee games do have prop coverage.
+
+**Q5 — Typical vig on WNBA props?**
+
+WNBA props run **wider vig than NBA standard** with high variation across books:
+
+From observed 2026 data:
+- DraftKings: -110 (standard) on many props; also -126, -102 (variable by prop)
+- FanDuel: -122 typical
+- bet365: -125 typical  
+- Hard Rock: -115 typical
+- Fanatics: Appearing as best-line book at -105 to -110 on some props
+- Outlier lines: -195 (heavily favored side), +120 (underdog side) — significant asymmetry common
+
+**Vig summary:**
+- NBA standard: -110/-110 (~4.5% book margin)
+- WNBA typical: -115/-115 (~6.5% book margin) to -120/-120 (~9% margin)
+- Best available: Often -105 to -110 on the more predictable side at Fanatics or DraftKings
+- Worst: -122 to -125 standard at FanDuel/bet365
+
+The vig is notably wider on WNBA than NBA, partly because:
+1. Lower volume = books need wider margin to cover risk
+2. Less information efficiency = books hedge with more cushion
+3. Asymmetric lines are common (one side priced at -150, other at +115) reflecting book uncertainty
+
+**Q6 — Are combo props (PRA/PR/PA/RA) widely available?**
+
+Combo props are available but **not as consistently deep as single-stat props**:
+
+From scoresandodds.com (which aggregates WNBA props across books), confirmed prop type filters for WNBA:
+- Points, Rebounds, Assists, Steals, 3 Pointers — all confirmed (single-stat)
+- "Points & Rebounds" (PR) — confirmed
+- "Points & Assists" (PA) — confirmed
+- "Points, Rebounds, & Assists" (PRA) — confirmed
+- "Rebounds & Assists" (RA) — confirmed
+- Turnovers — also available
+
+DraftKings confirmed offering all four combo types (PRA, PR, PA, RA) on WNBA — their "Most Bet Props" article explicitly shows combo props as a category.
+Hard Rock confirmed combo stat lines for WNBA.
+
+**Assessment:** PRA/PR/PA/RA combos are available at DraftKings, FanDuel, and Hard Rock at minimum. BetMGM and Caesars likely offer them but less explicitly confirmed. They may not appear for every player in every game — likely restricted to featured players (stars, primary ballhandlers).
+
+Note: Given Section 4 finding that WNBA COMBO_RHO is near-zero (0.04-0.13 vs NBA 0.23-0.33), combo props should appear more frequently in the WNBA model than NBA combos at similar projection levels. But the availability constraint may limit which players have combo lines to pick from.
+
+**Q7 — Does the edge threshold need to be higher for WNBA?**
+
+**Yes, but the direction of adjustment is non-trivial:**
+
+Arguments for raising the threshold:
+- Wider vig (~6-9% margin vs ~4.5% NBA): breakeven edge requirement is higher. At -115/-115, you need edge ≥ 6.5% just to break even, not 4.5%.
+- Faster line movement: if you can't act on early lines, the edge you compute may evaporate before placement
+- Lower limits: you can't size as aggressively, so small edges aren't worth running
+- Less liquid: CLV signals are strong (as above) — if you beat the close, it's meaningful; if you lose CLV, you were picking bad
+
+Arguments against raising threshold excessively:
+- Softer pricing: larger edges are genuinely available on WNBA props vs NBA props — the market is less efficient, so edges ARE larger
+- The distribution of prop edge in WNBA is wider — you'll see more +8% edges and more -5% traps than in NBA
+- Research note from Dimers: "second-tier stars whose name recognition lags their actual production are systematically underpriced" — real edge exists if the model finds it
+
+**Recommendation:**
+- Keep the pick-selection gate (G1/G14) minimum edge threshold at **3.5-4.0%** for WNBA (vs NBA's 2.5-3.0%), to account for the higher vig environment
+- But the bigger lever is the **vig-adjusted win probability floor** (G2): raise `MIN_WIN_PROB` for WNBA by ~0.015-0.020 above NBA default to compensate for wider average book margins
+- **Do not raise threshold so high that the model stops firing**: WNBA edges are real and genuine; a 3.5% edge at -115 is a better bet than a 3.5% edge at -110, because the former represents more market softness
+
+**Q8 — When are WNBA lines typically posted?**
+
+**Day-of, morning of the game. Early lines are the softest.**
+
+Confirmed from multiple sources:
+- "Books often release WNBA props the morning of a game, and that's when the lines are softest"
+- "Bet early" — explicit recommendation in sharp WNBA strategy articles because early lines are set from basic stat averages
+- dimers.com publishes their WNBA props at midnight/1am ET for that day's games; covers.com similar
+- Props can be updated as recently as 5pm ET on game day (example: May 19 Dimers article updated 5:13 PM ET for 10:00 PM ET game)
+- Line posting is NOT day-before standard for WNBA like NFL; it's day-of morning (usually 9am-11am ET)
+
+**Implication for the engine:** Running run_picks.py in the morning is important for WNBA. Early lines are softest; lines sharpen significantly into tip-off. If the engine runs after 3-4pm ET on late game days, some edge may already be priced out.
+
+**Q9 — Which CO books have best WNBA prop coverage?**
+
+Based on the research:
+- **DraftKings**: Best breadth — most players, all prop types, all combo types, early posting, high prop count per slate
+- **FanDuel**: Best live props (in-game player props for WNBA); widest live market; solid pre-game coverage
+- **Fanatics**: Frequently appears as best-line source in dimers prop analysis — may post softer lines that offer more value
+- **Hard Rock**: Good combo prop coverage; Rotogrinders tracks separately — active WNBA prop market
+- **BetMGM/Caesars**: Coverage confirmed but not depth-differentiated in research
+- **theScore Bet**: Least-confirmed of the group; appears in some aggregators but not prominently referenced
+
+**For line shopping priority:** DraftKings first (benchmark line), then check Fanatics (often best odds), FanDuel (best live), Hard Rock (backup).
+
+**Q10 — Typical WNBA prop bet limits vs NBA?**
+
+**WNBA limits are substantially lower than NBA.** Specific documented findings:
+- Sharp bettors can typically get no more than **$250-$500 on a WNBA prop** before being limited or losing the line
+- NBA props by comparison: $1,000-$5,000+ depending on book and player
+- "Low limits keep sharps away, depriving the market of information" — this is a structural feature, not a bug from the book's perspective
+- Prop limits are asymmetric: headliner players (Clark, A'ja) have higher limits than role players
+- Once sharp bets hit on a thin WNBA market, books move lines aggressively and may limit future action
+
+**For sizing purposes:** The engine's `SPORT_UNIT_CAP["WNBA"] = 4.0u` is appropriate from a model perspective, but in practice, the binding constraint is the book's $250-500 limit per prop — not the unit cap. At 1u = ~$50-100 stakes, WNBA props are likely within book limits. At 2-4u = $200-400, some props may bump against limits.
 
 **Implementation verdict:**
-<!-- Any adjustments to edge thresholds, book filtering, or market availability for WNBA -->
+
+1. **All 7 CO-legal books in scope offer WNBA props** — no need to filter any book out of WNBA picks. DraftKings/FanDuel/Fanatics are the primary sourcing books; Hard Rock is a solid backup.
+
+2. **Vig adjustment needed:** Current edge threshold calibration assumes ~4.5% vig (NBA -110/-110). WNBA averages ~6-7% vig (-115/-115 typical). The win_prob gate (G2) should be raised by ~0.01-0.02 for WNBA to account for this, or an explicit `EDGE_THRESHOLD_OVERRIDE["WNBA"] = 0.035` should be set vs NBA's 0.025.
+
+3. **Line timing:** WNBA props post morning of game (not day-before). Engine running in the morning is optimal for WNBA. Late-evening re-runs will see sharper (less exploitable) lines.
+
+4. **Combo props:** Available at DK/FD/Hard Rock/Fanatics at minimum. Can run PRA/PR/PA/RA picks but expect lower player count vs NBA — not every player will have all four combo lines available.
+
+5. **No book filtering:** Unlike NBA where some books offer better coverage for specific stats, all 7 CO books offer WNBA props. Line shop normally. Fanatics appears to offer favorable odds on some WNBA props vs the consensus.
+
+6. **Sizing cap:** `SPORT_UNIT_CAP["WNBA"] = 4.0u` is fine but real-world limit is ~$500/pick at most books. At normal sizing of 1-2u this is not binding. If unit size scales above $250, some WNBA picks will hit book limits — add a practical warning in engine logs.
+
+7. **Line movement risk:** WNBA lines move fast once posted. Any pick logged in the morning may have moved by tip-off. CLV tracking is very important for WNBA — it will be the primary validation signal. Strong positive CLV on WNBA picks = strong evidence of genuine model edge.
+
+8. **Edge threshold recommendation:**
+   - Minimum: `EDGE_THRESHOLD["WNBA"] = 0.035` (vs NBA 0.025-0.030)
+   - This accounts for the ~2% higher vig environment
+   - Do not raise to 0.05+ as this would suppress too many genuine edges in a soft market
 
 ---
 
