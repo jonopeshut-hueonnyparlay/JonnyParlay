@@ -5,25 +5,25 @@
 
 picksbyjonny is a sports picks/DFS Discord community run by Jono. Proprietary projection engine, calibrated probability model, multi-sport (NBA, MLB, WNBA, NHL). Brand: luxury · sharp · analytical. Tagline: *edge > everything*.
 
-Preparing to launch a paid tier. Platform under consideration: **Whop** (whop.com). Community platform under consideration: **Telegram** (heard it outperforms Discord for picks communities). Existing Discord community already built.
+Preparing to launch a paid tier. Platform under consideration: **Winible** (winible.com). Community platform under consideration: **Telegram** (heard it outperforms Discord for picks communities). Existing Discord community already built.
 
 Research must be exhaustive and specific. No generic advice. Every finding must answer: "what does this mean for picksbyjonny, and what is the specific action?" Cite real examples, real numbers, real community names where possible. Where data doesn't exist, say so explicitly rather than speculating.
 
 ---
 
-## Section 1 — Whop as a platform
+## Section 1 — Winible as a platform
 
 **Questions:**
-1. What exactly is Whop (whop.com) and how does it work for picks services? Walk through the full mechanics: how payment is collected, how access is gated, how recurring billing works, what the fee structure is (% take, flat fees, payout timelines).
-2. What are the top picks services currently operating on Whop? What do they charge, what do they offer, and what is their member count? Who are the most successful and why?
-3. What does Whop provide natively vs. what requires third-party tools? (e.g., does it handle Discord role management automatically? Telegram gating? Analytics?)
-4. What are the most common complaints/failures operators experience on Whop? What does it do badly?
-5. How does Whop compare to alternatives for picks services — Patreon, Memberful, Substack, Ko-fi, direct Stripe, proprietary app? Which platform do the highest-revenue picks services use and why?
-6. What are Whop's terms of service regarding sports picks/betting advice? Are there restrictions or payment processor rules that affect how picks services must describe their product?
-7. What does the Whop storefront/listing look like from a customer's perspective? What information do buyers see before purchasing, and what drives conversion on the Whop marketplace vs. external traffic?
-8. Does Whop have a built-in affiliate/referral program? How do top picks services use it to grow?
+1. What exactly is Winible (winible.com) and how does it work for picks services? Walk through the full mechanics: how payment is collected, how access is gated, how recurring billing works, what the fee structure is (% take, flat fees, payout timelines).
+2. What are the top picks services currently operating on Winible? What do they charge, what do they offer, and what is their member count? Who are the most successful and why?
+3. What does Winible provide natively vs. what requires third-party tools? (e.g., does it handle Discord role management automatically? Telegram gating? Analytics?)
+4. What are the most common complaints/failures operators experience on Winible? What does it do badly?
+5. How does Winible compare to alternatives for picks services — Patreon, Memberful, Substack, Ko-fi, direct Stripe, proprietary app? Which platform do the highest-revenue picks services use and why?
+6. What are Winible's terms of service regarding sports picks/betting advice? Are there restrictions or payment processor rules that affect how picks services must describe their product?
+7. What does the Winible storefront/listing look like from a customer's perspective? What information do buyers see before purchasing, and what drives conversion on the Winible marketplace vs. external traffic?
+8. Does Winible have a built-in affiliate/referral program? How do top picks services use it to grow?
 9. What is the payout process — how quickly does revenue land in your account, what payment methods are supported for subscribers?
-10. Are there any known issues with Whop and high-churn subscription businesses (picks services often have volatile subscriber counts)?
+10. Are there any known issues with Winible and high-churn subscription businesses (picks services often have volatile subscriber counts)?
 
 ---
 
@@ -33,10 +33,10 @@ Research must be exhaustive and specific. No generic advice. Every finding must 
 1. Why is Telegram frequently cited as superior to Discord for paid picks communities? What specific features or behaviors make it better or worse?
 2. What are the concrete differences between a Telegram channel/group and a Discord server for a picks service? (message format, notification behavior, search, bots, media, pinning, thread management)
 3. What do paying picks subscribers prefer — Telegram or Discord — and why? Is there research, surveys, or community discussions that reveal subscriber preference?
-4. Can Whop gate a Telegram channel/group natively, or does it require a bot/workaround? How does Telegram access management work at scale (100+ paid members)?
+4. Can Winible gate a Telegram channel/group natively, or does it require a bot/workaround? How does Telegram access management work at scale (100+ paid members)?
 5. What are the best Telegram bots for managing a paid picks community? (auto-posting picks, member verification, role assignment, anti-leak)
 6. What is the anti-leak situation on Telegram vs Discord? Which platform has more screenshot/forward leaking problems, and what are effective countermeasures on each?
-7. Is there a viable hybrid model — Whop for payments, Telegram for picks delivery, Discord for community? How do top services structure the split, and does running both platforms increase churn risk from fragmentation?
+7. Is there a viable hybrid model — Winible for payments, Telegram for picks delivery, Discord for community? How do top services structure the split, and does running both platforms increase churn risk from fragmentation?
 8. What does the evidence say about notification open rates on Telegram vs Discord? Do members actually see picks in time to act on them?
 9. What are the top 5-10 picks services on Telegram? How are they structured, what do they charge, and what makes them successful?
 10. Are there picks services that have migrated from Discord to Telegram (or vice versa)? What happened to their subscriber count and retention during/after the migration?
@@ -127,7 +127,7 @@ Research must be exhaustive and specific. No generic advice. Every finding must 
 1. What are the legal considerations for selling sports picks advice in the US in 2025-26? Are there licensing requirements, disclaimer requirements, or state-specific restrictions?
 2. How do top picks services structure their disclaimers and terms of service to protect against liability? What language is standard?
 3. What payment processor restrictions apply to sports picks services? Are there known issues with Stripe, PayPal, or other processors shutting down picks services?
-4. How does Whop handle the legal/compliance question — does it provide any protection, or does that fall entirely on the operator?
+4. How does Winible handle the legal/compliance question — does it provide any protection, or does that fall entirely on the operator?
 5. What are the tax implications of running a subscription picks service — is income treated as business income, what records need to be kept?
 6. What happens legally if a picks service operator is in a US state where sports betting is not legal? Does selling picks advice have different rules than placing bets?
 7. Are there any known cases of picks services being shut down, fined, or sued? What caused them and what can be learned?
@@ -138,7 +138,7 @@ Research must be exhaustive and specific. No generic advice. Every finding must 
 ## Section 9 — Launch strategy and growth
 
 **Questions:**
-1. What is the recommended launch sequence for a picks service going paid — soft launch to existing free members first, open launch, waitlist, or direct public launch on Whop?
+1. What is the recommended launch sequence for a picks service going paid — soft launch to existing free members first, open launch, waitlist, or direct public launch on Winible?
 2. What is the ideal founding member cohort size? Is there a minimum viable paid community size for social proof and community feel?
 3. What launch promotions or founding member pricing do top services use? (e.g., first 50 members at $X locked for life, founding member badge/role)
 4. What growth channels are most effective for picks services in 2025-26 — X (Twitter), TikTok, Instagram, YouTube, Reddit, word of mouth, affiliate programs?
@@ -186,11 +186,11 @@ Research must be exhaustive and specific. No generic advice. Every finding must 
 
 **Questions:**
 1. Do top picks services build an email list alongside their Discord/Telegram community? Why is owning your email list critical vs. relying entirely on platform-gated communities?
-2. What email marketing tools do picks services use (Beehiiv, ConvertKit, Mailchimp, Klaviyo)? Which integrates best with Whop?
+2. What email marketing tools do picks services use (Beehiiv, ConvertKit, Mailchimp, Klaviyo)? Which integrates best with Winible?
 3. What email content drives the most opens and clicks for a picks service — weekly recaps, pick teasers, educational content, model updates?
 4. How do top services use email to re-engage churned subscribers and drive win-back conversions?
 5. What is the relationship between email list size and paid subscriber count for picks services — what conversion rate from list to paid is achievable?
-6. What is the risk of platform dependency (Discord banned, Telegram restricted, Whop changes terms) for a picks service that doesn't own its audience list?
+6. What is the risk of platform dependency (Discord banned, Telegram restricted, Winible changes terms) for a picks service that doesn't own its audience list?
 7. How do you compliantly collect email addresses from Discord/Telegram community members to build an owned list?
 
 ---
@@ -228,10 +228,10 @@ Research must be exhaustive and specific. No generic advice. Every finding must 
 **Questions:**
 1. What does a luxury/premium brand look like in practice for a picks service — what specific design elements (colors, typography, logo style, card layout) signal premium vs. amateur?
 2. What do the best-looking picks services use for pick card graphics — what tools (Canva templates, custom design, Discord bot-generated), what information hierarchy, what aesthetic?
-3. How important is visual consistency across platforms (Discord embed, Telegram message, X post, Whop listing) for brand perception? What do inconsistent brands signal to subscribers?
-4. What profile picture, banner, and overall presentation does a premium picks brand need on X, Discord, Telegram, and Whop?
+3. How important is visual consistency across platforms (Discord embed, Telegram message, X post, Winible listing) for brand perception? What do inconsistent brands signal to subscribers?
+4. What profile picture, banner, and overall presentation does a premium picks brand need on X, Discord, Telegram, and Winible?
 5. What naming and handle conventions work for premium picks brands — personal name vs. brand name, how do top services brand themselves?
-6. How do top services design their Whop storefront listing to maximize conversion — what copy, visuals, and social proof elements convert browsers to buyers?
+6. How do top services design their Winible storefront listing to maximize conversion — what copy, visuals, and social proof elements convert browsers to buyers?
 7. What does "luxury" communication style look like in copy — what words, tone, and sentence structure signal premium without being cold or corporate?
 
 ---
