@@ -210,7 +210,7 @@ BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636
 
 # Shadow sports — evaluated + logged internally but NEVER posted to Discord.
 # Remove a sport from this set once it's proven profitable over a meaningful sample.
-SHADOW_SPORTS = {"MLB", "WNBA"}
+SHADOW_SPORTS = {"WNBA"}
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
 SHADOW_LOG_PATHS = {
