@@ -66,7 +66,7 @@ Discord bot display name: **PicksByJonny**
 | `engine/morning_preview.py` | Posts daily card teaser to #announcements after run_picks.py runs. |
 | `data/pick_log.csv` | Model-generated ledger (primary / bonus / daily_lay / sgp / longshot). Starts Apr 14 2026. **29-column** header (schema_version=4, last col is `over_p_raw`). |
 | `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 29-column schema. Graded alongside main log but never posted to Discord. Excluded from CLV daemon. |
-| `data/pick_log_mlb.csv` | Shadow log for MLB (still in SHADOW_SPORTS). Include in analyze with --shadow flag. |
+| `data/pick_log_mlb.csv` | Historical MLB shadow log (pre-go-live, Apr 12–May 19). MLB now posts to main `pick_log.csv`. |
 | `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. Same-Game Parlay builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
 | `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
 | `setup_clv_task.ps1` | Registers CLV daemon scheduled task. S4U logon + WakeToRun. `ExecutionTimeLimit=22h`. Re-run as admin to reset. |
@@ -140,7 +140,7 @@ Authoritative source: `engine/pick_log_schema.py`. Updated to v4 by RB8 IMMEDIAT
 - `conflicts` → pick cut | `supports` → pass + annotation | `neutral` → pass
 
 ## MLB Status
-Still in **SHADOW_SPORTS** — picks go to `pick_log_mlb.csv`, not posted to Discord. Go-live = Jono's call.
+**LIVE as of 2026-05-20.** Picks post to Discord and log to `pick_log.csv`. CLV captured automatically by daemon. Historical shadow log at `data/pick_log_mlb.csv` (Apr 12–May 19, pre-go-live).
 
 ## Running grade_picks.py in Cowork
 Set `JONNYPARLAY_ROOT` to the repo root and every module resolves paths correctly:

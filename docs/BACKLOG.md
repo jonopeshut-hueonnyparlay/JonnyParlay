@@ -85,7 +85,7 @@ Each of these is a focused session: pull data, form a verdict, implement a targe
 
 | # | Item | Notes |
 |---|------|-------|
-| 26 | **MLB go-live** | Currently shadow. Config change + CLV daemon update. Go-live = Jono's call when data is clean. |
+| 26 | ~~**MLB go-live**~~ ✅ | Gone live 2026-05-20. Removed from SHADOW_SPORTS. CLV daemon picks up from main log automatically. HRR gate (G13B line-specific WP floors) deployed same day. |
 | 27 | **NFL architecture** | Entirely new sport. Passing/rushing/receiving yards, TDs, combo stats. Must design by July for September. Large session. |
 
 ---
