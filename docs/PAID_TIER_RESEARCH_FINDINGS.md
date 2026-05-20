@@ -19,9 +19,9 @@
 | 12 | Email list and owned audience | DONE — docs/research/paid_s11_s12.md |
 | 13 | Book affiliate and additional revenue streams | OPEN |
 | 14 | Subscriber psychology and expectation management | OPEN |
-| 15 | Brand identity and visual presentation | OPEN |
-| 16 | Seasonal content planning and year-round retention | OPEN |
-| 17 | picksbyjonny-specific differentiation | OPEN |
+| 15 | Brand identity and visual presentation | DONE — docs/research/paid_s15_s16.md |
+| 16 | Seasonal content planning and year-round retention | DONE — docs/research/paid_s15_s16.md |
+| 17 | picksbyjonny-specific differentiation | DONE — docs/research/paid_s17.md |
 | — | Priority Action List | OPEN |
 
 ---
