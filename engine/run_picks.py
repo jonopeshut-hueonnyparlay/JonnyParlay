@@ -197,7 +197,7 @@ KILLSHOT_TIER_REQUIRED  = "T1"                             # v2: strict T1 only 
 KILLSHOT_WIN_PROB_FLOOR = 0.65                             # v2: hard win-prob floor
 KILLSHOT_ODDS_MIN       = -200                             # v2: no razor-thin chalk
 KILLSHOT_ODDS_MAX       =  110                             # v2: no live dogs
-KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "AST", "SOG", "3PM"})  # v2: mainline counting stats only; REB dropped (L9)
+KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "AST", "SOG"})  # v2: mainline counting stats only; REB dropped (L9), 3PM dropped (T3 — dead code, CV 0.65-1.2 incompatible with KILLSHOT)
 # Manual override (via --killshot NAME): bypasses v2 filters but still counts toward weekly cap
 KILLSHOT_MANUAL_FLOOR   = 75.0                             # Minimum score to allow manual promote
 KILLSHOT_WEEKLY_CAP     = 2                                # v2: was 3 — rarer = more signal
@@ -828,10 +828,14 @@ def round_units(u):
     """Round to nearest 0.25u."""
     return round(u * 4) / 4
 
-def get_tier(stat, direction="over"):
+def get_tier(stat, direction="over", sport="NBA"):
     """Determine tier for a stat + direction.
     FIX H1: T1B must be checked before T1/T2/T3 fallthrough.
     HITS and HA are in T1B (unders only, 3% min edge).
+    Sport-aware overrides:
+      - NHL AST → T3 (Bernoulli at 0.5 line, CV >1.0, 20%+ hold)
+      - NBA/MLB TEAM_TOTAL → T1B (3% min edge; derivative pricing lags game total)
+      - MLB F5_TOTAL → T1B (softest MLB game line; pitcher signals clean)
     """
     if stat == "REB":
         if direction == "over":
@@ -839,6 +843,13 @@ def get_tier(stat, direction="over"):
         return "T1B"
     if stat in TIERS["T1B"]["stats"] and direction == "under":
         return "T1B"
+    # Sport-specific overrides
+    if stat == "AST" and sport == "NHL":
+        return "T3"  # Binary-adjacent at 0.5 line; CV >1.0; 20%+ hold
+    if stat == "TEAM_TOTAL" and sport in ("NBA", "MLB"):
+        return "T1B"  # Derivative pricing lags; softer than game total
+    if stat == "F5_TOTAL":
+        return "T1B"  # Softest MLB game line; pitcher signals clean pre-bullpen
     if stat in TIERS["T1"]["stats"]:
         return "T1"
     if stat in TIERS["T2"]["stats"]:
@@ -1238,7 +1249,7 @@ def apply_caps(picks, sport_totals, max_per_game=2):
     STAT_CAP = defaultdict(lambda: 2)
     STAT_CAP["SOG"] = 6
 
-    SPORT_UNIT_CAP = {"NBA": 8.0, "WNBA": 4.0, "NHL": 5.0, "NFL": 8.0, "MLB": 8.0}
+    SPORT_UNIT_CAP = {"NBA": 8.0, "WNBA": 4.0, "NHL": 5.0, "NFL": 5.0, "MLB": 8.0}
 
     hrr_team_game = defaultdict(int)   # (team, game) → count of HRR picks; max 1 per team per game
 
@@ -2190,8 +2201,8 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 conf = 1.0   # Full confidence (20+ games or GP not available)
             adj_edge = raw_edge * conf
 
-            # Get tier
-            tier = get_tier(stat, direction)
+            # Get tier (sport-aware: NHL AST → T3, NBA/MLB TEAM_TOTAL → T1B)
+            tier = get_tier(stat, direction, sport=_sport)
             if tier is None:
                 continue  # banned (REB overs)
 
@@ -2410,6 +2421,10 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             matchup_abbrev = f"{away_abbr}/{home_abbr}"
 
             sign = "+" if sp_line > 0 else ""
+            # Fixed-spread sports (MLB runline, NHL puck line): fixed ±1.5, cover rate 38–42%,
+            # CV ~1.22–1.46 → T3 territory. Variable-spread sports (NBA, NFL): T2.
+            spread_tier = "T3" if sport in _FIXED_SPREAD_SPORTS else "T2"
+            spread_min_edge = 0.06 if sport in _FIXED_SPREAD_SPORTS else 0.05
             pick = {
                 "player": f"{team_abbr} {sign}{sp_line}",
                 "team_abbrev": matchup_abbrev,
@@ -2418,14 +2433,14 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
                 "raw_edge": edge, "adj_edge": edge, "conf": 1.0,
                 "odds": sp_odds, "nv_prob": nv_this, "book": sp_book,
                 "game": gl["game"], "sport": sport,
-                "tier": "T2", "pick_type": "game_line",
+                "tier": spread_tier, "pick_type": "game_line",
                 "sigma": sigma, "missing_side": False,
                 "is_home": is_home,  # BUG G1 fix: used by grade_picks for correct team id
             }
 
             passed, gate = check_game_gates(pick)
             pick["gate_result"] = "PASS" if passed else gate
-            if passed and edge >= 0.05:
+            if passed and edge >= spread_min_edge:
                 pick["pick_score"] = pick_score(cover_prob, edge, mode)
             else:
                 pick["size"] = 0
@@ -2516,7 +2531,9 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             is_fav = ml_odds < 0
             stat_type = "ML_FAV" if is_fav else "ML_DOG"
             tier = "T2" if is_fav else "T3"
-            min_edge = 0.05 if is_fav else 0.08  # Dogs need 8% edge — higher variance justifies stricter floor
+            # Sport-specific ML_DOG floors: NHL parity sport (6%), NBA richer data (7%), MLB widest range (8%)
+            _dog_edge = {"NHL": 0.06, "NBA": 0.07}.get(sport, 0.08)
+            min_edge = 0.05 if is_fav else _dog_edge
 
             home_abbr = TEAM_ABBREV.get(home_name.lower(), home_name[:3].upper())
             away_abbr = TEAM_ABBREV.get(away_name.lower(), away_name[:3].upper())
@@ -2590,6 +2607,10 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             nv = nv_over if direction == "over" else nv_under
             book = tt.get("book_over", "") if direction == "over" else tt.get("book_under", "")
 
+            # NBA/MLB TEAM_TOTAL: T1B (3% min edge) — derivative pricing lags game total.
+            # NHL TEAM_TOTAL: T2 (5%) — less signal quality; monitor CLV before promoting.
+            tt_tier = "T1B" if sport in ("NBA", "MLB") else "T2"
+            tt_min_edge = 0.03 if sport in ("NBA", "MLB") else 0.05
             pick = {
                 "player": f"{team} Team Total",
                 "team_abbrev": get_team_abbrev("", team) if team else "",
@@ -2598,14 +2619,14 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
                 "raw_edge": edge, "adj_edge": edge, "conf": 1.0,
                 "odds": odds, "nv_prob": nv, "book": book,
                 "game": tt["game"], "sport": sport,
-                "tier": "T2", "pick_type": "game_line",
+                "tier": tt_tier, "pick_type": "game_line",
                 "sigma": sigma, "missing_side": False,
                 "is_home": tt_is_home,  # BUG G fix: used by grade_picks for correct team score
             }
 
             passed, gate = check_game_gates(pick)
             pick["gate_result"] = "PASS" if passed else gate
-            if passed and edge >= 0.05:
+            if passed and edge >= tt_min_edge:
                 pick["pick_score"] = pick_score(wp, edge, mode)
             else:
                 pick["size"] = 0
@@ -2748,12 +2769,12 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                                     "raw_edge": edge, "adj_edge": edge, "conf": 1.0,
                                     "odds": odds, "nv_prob": nv, "book": book,
                                     "game": game, "sport": "MLB",
-                                    "tier": "T2", "pick_type": "game_line",
+                                    "tier": "T1B", "pick_type": "game_line",  # T2→T1B: softest MLB line, pitcher signals clean
                                     "sigma": sigma, "missing_side": False,
                                 }
                                 passed, gate = check_game_gates(pick)
                                 pick["gate_result"] = "PASS" if passed else gate
-                                if passed and edge >= 0.05:
+                                if passed and edge >= 0.03:  # T1B: 3% min edge
                                     pick["pick_score"] = pick_score(wp, edge, mode)
                                 else:
                                     pick["size"] = 0
@@ -2799,10 +2820,11 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                             (team2, t2_wp, edge2, odds2, nv2, ml_data[team2].get("book", "")),
                         ]:
                             # FIX 3: Mirror full-game ML — favs T2 (5% min edge), dogs T3 (8% min edge)
+                            # F5 is MLB-only; MLB ML_DOG floor is 8% (widest odds range, lowest projection quality)
                             is_fav = odds < 0
                             stat = "F5_ML"
                             tier = "T2" if is_fav else "T3"
-                            min_edge = 0.05 if is_fav else 0.08  # Dogs need 8% edge — higher variance
+                            min_edge = 0.05 if is_fav else 0.08
                             # BUG G3 fix: determine home/away using resolved abbrevs
                             t_abbr = resolve_team_abbrev(team_name)
                             h_abbr = resolve_team_abbrev(home)
@@ -4566,12 +4588,26 @@ def _log_longshot(safest6_parlay, today_str, save=True):
 
     # Human-readable game field: first sport/game for context
     sports_seen = sorted({p.get("sport", "") for p in legs if p.get("sport", "")})
-    player_desc = " / ".join(
-        f"{p.get('player','').split()[-1]} "
-        f"{'O' if str(p.get('direction','')).lower()=='over' else 'U'}"
-        f"{p.get('line','')} {p.get('stat','')}"
-        for p in legs
-    )
+    def _longshot_leg_label(p):
+        """Compact leg label for the longshot game field.
+        Handles over/under props, ML (direction='win'), and spread (direction='cover')
+        so game-line legs don't show confusing 'U0' when there is no meaningful line."""
+        direction = str(p.get("direction", "")).lower()
+        stat      = p.get("stat", "")
+        line      = p.get("line", "")
+        short     = p.get("player", "").split()[-1]
+        if direction == "win":
+            # ML leg: player name is e.g. "NYM ML" — drop the trailing "ML" word and show "NYM WIN"
+            team_short = " ".join(p.get("player", "").split()[:-1]) or short
+            return f"{team_short} WIN"
+        if direction == "cover":
+            sign = "+" if float(line or 0) > 0 else ""
+            return f"{short} {sign}{line} {stat}"
+        # Standard over/under prop or TEAM_TOTAL
+        dir_char = "O" if direction == "over" else "U"
+        return f"{short} {dir_char}{line} {stat}"
+
+    player_desc = " / ".join(_longshot_leg_label(p) for p in legs)
 
     row = {
         "date":            today_str,
@@ -5011,7 +5047,7 @@ def select_killshots(qualified, today_str, manual_players=None):
       - pick_score >= KILLSHOT_SCORE_FLOOR (90)
       - win_prob >= KILLSHOT_WIN_PROB_FLOOR (0.65)
       - odds in [KILLSHOT_ODDS_MIN, KILLSHOT_ODDS_MAX] ([-200, +110])
-      - stat in KILLSHOT_STAT_ALLOW ({PTS, AST, SOG, 3PM})  # REB dropped L9
+      - stat in KILLSHOT_STAT_ALLOW ({PTS, AST, SOG})  # REB dropped L9, 3PM dropped (T3 — CV incompatible)
 
     Manual promote (--killshot NAME): bypasses v2 gate but still requires
       pick_score >= KILLSHOT_MANUAL_FLOOR (75) and counts toward weekly cap.
