@@ -54,7 +54,7 @@ MIN_LEG_WIN_PROB = 0.65      # floor: 0.65^3 = 29% × 1.35 corr = 39% > +200 imp
 IDEAL_LEG_WIN_PROB = 0.70    # target: 0.70^3 = 34% × 1.35 corr = 46% — clearly +EV
 MAX_LEG_ODDS = -115          # loosened: -130 to -149 alt lines excluded before were good value
                               # floor still screens out uncorrelated junk (+100 etc.)
-MIN_DISTINCT_PLAYERS = 3     # ceil(n_legs * 0.75): 3-leg → 3 players, 4-leg → 3 players
+MIN_DISTINCT_PLAYERS = 3     # unused — diversity gate now enforces n_legs unique players (see build_sgp)
 
 ODDS_BASE = "https://api.the-odds-api.com/v4"
 ODDS_REGIONS = "us,us2,us_ex"
@@ -97,9 +97,18 @@ def _correlation_tags(leg):
     # Rebound control -- REB overs on same team
     if stat == "REB" and direction == "over":
         tags.add(f"team_reb_{team}")
-    # Defensive dominance -- unders on opposing players
+    # Defensive dominance -- unders on opposing players (same team)
     if direction == "under" and stat in ("PTS", "AST", "3PM"):
         tags.add(f"team_def_vs_{team}")
+    # Slow-game thesis -- cross-team under stacks share a game-level tag so that
+    # e.g. OKC unders + SAS unders in the same game score cohesion correctly.
+    # pairwise_rho already assigns ρ=0.08 for cross-team unders; this tag lets
+    # the cohesion score reflect that shared game-script narrative.
+    if direction == "under" and stat in ("PTS", "AST", "3PM", "REB"):
+        game = leg.get("game", "")
+        if game:
+            game_key = game.lower().replace(" @ ", "_at_").replace(" ", "_")
+            tags.add(f"game_under_{game_key}")
     return tags
 
 
@@ -775,9 +784,11 @@ def build_sgp(projections, odds_data, event):
     for n_legs in range(min(MAX_LEGS, len(pool)), MIN_LEGS - 1, -1):
         leg_best = None
         leg_best_score = -1
-        # Player diversity gate: require at least ceil(n_legs * 0.75) distinct players.
-        # 3-leg → min 3 players (all different). 4-leg → min 3 players.
-        min_players = math.ceil(n_legs * 0.75)
+        # Player diversity gate: every leg must come from a different player.
+        # 3-leg → 3 players, 4-leg → 4 players. Same player twice = concentration risk
+        # (one bad game kills two legs) and the cross-stat tension check doesn't cover
+        # all same-player, same-direction combos (e.g. Over PTS + Over AST).
+        min_players = n_legs
         for combo in combinations(pool, n_legs):
             legs = list(combo)
             # Player diversity check

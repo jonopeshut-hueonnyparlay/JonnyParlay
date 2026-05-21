@@ -376,6 +376,11 @@ GAME_SIGMA = {
     "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,  "ml": 4.75},  # ml: 6.0→4.75 (empirical run-diff σ≈3.8; 6.0 was artificially wide)
 }
 
+# Sports where the spread is always a fixed ±1.5 line (MLB runline, NHL puck line).
+# The fixed line is a derivative of the ML — it does not carry independent run/goal-margin
+# information. ML win_prob must NOT blend against it; use ML no-vig as the market anchor.
+_FIXED_SPREAD_SPORTS = {"MLB", "NHL"}
+
 # First 5 innings sigmas (MLB only — starter matchup, no bullpen noise)
 F5_SIGMA = {"total": 2.6, "spread": 2.75, "team": 2.0}  # spread: 2.5→2.75 (empirical F5 run-diff σ≈2.7-2.8)
 
@@ -2444,22 +2449,29 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
         raw_margin = home_proj - away_proj
         sigma = sigmas["ml"]  # FIX: ML uses ml sigma (wider) not spread sigma — spread sigma inflates win probs
 
-        # Blend with market-implied margin from spread data (same approach as SPREADS)
-        spread_data = gl.get("spread", {})
-        home_spread_line = None
-        for sn, si in spread_data.items():
-            sn_abbr = resolve_team_abbrev(sn)
-            home_abbr_check = resolve_team_abbrev(home_name)
-            if sn_abbr and home_abbr_check and sn_abbr == home_abbr_check:
-                home_spread_line = si["line"]
-                break
-            elif sn.lower() in home_name.lower() or home_name.lower() in sn.lower():
-                home_spread_line = si["line"]
-                break
+        # Variable-spread sports (NBA/WNBA/NFL): blend projected margin against the market
+        # spread line, which carries genuine run/point-margin information.
+        # Fixed-spread sports (MLB/NHL): the runline/puck-line is always ±1.5 — a derivative
+        # of the ML, not an independent margin signal. Use raw_margin; win_prob is anchored to
+        # ML no-vig inside the loop instead.
+        if sport not in _FIXED_SPREAD_SPORTS:
+            spread_data = gl.get("spread", {})
+            home_spread_line = None
+            for sn, si in spread_data.items():
+                sn_abbr = resolve_team_abbrev(sn)
+                home_abbr_check = resolve_team_abbrev(home_name)
+                if sn_abbr and home_abbr_check and sn_abbr == home_abbr_check:
+                    home_spread_line = si["line"]
+                    break
+                elif sn.lower() in home_name.lower() or home_name.lower() in sn.lower():
+                    home_spread_line = si["line"]
+                    break
 
-        if home_spread_line is not None:
-            market_margin = -home_spread_line
-            proj_margin = market_margin + BLEND_ALPHA * (raw_margin - market_margin)
+            if home_spread_line is not None:
+                market_margin = -home_spread_line
+                proj_margin = market_margin + BLEND_ALPHA * (raw_margin - market_margin)
+            else:
+                proj_margin = raw_margin
         else:
             proj_margin = raw_margin
 
@@ -2477,10 +2489,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             )
             team_margin = proj_margin if is_home else -proj_margin
 
-            # Win probability: team wins if actual_margin > 0
-            win_prob = 1.0 - normal_cdf(0, team_margin, sigma)
-
-            # No-vig
+            # No-vig (computed before win_prob — needed as market anchor for fixed-spread sports)
             opp_name = [n for n in ml_data if n != team_name]
             if not opp_name:
                 continue
@@ -2491,6 +2500,16 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             imp_this = implied_prob(ml_odds)
             imp_opp = implied_prob(opp_odds)
             nv_this, nv_opp = no_vig(imp_this, imp_opp)
+
+            # Win probability
+            if sport in _FIXED_SPREAD_SPORTS:
+                # Runline/puck-line prices P(win by 2+), not P(win outright) — different bet.
+                # Blend projection win_prob against ML no-vig as the market anchor.
+                raw_team_wp = 1.0 - normal_cdf(0, raw_margin if is_home else -raw_margin, sigma)
+                win_prob = nv_this + BLEND_ALPHA * (raw_team_wp - nv_this)
+            else:
+                win_prob = 1.0 - normal_cdf(0, team_margin, sigma)
+
             edge = win_prob - nv_this
 
             # Classify as favorite or dog based on odds
@@ -2535,6 +2554,8 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
         proj = find_team_proj(team, team_proj, "saber_team")
         if proj is None or proj <= 0:
             continue
+
+        proj = line + BLEND_ALPHA * (proj - line)
 
         over_p = 1.0 - normal_cdf(line, proj, sigma)
         under_p = normal_cdf(line, proj, sigma)
@@ -2702,7 +2723,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                                 game_total_proj = tv["saber_total"]
                                 break
                     if game_total_proj and game_total_proj > 0:
-                        proj = game_total_proj * 0.51  # F5 is ~51% of full game (2024 data: 4.41/8.76)
+                        proj = game_total_proj * 0.503  # F5 is ~50.3% of full game (2024 data: 4.41/8.76 = 0.5034)
                         # FIX: Anchor F5 projection to market line (same as full-game BLEND_ALPHA)
                         proj = line + BLEND_ALPHA * (proj - line)
                         sigma = sigmas["total"]
@@ -2757,15 +2778,19 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                             t2_proj = tv["saber_team"]
 
                     if t1_proj and t2_proj and t1_proj > 0 and t2_proj > 0:
-                        # F5 team runs scaled (0.51 = empirical F5/full ratio: 4.41/8.76; was 0.54 — inconsistent)
-                        f5_t1 = t1_proj * 0.51
-                        f5_t2 = t2_proj * 0.51
+                        # F5 team runs scaled (0.503 = empirical F5/full ratio: 4.41/8.76 = 0.5034; was 0.51 — rounding error)
+                        f5_t1 = t1_proj * 0.503
+                        f5_t2 = t2_proj * 0.503
                         margin = f5_t1 - f5_t2
                         sigma = sigmas["spread"]
-                        t1_wp = 1.0 - normal_cdf(0, margin, sigma)
-                        t2_wp = normal_cdf(0, margin, sigma)
 
+                        # Blend raw projection win_prob against F5 ML no-vig (mirrors full-game MLB ML fix).
+                        # F5 ML has no independent spread line to anchor to, so the ML market is the only anchor.
                         nv1, nv2 = no_vig(implied_prob(odds1), implied_prob(odds2))
+                        t1_wp_raw = 1.0 - normal_cdf(0, margin, sigma)
+                        t2_wp_raw = normal_cdf(0, margin, sigma)
+                        t1_wp = nv1 + BLEND_ALPHA * (t1_wp_raw - nv1)
+                        t2_wp = nv2 + BLEND_ALPHA * (t2_wp_raw - nv2)
                         edge1 = t1_wp - nv1
                         edge2 = t2_wp - nv2
 
@@ -2835,7 +2860,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                             o_proj = tv["saber_team"]
 
                     if t_proj and o_proj:
-                        raw_f5_margin = (t_proj - o_proj) * 0.51  # FIX: 51% scaling (2024 data)
+                        raw_f5_margin = (t_proj - o_proj) * 0.503  # 50.3% scaling (2024 data: 4.41/8.76 = 0.5034)
                         # FIX: Anchor F5 margin to market-implied margin (same BLEND_ALPHA as full-game)
                         market_f5_margin = -sp_line  # sp_line is from team perspective: negative = fav
                         f5_margin = market_f5_margin + BLEND_ALPHA * (raw_f5_margin - market_f5_margin)
@@ -2922,7 +2947,8 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
         for tk, rv in team_saber_runs.items():
             if tk in u or u in tk or any(w in tk for w in u.split()[-1:]):
                 return rv
-        return _LEAGUE_AVG_RUNS  # fallback: treat as league-average offense
+        logging.warning(f"NRFI _team_runs: no match for '{team_name}' — using league avg {_LEAGUE_AVG_RUNS}")
+        return _LEAGUE_AVG_RUNS
 
     # Extract NRFI odds from the _nrfi keyed entries (totals_1st_1_innings)
     events = odds_data.get("events", [])
