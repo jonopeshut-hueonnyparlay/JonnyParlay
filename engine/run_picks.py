@@ -393,11 +393,11 @@ F5_SIGMA = {"total": 2.6, "spread": 2.75, "team": 2.0}  # spread: 2.5→2.75 (em
 BLEND_ALPHA = 0.25
 
 TIERS = {
+    # Prop stats only — game lines (SPREAD, TOTAL, TEAM_TOTAL, ML_*, F5_*) are NOT routed
+    # through get_tier(); their tier is set directly at pick creation (sport-aware).
     "T1":  {"stats": {"AST", "SOG", "REC", "K", "HRR"}, "min_edge": 0.03},
     "T1B": {"stats": {"REB", "HITS", "HA"},              "min_edge": 0.03},  # unders 3.5+ only / low volume
-    "T2":  {"stats": {"PTS", "PRA", "PR", "PA", "RA", "YARDS", "TOTAL", "SPREAD",
-                       "TEAM_TOTAL", "ML_FAV", "TB", "OUTS",
-                       "F5_TOTAL", "F5_SPREAD", "F5_ML"}, "min_edge": 0.05},
+    "T2":  {"stats": {"PTS", "PRA", "PR", "PA", "RA", "YARDS", "TB", "OUTS"}, "min_edge": 0.05},
     "T3":  {"stats": {"TDS", "GOALS", "3PM", "ML_DOG", "NRFI", "YRFI"}, "min_edge": 0.06},
     # T4 (GOLF_WIN) removed — see archived_golf_code.py
 }
