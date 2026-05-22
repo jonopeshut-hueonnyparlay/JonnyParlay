@@ -1153,17 +1153,19 @@ def apply_r12_cooldown(picks, cooldown_players):
     cool_set = {normalize_name(n) for n in cooldown_players}
     return [p for p in picks if normalize_name(p["player"]) not in cool_set]
 
+MAX_PREMIUM_PICKS = 3  # per-sport cap (multi-sport days: MLB+WNBA+NHL+NBA)
+
 def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     """
-    Apply R6, R7, R8, R9, R10 to build the Premium 5.
+    Apply R6, R7, R8, R9, R10 to build the Premium card.
 
-    R8 (updated): Reserve first 3 slots for T1/T1B (by PS desc).
-    Fill remaining 2 slots by pure Pick Score from ALL tiers.
+    R8 (updated): Reserve first 2 slots for T1/T1B (by PS desc).
+    Fill remaining slot by pure Pick Score from ALL tiers.
     This ensures T1 dominance while letting strong T2/T3 picks break through.
 
     max_per_game — R7 override (default 2). Thin-slate nights can raise this.
     """
-    T1_RESERVED = 3  # slots reserved for T1/T1B
+    T1_RESERVED = 2  # slots reserved for T1/T1B
 
     t1_picks = sorted([p for p in all_qualifying if p["tier"] in ("T1", "T1B")],
                        key=lambda p: p["pick_score"], reverse=True)
@@ -1184,9 +1186,9 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
         game = p.get("game", "")
         if game_count[game] >= max_per_game:  # R7
             return False
-        if stat_count[p["stat"]] >= 2:  # R10: max 2 picks per stat regardless of direction
+        if stat_count[p["stat"]] >= 1:  # R10: max 1 pick per stat (3-pick card)
             return False
-        if p["direction"] == "over" and over_count >= 3:  # R6
+        if p["direction"] == "over" and over_count >= 2:  # R6: max 2 overs on 3-pick card
             return False
         # G12: Max 2 same-direction pitcher props per game on Premium
         if p["stat"] in PITCHER_STATS:
@@ -1221,9 +1223,9 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
         if can_add(p):
             add_pick(p)
 
-    # Phase 2: Fill remaining slots (up to 5) by pure Pick Score from ALL tiers
+    # Phase 2: Fill remaining slots (up to MAX_PREMIUM_PICKS) by pure Pick Score from ALL tiers
     for p in all_by_ps:
-        if len(premium) >= 5:
+        if len(premium) >= MAX_PREMIUM_PICKS:
             break
         if id(p) in used:
             continue
@@ -1231,7 +1233,7 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
             add_pick(p)
 
     # R9: If 3+ overs passed gates but none on Premium, force one
-    if total_overs >= 3 and not has_over and len(premium) == 5:
+    if total_overs >= 3 and not has_over and len(premium) == MAX_PREMIUM_PICKS:
         # Identify the lowest-PS non-over to remove (last in list = lowest PS)
         swap_idx = None
         for i in range(len(premium) - 1, -1, -1):
@@ -1273,7 +1275,7 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
                     pitcher_game_dir_count[(old_game, old_pick["direction"])] += 1
                 used.add(id(old_pick))
 
-    return premium[:5]
+    return premium[:MAX_PREMIUM_PICKS]
 
 def apply_caps(picks, sport_totals, max_per_game=2, units_already_bet=0.0):
     """Apply daily caps: per-stat, per-game, per-sport, daily total.
@@ -1488,6 +1490,26 @@ def name_key(name):
 def parse_csv(filepath):
     """Parse SaberSim CSV. Returns list of player dicts and detected sport."""
     path = Path(filepath)
+    if not path.exists():
+        # Auto-find in Downloads by sport keyword (e.g. "mlb.csv" -> search for *mlb* in Downloads)
+        sport_key = path.stem.lower()
+        downloads_dirs = [
+            Path.home() / "Downloads" / "projections",
+            Path.home() / "Downloads",
+        ]
+        import time as _time
+        now = _time.time()
+        for d in downloads_dirs:
+            if not d.exists():
+                continue
+            matches = sorted(
+                [f for f in d.glob("*.csv") if sport_key in f.name.lower() and (now - f.stat().st_mtime) < 43200],
+                key=lambda f: f.stat().st_mtime, reverse=True
+            )
+            if matches:
+                path = matches[0]
+                print(f"  [auto] Found {path.name}")
+                break
     with open(path, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
@@ -4474,7 +4496,7 @@ def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
     for _leg in legs:
         _leg_odds = _leg.get("real_odds")
         if _leg_odds is not None:
-            book_implied_combined *= _implied_prob(_leg_odds)
+            book_implied_combined *= implied_prob(_leg_odds)
     if combined_prob < MIN_DAILY_LAY_PROB:
         print(f"  [Discord] Daily Lay combined prob {combined_prob*100:.1f}% < {MIN_DAILY_LAY_PROB*100:.0f}% threshold — skipping weak parlay.")
         return
@@ -5889,10 +5911,10 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     total_u_all = total_u + ks_u + units_already_bet
 
     checks = [
-        (f"Premium card: {n_prem} picks generated", n_prem == 5 or n_prem == 0),
+        (f"Premium card: {n_prem} picks generated", n_prem == MAX_PREMIUM_PICKS or n_prem == 0),
         (f"Safest 5 generated", len(safest5) >= 5 or len(safest5) == 0),
         (f"R9 directional balance: {n_overs_prem} overs on Premium", n_overs_prem >= 1 if n_overs_all >= 3 else True),
-        (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 2),
+        (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 1),
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8/G8B enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over at line ≤ 4.5", not has_g8_fail),
@@ -6329,7 +6351,7 @@ def main():
     today_str_cs = today_str
     qualified, context_rejects = apply_context_sanity(
         qualified, today_str_cs, skip=not args.context, mode=args.mode,
-        auto_tiers={"T1"},
+        auto_tiers=set(),
     )
     failed.extend(context_rejects)
 
