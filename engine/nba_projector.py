@@ -738,8 +738,10 @@ def compute_ast_rate(df_clean: pd.DataFrame,
     d = df_clean.sort_values("game_date").copy()
     n_games = len(d)
 
-    # Possessions available to the player in each game (scaled by minutes fraction)
-    poss_per_game = (team_pace * d["min"] / 48.0).clip(lower=0.1)
+    # Possessions available to the player in each game (scaled by minutes fraction).
+    # 14.9: use per-game pace from df_clean if available; fall back to today's team_pace.
+    _pace_series = d["game_pace"] if "game_pace" in d.columns else team_pace
+    poss_per_game = (_pace_series * d["min"] / 48.0).clip(lower=0.1)
     ast_raw = (
         d["ast"].fillna(0) / poss_per_game
     ).replace([np.inf, -np.inf], np.nan).fillna(prior)

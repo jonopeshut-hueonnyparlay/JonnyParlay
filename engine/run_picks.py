@@ -2335,7 +2335,18 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 picks.append(pick)
                 continue
 
-            pick["pick_score"] = pick_score(win_prob, adj_edge, mode, tier=tier,
+            # 4.5: WNBA early-season dampener applies to gate (G_WNBA_EDGE) but not
+            # pick_score — use the same effective_edge so scored picks reflect the
+            # dampened confidence during weeks 1-3 of the season.
+            _score_edge = adj_edge
+            if pick.get("sport") == "WNBA":
+                _today = datetime.now().date()
+                _sday = (_today - WNBA_SEASON_START).days + 1
+                for _dcap, _mult in WNBA_EARLY_SEASON_EDGE_MULT:
+                    if 0 < _sday <= _dcap:
+                        _score_edge = adj_edge * _mult
+                        break
+            pick["pick_score"] = pick_score(win_prob, _score_edge, mode, tier=tier,
                                             cold_start_subtype=_cold_start_subtype,
                                             injury_trigger=_injury_trigger, stat=stat)
             picks.append(pick)
@@ -6450,6 +6461,23 @@ def main():
         while killshots and _premium_u + sum(p.get("size", 0) for p in killshots) + _units_today > 12.0:
             dropped = killshots.pop()
             print(f"  [CAP] Dropping KILLSHOT {dropped['player']} ({dropped.get('size',0):.2f}u) — 12u daily cap")
+
+    # 5.6: SPORT_UNIT_CAP re-check — apply_caps() ran before KILLSHOT sizing,
+    # so KILLSHOT 3-4u picks can push a sport over its per-sport ceiling.
+    _ks_sport_cap = {"NBA": 8.0, "WNBA": 4.0, "NHL": 5.0, "NFL": 5.0, "MLB": 8.0}
+    _ks_sport_u: dict = defaultdict(float)
+    for p in premium:
+        _ks_sport_u[p.get("sport", "NBA")] += p.get("size", 0)
+    _killshots_kept = []
+    for p in killshots:
+        sp = p.get("sport", "NBA")
+        cap = _ks_sport_cap.get(sp, 8.0)
+        if _ks_sport_u[sp] + p.get("size", 0) <= cap:
+            _killshots_kept.append(p)
+            _ks_sport_u[sp] += p.get("size", 0)
+        else:
+            print(f"  [CAP] Dropping KILLSHOT {p['player']} ({p.get('size',0):.2f}u) — {sp} sport cap ({cap:.1f}u)")
+    killshots = _killshots_kept
 
     # Log premium picks + KILLSHOT picks on first run of the day.
     # KILLSHOT picks carry tier=KILLSHOT and no card_slot; premium picks get slots 1-5.
