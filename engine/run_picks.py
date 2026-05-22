@@ -6097,6 +6097,27 @@ def main():
         all_players[sport].extend(players)
 
     sports = list(all_players.keys())
+
+    # MLB pitcher confirmation: patch status="confirmed" from MLB Stats API when
+    # SaberSim hasn't confirmed the pitcher yet (batting lineup lag).
+    if "MLB" in all_players:
+        try:
+            from mlb_starter_fetcher import fetch_confirmed_starters as _mlb_starters, is_confirmed as _mlb_confirmed
+            _today_mlb = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+            _mlb_api_starters = _mlb_starters(_today_mlb)
+            if _mlb_api_starters:
+                _patched = 0
+                for _p in all_players["MLB"]:
+                    if _p.get("is_pitcher") and _p.get("status", "").lower() != "confirmed":
+                        if _mlb_confirmed(_p["name"], _p.get("team", ""), _mlb_api_starters):
+                            _p["status"] = "confirmed"
+                            _patched += 1
+                if _patched:
+                    print(f"  [MLB Starters] Patched {_patched} pitcher(s) confirmed via MLB Stats API")
+            else:
+                print("  [MLB Starters] No probable starters announced yet (MLB Stats API)")
+        except Exception as _e:
+            print(f"  [MLB Starters] Fetch skipped: {_e}")
     cooldown = [s.strip() for s in args.cooldown.split(",") if s.strip()]
 
     # Auto-R12: merge pick_log losses (last 5 days) into cooldown list automatically
