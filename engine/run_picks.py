@@ -1086,7 +1086,7 @@ def check_game_gates(pick):
     # GG5: No dog-cover spread bets (positive odds on a -1.5/+1.5 line)
     # Puck line / run line dogs at +150 to +205 are lottery tickets, not systematic edges.
     # The model finds "edge" vs market but win_prob < 50% and pick_score goes negative.
-    if pick.get("stat") == "SPREAD" and pick.get("odds", 0) > 0:
+    if pick.get("stat") in ("SPREAD", "F5_SPREAD") and pick.get("odds", 0) > 0:
         return False, "GG5"
 
     return True, None
@@ -5660,7 +5660,7 @@ def apply_context_sanity(qualified, today_str, skip=False, mode="Default",
 
 def format_output(premium, safest5, all_qualified, all_picks, mode, today,
                    safest6_parlay=None, alt_spread_parlay=None, max_per_game=2,
-                   killshots=None):
+                   killshots=None, units_already_bet=0.0):
     """Format the full output (sections A-J + parlays)."""
     out = []
 
@@ -5914,7 +5914,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     if killshots is None:
         killshots = []
     ks_u = sum(p.get("size", 0) for p in killshots)
-    total_u_all = total_u + ks_u
+    total_u_all = total_u + ks_u + units_already_bet
 
     checks = [
         (f"Premium card: {n_prem} picks generated", n_prem == 5 or n_prem == 0),
@@ -5932,7 +5932,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"G11 enforced: Max pitcher props per pitcher = {max_pitcher_props}", max_pitcher_props <= 1),
         (f"G11b enforced: Max batter corr props per batter = {max_batter_corr}", max_batter_corr <= 1),
         (f"All sizes ≤ 1.25u", all(p.get("size",0) <= 1.25 for p in all_qualified)),
-        (f"Daily cap (premium {total_u:.2f}u + KILLSHOT {ks_u:.2f}u = {total_u_all:.2f}u) ≤ 12u", total_u_all <= 12.0),
+        (f"Daily cap (prev {units_already_bet:.2f}u + premium {total_u:.2f}u + KILLSHOT {ks_u:.2f}u = {total_u_all:.2f}u) ≤ 12u", total_u_all <= 12.0),
     ]
     for label, ok in checks:
         mark = "✓" if ok else "✗"
@@ -6118,6 +6118,9 @@ def main():
                 print("  [MLB Starters] No probable starters announced yet (MLB Stats API)")
         except Exception as _e:
             print(f"  [MLB Starters] Fetch skipped: {_e}")
+            _unconfirmed = sum(1 for _p in all_players.get("MLB", []) if _p.get("is_pitcher") and _p.get("status", "").lower() != "confirmed")
+            if _unconfirmed:
+                print(f"  [MLB Starters] WARNING: {_unconfirmed} pitcher(s) unconfirmed — K/OUTS/HA props may be suppressed")
     cooldown = [s.strip() for s in args.cooldown.split(",") if s.strip()]
 
     # Auto-R12: merge pick_log losses (last 5 days) into cooldown list automatically
@@ -6559,7 +6562,8 @@ def main():
     # Format full output
     output = format_output(premium, safest5, qualified, all_picks, args.mode, today,
                            safest6_parlay=safest6_parlay, alt_spread_parlay=alt_spread_parlay,
-                           max_per_game=args.max_per_game, killshots=killshots)
+                           max_per_game=args.max_per_game, killshots=killshots,
+                           units_already_bet=_units_today)
 
     # Print
     print("\n" + "=" * 60)
