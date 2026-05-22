@@ -935,12 +935,8 @@ def check_prop_gates(pick):
         return False, "G7b"
 
     # G8: binary fragility (FIX M3: extended to MLB low-count stats)
-    # Exception: SOG ≤ 1.5 UNDER passes if model is very confident (WP ≥ 0.80 AND edge ≥ 0.15)
     if stat in ("AST", "REB", "SOG", "K", "HA", "HITS") and line <= 1.5:
-        if stat == "SOG" and direction == "under" and prob >= 0.80 and edge >= 0.15:
-            pass  # High-conviction SOG under exception — allow through
-        else:
-            return False, "G8"
+        return False, "G8"
 
     # G8B: AST over at line ≤ 4.5 — 0-5 record vs 2-1 at line ≥ 5.5 (n=8).
     # NBA-only: WNBA line 4.5 is elite-playmaker territory, not sub-elite.
@@ -1000,6 +996,10 @@ def check_prop_gates(pick):
             return False, "G13B"
         if line > 0.5 and prob < 0.65:
             return False, "G13B"
+
+    # G13B: TB WP floor — matches _STAT_MIN_WIN_PROB sanity checklist.
+    if stat == "TB" and prob < 0.60:
+        return False, "G13B"
 
     # G14: projection clearance gate — ensures model has directional conviction.
     # Normal/SIGMA stats (PTS, OUTS, HA, TB, HRR): proj must clear line by ≥0.10σ.
@@ -3032,7 +3032,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
     for p in players:
         team = p["team"].upper()
         if p.get("is_pitcher") and p.get("status") == "confirmed":  # R10: use confirmed starter
-            ip = p.get("IP", 1)
+            ip = p.get("IP", 1) or 1.0
             er_per_ip = p.get("ER", 0) / ip
             # I4: Compute projected FIP for more stable pitcher quality estimate
             # FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.20 (FIP constant ~3.20)
