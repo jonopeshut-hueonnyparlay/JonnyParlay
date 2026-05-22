@@ -44,7 +44,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from paths import DATA_DIR, PROJECT_ROOT
-from projections_db import DB_PATH, get_conn, get_player_recent_games
+from projections_db import DB_PATH, DEFAULT_SEASONS, get_conn, get_player_recent_games
 from name_utils import fold_name
 
 log = logging.getLogger("backtest")
@@ -254,9 +254,10 @@ def _regenerate_projections(game_date, db_path):
         return []
     log.info("Regenerating projections for %s...", game_date)
     projs = run_projections(
-        game_date=game_date, season="2025-26",
+        game_date=game_date, season=DEFAULT_SEASONS[-1],
         implied_totals={}, spreads={},
         injury_statuses={}, injury_minutes_overrides={},
+        injury_minutes_redistrib_bumps={},
         db_path=db_path, persist=False,
     )
     _proj_cache[game_date] = projs

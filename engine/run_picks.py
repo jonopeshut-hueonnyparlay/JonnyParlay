@@ -4592,6 +4592,7 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
         "context_reason": "",
         "context_score": "",
         "legs": _daily_lay_legs_json(legs),
+        "over_p_raw": "",
     }]
 
     try:
@@ -4601,7 +4602,6 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
         with _pick_log_lock(log_path):
             with open(log_path, "r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                header = reader.fieldnames or []
                 existing = list(reader)
 
             # Check not already logged today
@@ -4613,7 +4613,7 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
                 return
 
             with open(log_path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
+                writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore", restval="")
                 for row in rows_to_add:
                     writer.writerow(row)
                 # Commit to disk before releasing the outer lock (audit H-5).
@@ -4774,13 +4774,13 @@ def _log_longshot(safest6_parlay, today_str, save=True):
         "context_reason":  "",
         "context_score":   "",
         "legs":            legs_json,
+        "over_p_raw":      "",
     }
 
     try:
         with _pick_log_lock(log_path):
             with open(log_path, "r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                header = reader.fieldnames or list(CANONICAL_HEADER)
                 rows = list(reader)
             already = any(
                 r.get("date") == today_str and r.get("run_type") == "longshot"
@@ -4790,7 +4790,7 @@ def _log_longshot(safest6_parlay, today_str, save=True):
                 print("  [pick_log] Longshot already logged today — skipping.")
                 return
             with open(log_path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
+                writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore", restval="")
                 writer.writerow(row)
                 f.flush()
                 os.fsync(f.fileno())

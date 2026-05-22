@@ -998,13 +998,13 @@ def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None):
         "context_reason":  "",
         "context_score":   "",
         "legs":            legs_json,
+        "over_p_raw":      "",
     }
 
     try:
         with _pick_log_lock(log_path):
             with open(log_path, "r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                header = reader.fieldnames or list(CANONICAL_HEADER)
                 rows = list(reader)
             already = any(
                 r.get("date") == today_str and r.get("run_type") == "sgp"
@@ -1015,7 +1015,7 @@ def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None):
                 print(f"  [SGP] Already logged for {game} today — skipping.")
                 return
             with open(log_path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
+                writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore", restval="")
                 writer.writerow(row)
                 f.flush()
                 os.fsync(f.fileno())

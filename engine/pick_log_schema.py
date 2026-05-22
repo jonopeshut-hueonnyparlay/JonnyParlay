@@ -8,7 +8,7 @@ both definitions had to be updated in lockstep, and reader modules
 know whether an on-disk row was from an older schema version.
 
 This module:
-  1. Exports `CANONICAL_HEADER` — the 28-column schema as of SCHEMA_VERSION.
+  1. Exports `CANONICAL_HEADER` — the 29-column schema as of SCHEMA_VERSION.
   2. Defines migration rules so old-schema rows (e.g. pre-CLV, pre-context)
      can be read alongside current-schema rows without silent data loss.
   3. Gives every reader one helper — `migrate_row()` — to get a canonical
