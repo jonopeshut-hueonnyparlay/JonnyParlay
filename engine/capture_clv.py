@@ -1332,7 +1332,7 @@ def run(run_date: str):
                     except (ValueError, TypeError):
                         your_odds = None
 
-                    clv = calc_clv(your_odds, closing_odds) if your_odds is not None else None
+                    clv = calc_clv(your_odds, closing_odds) if (your_odds is not None and your_odds != 0) else None
                     clv_str = f"{clv:+.1%}" if clv is not None else "n/a"
 
                     key = (

@@ -248,19 +248,27 @@ def resolve_player_ids(
 # ---------------------------------------------------------------------------
 
 def _normalise_position(pos: Optional[str]) -> str:
-    """Map raw position string to PG / SG / SF / PF / C group."""
+    """Map raw position string to PG / SG / SF / PF / C group.
+
+    Must stay consistent with _position_group() in projections_db.py
+    and _pos_group5() in nba_projector.py.
+    """
     if not pos:
         return "SF"
     p = str(pos).strip().upper()
-    if p == "PG":
+    if p in ("PG", "POINT GUARD"):
         return "PG"
-    if p in ("SG", "G"):
+    if p in ("SG", "SHOOTING GUARD", "G", "GUARD"):
         return "SG"
-    if p in ("SF", "F", "G-F", "F-G"):
+    if p in ("SF", "SMALL FORWARD", "F", "G-F", "F-G", "GUARD-FORWARD", "FORWARD-GUARD"):
         return "SF"
-    if p in ("PF", "F-C", "C-F"):
+    if p in ("PF", "POWER FORWARD", "F-C", "C-F", "FORWARD-CENTER", "CENTER-FORWARD"):
         return "PF"
-    if p == "C":
+    if p in ("C", "CENTER"):
+        return "C"
+    if p.startswith("F"):
+        return "SF"
+    if p.startswith("C"):
         return "C"
     return "SF"
 

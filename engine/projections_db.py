@@ -1728,11 +1728,11 @@ def pull_player_positions(conn: sqlite3.Connection,
         try:
             h = float(height_inches)
         except (TypeError, ValueError):
-            return "F"
+            return "SF"
         if h <= 76:
-            return "G"
+            return "SG"
         if h <= 80:
-            return "F"
+            return "SF"
         return "C"
 
     height_positions: dict[int, str] = {}

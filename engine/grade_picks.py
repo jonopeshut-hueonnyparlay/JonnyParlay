@@ -81,7 +81,7 @@ LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
 # Manual picks excluded: no manual tracking going forward.
 ALL_LOG_PATHS = [PICK_LOG_PATH, PICK_LOG_MLB_PATH, PICK_LOG_WNBA_PATH]
 # Shadow sports: grade silently, no Discord post
-SHADOW_SPORTS = {"MLB", "WNBA"}
+SHADOW_SPORTS = {"WNBA"}  # MLB went live 2026-05-20; removed from shadow
 
 BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636209221566625/JonnyParlaylogoRedBlack.png"
 
@@ -780,7 +780,7 @@ def grade_daily_lay(row, all_scores):
     return "W"                    # remaining legs all covered
 
 
-def grade_parlay_legs(row, all_player_stats, all_scores):
+def grade_parlay_legs(row, all_player_stats, all_scores, all_linescores=None):
     """Grade a longshot or SGP row by grading each prop leg independently.
 
     Parlay outcome:
@@ -831,7 +831,8 @@ def grade_parlay_legs(row, all_player_stats, all_scores):
         # aggregation then treated VOID as a non-loss, falling through to
         # return "W" even when a game-line leg had actually lost.
         if fake_pick["stat"] in GAME_LINE_STATS:
-            leg_result = grade_game_line(fake_pick, scores if isinstance(scores, dict) else {})
+            ls = (all_linescores or {}).get((date_str, sport)) if sport == "MLB" else None
+            leg_result = grade_game_line(fake_pick, scores if isinstance(scores, dict) else {}, linescores=ls)
         else:
             leg_result = grade_prop(fake_pick, pstats, scores_by_game=scores)
         if leg_result is None:
@@ -2120,7 +2121,7 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
         _scores_dict = _raw_scores if isinstance(_raw_scores, dict) else {}
 
         if row.get("run_type", "").lower() in ("longshot", "sgp"):
-            result = grade_parlay_legs(row, all_player_stats, all_scores)
+            result = grade_parlay_legs(row, all_player_stats, all_scores, all_linescores=all_linescores)
         elif row.get("run_type", "").lower() == "daily_lay":
             result = grade_daily_lay(row, all_scores)
         elif stat in GAME_LINE_STATS:
