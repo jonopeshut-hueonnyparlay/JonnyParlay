@@ -235,13 +235,13 @@ DK_STD_FLOOR = {
     "cold_start": 3.0,
 }
 
-# H5: high-variance player flag.
-# Players whose rolling PTS coefficient of variation (std/mean) exceeds this
-# threshold are flagged [HIGH-VAR] in the projection log.  Their observed PTS
-# std is also used as an additional floor on dk_std so over_p reflects the
-# true outcome spread rather than the 0.35×proj_pts Gaussian approximation.
-# Threshold set at 0.60 — catches high-variance scorers (Strus CV=0.77, Caruso
-# CV=0.64) while leaving consistent starters unaffected (Mitchell CV=0.34).
+# H5: high-variance player flag — based on PTS coefficient of variation (std/mean).
+# Flagged players get [HIGH-VAR] in the projection log, and their observed PTS
+# std is used as an additional floor on dk_std so over_p reflects true outcome
+# spread rather than the 0.35×proj_pts Gaussian approximation.
+# Note: metric is PTS CV, not 3PM CV — high-variance 3PT scorers are typically
+# caught because their PTS variance is also high (0-pts vs 15-pts games).
+# Threshold 0.60 catches Strus (CV=0.77), Caruso (CV=0.64); leaves Mitchell (0.34) clean.
 HIGH_VAR_CV_THRESHOLD = 0.60
 HIGH_VAR_MIN_GAMES    = 8   # require at least this many clean games to compute CV
 
@@ -1311,6 +1311,7 @@ def project_player(
     _e_reb  = PACE_ELASTICITY["reb"]
     _e_ast  = PACE_ELASTICITY["ast"]
     _e_stl  = PACE_ELASTICITY["stl"]
+    _e_blk  = PACE_ELASTICITY["blk"]
     pace_factor     = _base_pf ** _e_pts   # PTS FGA-decomp path
     pace_fg3m       = _base_pf ** _e_fg3m  # 3PM FGA-decomp path (separate)
     pace_reb        = _base_pf ** _e_reb   # REB availability scalar
@@ -1319,8 +1320,8 @@ def project_player(
                        * 1.0)              # multiplied by proj_min/48 below
     _proj_poss_stl  = (game_pace ** _e_stl  * LEAGUE_AVG_PACE ** (1.0 - _e_stl)
                        * 1.0)              # multiplied by proj_min/48 below
-    _proj_poss_blk  = (game_pace ** _e_stl  * LEAGUE_AVG_PACE ** (1.0 - _e_stl)
-                       * 1.0)              # M5: separate from STL (same elasticity, independent future tuning)
+    _proj_poss_blk  = (game_pace ** _e_blk  * LEAGUE_AVG_PACE ** (1.0 - _e_blk)
+                       * 1.0)              # separate from STL so BLK elasticity can be tuned independently
 
     pg = _pos_group(position)
     matchup_pts = float(np.clip(
