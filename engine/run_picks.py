@@ -467,7 +467,16 @@ COLD_START_SCORE_PENALTY = {
     "new_acquisition":   -5,
 }
 
-INJURY_TRIGGER_BONUS = 7  # redistribution-bump picks: books slow to adjust, edge is real
+INJURY_TRIGGER_BONUS = {   # redistribution-bump picks — stat-keyed score bonus
+    "AST":  10,  # primary distributor absent → backup AST spike, high book lag
+    "PTS":   8,  # scorer absent → role bump, moderate lag
+    "SOG":   8,  # NHL SOG replacement, similar lag profile to PTS
+    "REB":   7,  # rebounder absent, default
+    "K":     5,  # MLB SP scratch → replacement K (new market, smaller lag)
+}
+INJURY_TRIGGER_BONUS_DEFAULT = 7  # fallback for stats not in the dict above
+
+SLOW_BOOKS = frozenset({"fanatics", "hardrockbet", "betrivers"})  # 15-40 min injury lag — exploitable on --late-run
 
 # Sportsbook display / normalization — imported above from book_names (audit H-13).
 # Keeping CO_LEGAL_BOOKS, BOOK_DISPLAY, _norm_book, display_book callable at
@@ -820,7 +829,7 @@ def calc_edge(model_prob, over_odds, under_odds):
     return over_edge, under_edge, nv_over, nv_under
 
 def pick_score(win_prob, edge, mode="Default", tier=None,
-               cold_start_subtype=None, injury_trigger=False):
+               cold_start_subtype=None, injury_trigger=False, stat=None):
     """Calculate Pick Score: edge-dominant weighted composite with tier and signal adjustments.
 
     Weights (wp/edge): Default=40/60, Conservative=55/45, Aggressive=30/70.
@@ -841,7 +850,7 @@ def pick_score(win_prob, edge, mode="Default", tier=None,
     score *= PICK_SCORE_TIER_MULT.get(tier, 1.00)
     score += COLD_START_SCORE_PENALTY.get(cold_start_subtype, 0)
     if injury_trigger:
-        score += INJURY_TRIGGER_BONUS
+        score += INJURY_TRIGGER_BONUS.get(stat, INJURY_TRIGGER_BONUS_DEFAULT) if stat else INJURY_TRIGGER_BONUS_DEFAULT
     return score
 
 def base_units(edge):
@@ -1262,11 +1271,12 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
 
     return premium[:5]
 
-def apply_caps(picks, sport_totals, max_per_game=2):
+def apply_caps(picks, sport_totals, max_per_game=2, units_already_bet=0.0):
     """Apply daily caps: per-stat, per-game, per-sport, daily total.
     Includes G12: max 2 same-direction pitcher props per game.
 
-    max_per_game — R7 override (default 2). Thin-slate nights can raise this."""
+    max_per_game — R7 override (default 2). Thin-slate nights can raise this.
+    units_already_bet — units logged in earlier runs today (cross-run 12u cap)."""
     # Sort by pick_score descending so best picks get cap priority (fixes H4 bug)
     picks = sorted(picks, key=lambda p: p.get("pick_score", 0), reverse=True)
 
@@ -1274,7 +1284,7 @@ def apply_caps(picks, sport_totals, max_per_game=2):
     stat_count = defaultdict(int)
     game_count = defaultdict(int)
     sport_units = defaultdict(float)
-    total_units = 0.0
+    total_units = units_already_bet  # start at cross-run total, not 0
     pitcher_game_dir = defaultdict(int)   # G12: (game, direction) → count of pitcher props
 
     # NHL SOG gets 6 per stat, everything else 2
@@ -2178,6 +2188,11 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         if over_odds is None or under_odds is None:
             continue
 
+        # MLB pitcher confirmation gate: skip K/OUTS/HA when SP is unconfirmed (TBD)
+        if stat in PITCHER_STATS and prop.get("proj_player", {}).get("is_pitcher"):
+            if prop.get("proj_player", {}).get("status", "").lower() != "confirmed":
+                continue
+
         # H3: pass player's dk_std as sigma_override so high-var players (Strus, Caruso etc.)
         # use their empirically observed σ instead of the flat 0.35×proj formula.
         # Only applies to Normal-distribution stats (PTS etc.); Poisson/NB paths ignore it.
@@ -2293,7 +2308,7 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
 
             pick["pick_score"] = pick_score(win_prob, adj_edge, mode, tier=tier,
                                             cold_start_subtype=_cold_start_subtype,
-                                            injury_trigger=_injury_trigger)
+                                            injury_trigger=_injury_trigger, stat=stat)
             picks.append(pick)
 
     return picks
@@ -4229,7 +4244,7 @@ def _webhook_post(url, payload, retries=3, backoff=2.0, label="Discord post"):
     return False
 
 
-def build_premium_embed(premium, mode, today, suppress_ping=False):
+def build_premium_embed(premium, mode, today, suppress_ping=False, sport=None):
     """Build the Discord embed payload for the premium card (#premium-portfolio)."""
     emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     mode_emoji = {"Default": "⚖️", "Aggressive": "🔥", "Conservative": "🛡️"}
@@ -4238,6 +4253,7 @@ def build_premium_embed(premium, mode, today, suppress_ping=False):
 
     now_et = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
     mode_str = f"{mode_emoji.get(mode, '⚖️')} {mode}"
+    sport_label = f" · {sport}" if sport else ""
 
     lines = [f"**{len(picks)} picks | {total_u:.2f}u | {mode_str}**\n"]
     for i, p in enumerate(picks):
@@ -4275,7 +4291,8 @@ def build_premium_embed(premium, mode, today, suppress_ping=False):
         ctx_verdict = p.get("context_verdict", "")
         ctx_reason  = p.get("context_reason", "")
         ctx_flag    = " ⚠️" if ctx_verdict == "conflicts" else ""
-        lines.append(f"{e} **{pick_label}** | {odds_str} | {book_str} | **{size:.2f}u**{ctx_flag}")
+        inj_flag    = " 🔄" if p.get("injury_trigger") else ""
+        lines.append(f"{e} **{pick_label}** | {odds_str} | {book_str} | **{size:.2f}u**{ctx_flag}{inj_flag}")
         lines.append(f"╰ {game} | Edge {edge_str} | Score {score_str}")
         if ctx_verdict == "supports" and ctx_reason:
             lines.append(f"  ↳ ✅ {ctx_reason}")
@@ -4287,7 +4304,7 @@ def build_premium_embed(premium, mode, today, suppress_ping=False):
         "username": "PicksByJonny",
         "content": "" if suppress_ping else "@everyone",
         "embeds": [{
-            "title": f"🔒 Premium Portfolio — {today}",
+            "title": f"🔒 Premium Portfolio{sport_label} — {today}",
             "description": "\n".join(lines),
             "color": 0xFFD700,  # Gold
             "thumbnail": {"url": BRAND_LOGO},
@@ -4356,12 +4373,12 @@ def build_potd_embed(potd, today):
     }
 
 
-def post_to_discord(premium, mode, today, suppress_ping=False, force=False):
+def post_to_discord(premium, mode, today, suppress_ping=False, force=False, sport=None):
     """Post the premium card + standalone POTD embed to #premium-portfolio.
 
-    Uses discord_posted.json guard keys (premium_card:{date}, potd:{date}) to
-    prevent double-posts if run_picks.py is re-run. Guard is only marked on
-    real (non-test) successful posts — test mode can be re-run safely.
+    Uses discord_posted.json guard keys to prevent double-posts on re-run.
+    sport: sorted sport key e.g. "MLB", "NBA", "NBA+NHL" — enables separate
+    MLB + NBA cards on the same day. Guard key: premium_card:{sport}:{date}.
     force=True (--force-card) releases the guard keys before claiming so the
     card re-posts even if it was already sent today.
     """
@@ -4369,26 +4386,28 @@ def post_to_discord(premium, mode, today, suppress_ping=False, force=False):
         print("  [Discord] No premium picks — skipping premium post.")
         return
 
+    _sport_label = sport or "MULTI"
+
     # Premium card
-    premium_key = f"premium_card:{today}"
+    premium_key = f"premium_card:{_sport_label}:{today}"
     if force:
         _discord_release_post(premium_key)
     if not _discord_claim_post(premium_key):
-        print(f"  [Discord] ⏭️  Premium card already posted for {today} — skipping")
+        print(f"  [Discord] ⏭️  Premium card already posted for {_sport_label} {today} — skipping")
     else:
-        payload = build_premium_embed(premium, mode, today, suppress_ping=suppress_ping)
+        payload = build_premium_embed(premium, mode, today, suppress_ping=suppress_ping, sport=sport)
         if _webhook_post(DISCORD_WEBHOOK_URL, payload, label="premium card"):
-            print(f"  [Discord] ✅ Premium card posted ({len(premium[:5])} picks)")
+            print(f"  [Discord] ✅ Premium card posted ({len(premium[:5])} picks) [{_sport_label}]")
         else:
             _notify_post_failure("premium_card", guard_key=premium_key)
 
     # POTD — separate embed, same channel, same webhook.
     # premium[0] is guaranteed non-KILLSHOT (KILLSHOTs are excluded from premium).
-    potd_key = f"potd:{today}"
+    potd_key = f"potd:{_sport_label}:{today}"
     if force:
         _discord_release_post(potd_key)
     if not _discord_claim_post(potd_key):
-        print(f"  [Discord] ⏭️  POTD already posted for {today} — skipping")
+        print(f"  [Discord] ⏭️  POTD already posted for {_sport_label} {today} — skipping")
     else:
         potd = premium[0]
         potd_payload = build_potd_embed(potd, today)
@@ -4847,23 +4866,33 @@ def _card_guard_should_block_logging(card_was_up: bool, no_discord: bool, force_
     return True
 
 
-def _card_already_posted_today(today_str):
-    """Return True if the premium card has already been posted to Discord today.
+def _card_already_posted_today(today_str, sport_key=None):
+    """Return True if a premium card for this sport has already been posted today.
+
+    sport_key: sorted sport string e.g. "MLB", "NBA", "NBA+NHL". If None, checks
+    all sport keys (backward compat). Per-sport keys allow running MLB + NBA
+    separately on the same day without the second run being blocked.
 
     H14: previous implementation scanned pick_log.csv for 'primary' run_type
     rows, which conflates card posting with KILLSHOT pick logging — a run that
     only qualified KILLSHOT picks would log them as run_type='primary' and
     incorrectly suppress the card on the next run.
 
-    Now uses the discord guard key 'premium_card:{today}' as the source of
-    truth (set by post_to_discord → claim_post when the card is actually sent).
-    Falls back to pick_log scan (checking card_slot is set) when the guard
-    cannot be read, so the check still works in test/offline environments.
+    Now uses the discord guard key as the source of truth. Falls back to
+    pick_log scan (checking card_slot is set) when the guard cannot be read.
     """
     try:
         guard = _load_discord_guard()
-        if guard.get(f"premium_card:{today_str}"):
-            return True
+        if sport_key:
+            # Check sport-keyed guard (new format) first, then legacy global key
+            if guard.get(f"premium_card:{sport_key}:{today_str}"):
+                return True
+        else:
+            # Backward compat: check any sport key for today
+            prefix = f"premium_card:"
+            for k, v in guard.items():
+                if k.endswith(f":{today_str}") and k.startswith(prefix) and v:
+                    return True
         # Guard says not posted — also check pick_log as a safety net.
         # Require card_slot to be non-blank: only the card posting path sets
         # card_slot; KILLSHOT-only runs leave it blank (H14 fix).
@@ -4877,10 +4906,36 @@ def _card_already_posted_today(today_str):
             r.get("date") == today_str
             and r.get("run_type") in {"primary", "", None}
             and r.get("card_slot", "").strip() not in ("", "0")
+            and (not sport_key or r.get("sport", "") in sport_key.split("+"))
             for r in rows
         )
     except Exception:
         return False
+
+
+def _units_bet_today(today_str):
+    """Sum units already bet today across all run_types (for cross-run 12u cap).
+
+    Reads pick_log.csv and sums the size column for today's rows. Manual picks
+    are excluded (they're tracked separately and don't count against daily cap).
+    Returns 0.0 on any error so the cap falls back to session-only behaviour.
+    """
+    try:
+        log_path = Path(PICK_LOG_PATH)
+        if not log_path.exists():
+            return 0.0
+        with _pick_log_lock(log_path):
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+        total = sum(
+            float(r.get("size", 0) or 0)
+            for r in rows
+            if r.get("date") == today_str
+            and r.get("run_type", "").lower() != "manual"
+        )
+        return round(total, 4)
+    except Exception:
+        return 0.0
 
 
 def post_extras_to_discord(qualified, run_id=None, save=True):
@@ -5631,7 +5686,8 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
             e = emojis[i] if i < 5 else f"  "
             size = p.get("size", 0)
             total_u += size
-            out.append(f"{e} {size:.2f}u | {p['player']} ({p.get('team_abbrev','')}) {fmt_dir(p['direction'])}{p['line']} {p['stat']} @ {fmt_odds(p['odds'])} ({display_book(p['book'])})")
+            _inj = " [INJ]" if p.get("injury_trigger") else ""
+            out.append(f"{e} {size:.2f}u | {p['player']} ({p.get('team_abbrev','')}) {fmt_dir(p['direction'])}{p['line']} {p['stat']} @ {fmt_odds(p['odds'])} ({display_book(p['book'])}){_inj}")
             out.append(f"   Win: {fmt_pct(p['win_prob'])} | Edge: {fmt_pct(p['adj_edge'])} | Pick Score: {p.get('pick_score',0):.1f} | Proj: {p['proj']:.2f} | {p['tier']} | {p['game']}")
             out.append("")
         out.append("━" * 40)
@@ -5671,7 +5727,9 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
                 out.append(f"\n{tier_disp}")
                 out.append("─" * 40)
                 for p in picks:
-                    out.append(f"  {p.get('size',0):.2f}u | {p['player']} ({p.get('team_abbrev','')}) {fmt_dir(p['direction'])}{p['line']} {stat} @ {fmt_odds(p['odds'])} ({display_book(p['book'])}) | {fmt_pct(p['win_prob'])} | {fmt_pct(p['adj_edge'])} | {p['game']}")
+                    _inj_note = " [INJ]" if p.get("injury_trigger") else ""
+                    _slow_note = " [SLOW BOOK]" if (p.get("injury_trigger") and p.get("book", "").lower() in SLOW_BOOKS) else ""
+                    out.append(f"  {p.get('size',0):.2f}u | {p['player']} ({p.get('team_abbrev','')}) {fmt_dir(p['direction'])}{p['line']} {stat} @ {fmt_odds(p['odds'])} ({display_book(p['book'])}) | {fmt_pct(p['win_prob'])} | {fmt_pct(p['adj_edge'])} | {p['game']}{_inj_note}{_slow_note}")
         out.append("")
 
     # === F. GAME LINES ===
@@ -6325,6 +6383,15 @@ def main():
     if getattr(args, "log_candidates", False) and qualified:
         log_candidates(qualified, args.mode, today_str)
 
+    # Build per-sport card guard key (enables separate MLB + NBA cards on same day)
+    _sport_key = "+".join(sorted(sports))
+
+    # Cross-run daily unit cap: read units already logged today so this run
+    # can't exceed the 12u total cap even when a prior sport ran earlier.
+    _units_today = _units_bet_today(today_str) if not getattr(args, "no_cap", False) else 0.0
+    if _units_today > 0:
+        print(f"\n  [CAP] Units already bet today: {_units_today:.2f}u — remaining 12u budget: {max(0, 12.0 - _units_today):.2f}u")
+
     # Apply caps.
     # A1 (audit 2026-05-06): --no-cap bypasses apply_caps entirely so
     # research mode can log all gate-passing picks for fast CLV
@@ -6337,7 +6404,7 @@ def main():
     # ~5529 still selects top-5 via apply_soft_rules_premium, so the
     # front-channel UX is unchanged regardless.
     if qualified and not getattr(args, "no_cap", False):
-        qualified = apply_caps(qualified, {}, max_per_game=args.max_per_game)
+        qualified = apply_caps(qualified, {}, max_per_game=args.max_per_game, units_already_bet=_units_today)
 
     # ── KILLSHOT selection (runs BEFORE premium build) ───────────────────────
     # KILLSHOTs are excluded from the premium card — they get their own dedicated
@@ -6356,12 +6423,13 @@ def main():
     # H1 (audit 2026-05-09): Hard-enforce 12u daily cap across premium + KILLSHOT combined.
     # apply_caps() only saw the pre-KILLSHOT pool. KILLSHOT picks (3-4u each) are added
     # after, so we must check the combined total here and trim if needed.
+    # Also includes _units_today for cross-run enforcement (e.g. MLB ran earlier today).
     _premium_u = sum(p.get("size", 0) for p in premium)
     _ks_total  = sum(p.get("size", 0) for p in killshots)
-    if _premium_u + _ks_total > 12.0:
+    if _premium_u + _ks_total + _units_today > 12.0:
         # Drop lowest-scoring KILLSHOT(s) until within cap
         killshots = sorted(killshots, key=lambda x: x.get("pick_score", 0), reverse=True)
-        while killshots and _premium_u + sum(p.get("size", 0) for p in killshots) > 12.0:
+        while killshots and _premium_u + sum(p.get("size", 0) for p in killshots) + _units_today > 12.0:
             dropped = killshots.pop()
             print(f"  [CAP] Dropping KILLSHOT {dropped['player']} ({dropped.get('size',0):.2f}u) — 12u daily cap")
 
@@ -6370,7 +6438,7 @@ def main():
     # On subsequent runs (card already up), still log any new KILLSHOT picks that
     # weren't present in the earlier run — dedup in log_picks prevents duplicates.
     today_str_log = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
-    _card_was_already_up = _card_already_posted_today(today_str_log)
+    _card_was_already_up = _card_already_posted_today(today_str_log, sport_key=_sport_key)
     # A4 (audit 2026-05-06): the card guard suppresses log_picks for
     # the entire run when today's premium card has already shipped.
     # That's correct for live re-runs (avoids double-logging the
@@ -6627,7 +6695,9 @@ def main():
                     })
                 if repost_picks:
                     print(f"\n  [Discord] --repost: re-firing premium card + POTD for {today_str}\u2026")
-                    post_to_discord(repost_picks, args.mode, today_str, suppress_ping=suppress_ping, force=True)
+                    _repost_sports = sorted(set(p.get("sport", "") for p in repost_picks if p.get("sport")))
+                    _repost_sport_key = "+".join(_repost_sports) if _repost_sports else "MULTI"
+                    post_to_discord(repost_picks, args.mode, today_str, suppress_ping=suppress_ping, force=True, sport=_repost_sport_key)
                 else:
                     print(f"\n  [Discord] --repost: no primary picks found for {today_str}")
             else:
@@ -6652,7 +6722,7 @@ def main():
             if _bonus_only:
                 print("\n  [Discord] --bonus-only: skipping premium card, daily lay, longshot, killshots, preview.")
             else:
-                print("\n  [Discord] Card already posted today -- skipping premium card, POTD, daily lay.")
+                print(f"\n  [Discord] {_sport_key} card already posted today -- skipping premium card, POTD, daily lay.")
             print("  [Discord] Running bonus drop check only...")
             post_extras_to_discord(qualified, save=_save)
             # Still attempt KILLSHOT posts — discord guard key prevents double-posting.
@@ -6665,7 +6735,7 @@ def main():
                 post_daily_lay(alt_spread_parlay, today_str, suppress_ping=True, save=_save)
         else:
             _force = getattr(args, "force_card", False)
-            post_to_discord(premium, args.mode, today_str, suppress_ping=suppress_ping, force=_force)
+            post_to_discord(premium, args.mode, today_str, suppress_ping=suppress_ping, force=_force, sport=_sport_key)
             post_extras_to_discord(qualified, save=_save)
 
             # Daily lay and longshot post silently -- no @everyone ping

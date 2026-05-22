@@ -108,6 +108,7 @@ SPORT_KEYS = {
     "MLB": "baseball_mlb",
     "NCAAB": "basketball_ncaab",
     "NCAAF": "americanfootball_ncaaf",
+    "WNBA": "basketball_wnba",
 }
 
 # Sportsbook contracts — canonical definition in book_names.py (audit H-13).
@@ -209,6 +210,8 @@ SHADOW_LOGS = _ALL_SHADOW_LOGS if ENABLE_SHADOW_CLV else {}
 # Kept separate from ENABLE_SHADOW_CLV (which gates per-sport shadow logs).
 CUSTOM_SHADOW_LOG = DATA_DIR / "pick_log_custom.csv"
 ENABLE_CUSTOM_CLV = True  # flip to False to pause CLV capture on custom shadow picks
+WNBA_LOG = DATA_DIR / "pick_log_wnba.csv"
+ENABLE_WNBA_CLV = True  # flip to False to pause WNBA CLV capture
 
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
@@ -1001,6 +1004,8 @@ def run(run_date: str):
         _all_logs = [PICK_LOG] + list(SHADOW_LOGS.values())
         if ENABLE_CUSTOM_CLV and CUSTOM_SHADOW_LOG.exists():
             _all_logs.append(CUSTOM_SHADOW_LOG)
+        if ENABLE_WNBA_CLV and WNBA_LOG.exists():
+            _all_logs.append(WNBA_LOG)
         for lp in _all_logs:
             all_today_picks.extend(load_picks(lp, run_date))
         needs_clv_games: set[str] = {
@@ -1084,6 +1089,8 @@ def run(run_date: str):
         log_paths = [PICK_LOG] + list(SHADOW_LOGS.values())
         if ENABLE_CUSTOM_CLV and CUSTOM_SHADOW_LOG.exists():
             log_paths.append(CUSTOM_SHADOW_LOG)
+        if ENABLE_WNBA_CLV and WNBA_LOG.exists():
+            log_paths.append(WNBA_LOG)
 
         # Audit H-10: bail at the top of each iteration if a signal was caught
         # during the previous sleep. All CSV writes happen inside FileLock

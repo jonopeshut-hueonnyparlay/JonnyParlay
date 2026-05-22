@@ -824,22 +824,33 @@ def grade_parlay_legs(row, all_player_stats, all_scores):
         }
         pstats = all_player_stats.get((date_str, sport), {})
         scores = all_scores.get((date_str, sport), {})
-        leg_result = grade_prop(fake_pick, pstats, scores_by_game=scores)
+        # Route game-line legs to grade_game_line(); prop legs to grade_prop().
+        # Bug fix: previously ALL legs went through grade_prop(), which can't
+        # find team names (e.g. "NYM ML", "Milwaukee Brewers Team Total") in
+        # player stats and returns VOID for every game-line leg. The parlay
+        # aggregation then treated VOID as a non-loss, falling through to
+        # return "W" even when a game-line leg had actually lost.
+        if fake_pick["stat"] in GAME_LINE_STATS:
+            leg_result = grade_game_line(fake_pick, scores if isinstance(scores, dict) else {})
+        else:
+            leg_result = grade_prop(fake_pick, pstats, scores_by_game=scores)
         if leg_result is None:
             return None   # leg not yet gradeable — wait for next run
         results.append(leg_result)
 
     if "L" in results:
         return "L"
-    # M5: push legs drop from parlay; re-evaluate remaining legs
-    # e.g. 3-leg parlay [W, P, W] → 2-leg effective parlay → W
-    #      3-leg parlay [P, P, P] → all dropped → P (stake returned)
-    remaining = [r for r in results if r != "P"]
+    # M5: push legs AND void legs drop from parlay; re-evaluate remaining legs.
+    # VOID = player DNP on a prop leg — stake refunded, leg removed from parlay.
+    # e.g. 3-leg parlay [W, P, W]    → 2-leg effective parlay → W
+    #      3-leg parlay [P, P, P]    → all dropped → P (stake returned)
+    #      3-leg parlay [W, VOID, W] → 2-leg effective parlay → W
+    remaining = [r for r in results if r not in ("P", "VOID")]
     if not remaining:
-        return "P"   # every leg pushed — full push, stake back
+        return "P"   # every leg pushed/voided — full push, stake back
     if "L" in remaining:
         return "L"   # shouldn't be reachable but defensive
-    return "W"       # all non-pushed legs won
+    return "W"       # all non-pushed/non-voided legs won
 
 
 def _find_linescore_innings(game_str, linescores):
@@ -1974,11 +1985,12 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
         if not date_str:
             print(f"  {label} --repost requires --date YYYY-MM-DD")
             return (False, set())
-        # Repost: model picks only — no manual merge, no shadow sports
+        # Repost: model picks only — no manual merge.
+        # Note: do NOT filter by SHADOW_SPORTS here. Primary MLB/WNBA picks that
+        # live in pick_log.csv (not a shadow log) must appear in the recap.
         day_picks = [r for r in rows
                      if r.get("date") == date_str
-                     and r.get("result") in ("W", "L", "P")
-                     and r.get("sport", "") not in SHADOW_SPORTS]
+                     and r.get("result") in ("W", "L", "P")]
         if not day_picks:
             print(f"  {label} No graded picks found for {date_str}")
             return (False, set())
@@ -2017,8 +2029,11 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
     for idx, row in ungraded:
         d = row["date"]
         s = row.get("sport", "")
-        dates_sports.setdefault(d, set()).add(s)
-        # Daily lay / longshot / SGP are always NBA — ensure NBA scores fetched
+        # Split composite sport strings (e.g. "MLB,NBA" from multi-sport longshots)
+        # so each component sport's data is fetched independently.
+        for _sp in (s.split(",") if s else [""]):
+            dates_sports.setdefault(d, set()).add(_sp.strip())
+        # Daily lay / longshot / SGP may span sports — always ensure NBA scores fetched
         if row.get("run_type", "").lower() in ("daily_lay", "longshot", "sgp"):
             dates_sports.setdefault(d, set()).add("NBA")
 
@@ -2177,10 +2192,14 @@ def _post_merged_recaps(dates_for_recap, main_rows, recap_merge_logs, args):
     # Note: recap_merge_logs is intentionally ignored here \u2014 manual picks
     # are not shown in Discord recaps. The parameter is kept for API compat.
     for date_str in sorted(dates_for_recap):
+        # Bug fix: removed `sport not in SHADOW_SPORTS` filter. Shadow-sport
+        # filtering applies to the *separate* shadow-log Discord posts (graded
+        # via is_shadow=True). Primary MLB/WNBA picks that live in pick_log.csv
+        # (not the shadow logs) were being silently dropped from the recap \u2014
+        # hiding released premium picks from the daily results card.
         day_picks = [r for r in main_rows
                      if r.get("date") == date_str
-                     and r.get("result") in ("W", "L", "P")
-                     and r.get("sport", "") not in SHADOW_SPORTS]
+                     and r.get("result") in ("W", "L", "P")]
         if day_picks:
             post_grading_results(date_str, day_picks, main_rows,
                                  suppress_ping=args.test)
