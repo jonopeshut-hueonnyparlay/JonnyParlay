@@ -215,6 +215,8 @@ def normalize_american_odds(odds) -> str:
 
 # Stats where is_home MUST be set to True or False. For everything else —
 # props (PTS/REB/AST/SOG/etc.) and PARLAY rows — is_home is blank.
+# TOTAL and F5_TOTAL intentionally excluded: they are combined-score bets where
+# home/away distinction is irrelevant for grading and CLV tracking.
 _IS_HOME_REQUIRED_STATS: frozenset[str] = frozenset({
     "SPREAD", "ML_FAV", "ML_DOG",
     "F5_SPREAD", "F5_ML",

@@ -1385,19 +1385,6 @@ def compute_pick_streak(all_rows):
     return count, streak_dir
 
 
-def get_week_picks(all_rows, ref_date_str):
-    """Return graded model prop picks (primary + bonus) in the calendar week (Mon–Sun) of
-    ref_date, up to ref_date.  Parlays and shadow sports excluded so W-L record is props only."""
-    ref = datetime.strptime(ref_date_str, "%Y-%m-%d")
-    monday = ref - timedelta(days=ref.weekday())
-    mon_str = monday.strftime("%Y-%m-%d")
-    return [r for r in all_rows
-            if r.get("result") in ("W", "L", "P")
-            and r.get("run_type", "primary") in PROP_RUN_TYPES
-            and r.get("sport", "") not in SHADOW_SPORTS
-            and mon_str <= r["date"] <= ref_date_str]
-
-
 def get_month_picks(all_rows, year, month, up_to_date=None):
     """Return graded model prop picks (primary + bonus) in the given year/month, optionally
     capped at up_to_date.  Parlays and shadow sports excluded so W-L record is props only."""

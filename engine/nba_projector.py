@@ -439,7 +439,8 @@ _BLK_PRIOR_N = {
 
 # TOV per-possession priors — 5-position split (2026-05-10).
 # TOV/36 ratios: PG=1.8, SG=1.4, SF=1.4, PF=1.3, C=1.3 (StatMuse 2024-25).
-_TOV_POS_PRIOR = {"PG": 0.03769, "SG": 0.02931, "SF": 0.02499, "PF": 0.02321, "C": 0.0268}
+# M3: C prior corrected from 0.0268 → 0.02321 to match PF (identical 1.3 TOV/36 rate).
+_TOV_POS_PRIOR = {"PG": 0.03769, "SG": 0.02931, "SF": 0.02499, "PF": 0.02321, "C": 0.02321}
 _TOV_PRIOR_N   = 15  # Research Brief 5 guidance; was 20
 
 LEAGUE_AVG_TOV_RATE        = 0.136  # turnovers per possession, league-wide (2024-25 calibrated)

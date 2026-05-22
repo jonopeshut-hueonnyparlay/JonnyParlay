@@ -86,7 +86,7 @@ def _name_key(name: str) -> str:
     if len(parts) < 2:
         return _norm_name(name)
     suffixes = {"jr", "sr", "ii", "iii", "iv", "v"}
-    while len(parts) > 2 and parts[-1] in suffixes:
+    while len(parts) >= 2 and parts[-1] in suffixes:
         parts.pop()
     return f"{parts[-1]}_{parts[0][:3]}"
 

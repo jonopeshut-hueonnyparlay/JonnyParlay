@@ -179,12 +179,6 @@ def constrain_team_totals(
             )
 
     return projections
-if not log.handlers:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s  %(levelname)-8s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
 
 
 def _fetch_spreads(game_date: str, db_path: str = DB_PATH) -> dict:
@@ -580,6 +574,12 @@ def run(
 
 
 def main() -> None:
+    if not log.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s  %(levelname)-8s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     # H18: use Eastern time so default date is correct for late-night runs

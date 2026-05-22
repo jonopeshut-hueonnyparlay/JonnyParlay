@@ -838,6 +838,10 @@ def pick_score(win_prob, edge, mode="Default", tier=None,
     Cold-start penalty: taxi=-15, returner=-10, extended_absence=-8, new_acquisition=-5.
     Injury trigger bonus: +7 for redistribution-bump picks.
 
+    NOTE: Score is NOT capped at 100. At wp=0.666 (Platt ceiling) + edge=0.15 (ceiling),
+    max score is ~95. Scores above 100 are theoretically possible but don't occur in
+    practice given the Platt calibration ceiling (~66.6%) and G2 edge cap (20%).
+
     R11 NOTE: Game line picks (totals, spreads, ML) intentionally score lower than
     props. Win probs for game lines cluster near 50-55% (well-priced markets),
     while props can reach 60-70%+ on model-vs-market gaps.  This is correct behavior —
@@ -4465,6 +4469,12 @@ def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
         return
 
     combined_prob = alt_spread_parlay.get("combined_prob", 0)
+    # M26: also compute book-implied combined prob for transparency (gate uses model prob)
+    book_implied_combined = 1.0
+    for _leg in legs:
+        _leg_odds = _leg.get("real_odds")
+        if _leg_odds is not None:
+            book_implied_combined *= _implied_prob(_leg_odds)
     if combined_prob < MIN_DAILY_LAY_PROB:
         print(f"  [Discord] Daily Lay combined prob {combined_prob*100:.1f}% < {MIN_DAILY_LAY_PROB*100:.0f}% threshold — skipping weak parlay.")
         return
@@ -4480,7 +4490,7 @@ def post_daily_lay(alt_spread_parlay, today, suppress_ping=False, save=True):
     parlay_odds = fmt_odds(parlay_odds_raw)
     n_legs = len(legs)
     DAILY_LAY_SIZE = size_daily_lay(combined_prob, parlay_odds_raw)
-    print(f"  [daily-lay-sizing] Kelly sizing: combined_prob={combined_prob:.3f} odds={parlay_odds} → {DAILY_LAY_SIZE:.2f}u")
+    print(f"  [daily-lay-sizing] Kelly sizing: combined_prob={combined_prob:.3f} (book-implied={book_implied_combined:.3f}) odds={parlay_odds} → {DAILY_LAY_SIZE:.2f}u")
 
     leg_lines = [f"{n_legs}-leg alt spread parlay @ {book}\n"]
     for i, leg in enumerate(legs, 1):

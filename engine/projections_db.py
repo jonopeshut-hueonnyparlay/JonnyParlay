@@ -987,7 +987,7 @@ def get_projection_vs_actual(
     sql = f"""
     WITH latest_proj AS (
         SELECT player_id, game_id,
-               MAX(run_ts) AS max_ts
+               MAX(run_ts) AS max_ts  -- relies on ISO-format run_ts for correct lexicographic sort
         FROM projections
         GROUP BY player_id, game_id
     )
@@ -1102,15 +1102,17 @@ def get_player_trade_context(
 
         prev_team_id = int(row_prev[0])
 
-        # Fetch last 20 qualifying games on prior team (for rate estimation)
+        # Fetch last 20 qualifying games on prior team this season (for rate estimation).
+        # Season filter prevents stale multi-season data pulling the wrong rates.
         prev_df = pd.read_sql_query(
             "SELECT pgs.*,g.game_date,g.era_weight"
             " FROM player_game_stats pgs"
             " JOIN games g ON g.game_id=pgs.game_id"
             " WHERE pgs.player_id=? AND pgs.team_id=? AND pgs.min>=5"
+            " AND g.season=?"
             " ORDER BY g.game_date DESC LIMIT 20",
             conn,
-            params=(player_id, prev_team_id),
+            params=(player_id, prev_team_id, season),
         )
     finally:
         conn.close()
@@ -1467,11 +1469,11 @@ def seed_scheduled_games(
         return 0
 
     # Determine season_type — playoffs start mid-to-late April (historically Apr 15+).
+    # Play-in games typically Apr 12-14; lower threshold to Apr-12 to capture them.
     # month >= 4 over-classifies early April regular-season games as Playoffs.
-    # Using Apr-15 as the floor catches all realistic playoff start dates since 2000.
     _tdate = _dt.date.fromisoformat(target)
     season_type = (
-        "Playoffs" if (_tdate.month >= 5 or (_tdate.month == 4 and _tdate.day >= 15))
+        "Playoffs" if (_tdate.month >= 5 or (_tdate.month == 4 and _tdate.day >= 12))
         else "Regular Season"
     )
 
