@@ -25,6 +25,7 @@ Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
 
 | Audit | Findings | Status |
 |-------|----------|--------|
+| 2026-05-22 full system (~26k lines) | 2C/14H/26M/~25L | C/H/M ALL CLOSED (8 commits). ~25L deferred. H3 data-gated. |
 | 2026-05-06 projection deep-dive | 0C/5H/8M/5L | ALL CLOSED (H3 data-gated) |
 | 2026-05-05 injury + deep audit | various | ALL CLOSED |
 | 2026-05-04 10-agent | 14C/17H/28M/17L | ALL CLOSED |
