@@ -181,8 +181,10 @@ BONUS_DAILY_CAP = 5             # Max bonus posts per calendar day
 MIN_BONUS_SCORE = 65            # Minimum pick_score to qualify for a bonus drop
 MIN_BONUS_WIN_PROB = 0.65       # Minimum win probability to qualify for a bonus drop
 MIN_DAILY_LAY_PROB = 0.47       # Minimum combined cover probability before posting daily lay
-                                 # Math: at 0.47 combined, a 2-3 leg parlay has positive Kelly
-                                 # at realistic odds (-130 to +100). Old 0.33 allowed zero-EV posts.
+                                 # 0.47 is a liquidity/quality floor, not a Kelly-positive threshold.
+                                 # Kelly is negative at 47% for any realistic odds range; the 0.25u
+                                 # floor in size_daily_lay() handles under-Kelly stakes. Old 0.33
+                                 # allowed zero-EV posts at the parlay level.
 MIN_DAILY_LAY_MARGIN = 4.0      # Minimum projected margin (pts) for a team to qualify as a daily lay leg
 MIN_LEG_EDGE_DAILY = 0.025      # Minimum per-leg edge for daily lay legs (screens out noise)
 MIN_LEG_COVER_PROB_DAILY = 0.58 # Minimum per-leg cover probability for daily lay legs
@@ -198,6 +200,7 @@ KILLSHOT_WIN_PROB_FLOOR = 0.65                             # v2: hard win-prob f
 KILLSHOT_ODDS_MIN       = -200                             # v2: no razor-thin chalk
 KILLSHOT_ODDS_MAX       =  110                             # v2: no live dogs
 KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "AST", "SOG"})  # v2: mainline counting stats only; REB dropped (L9), 3PM dropped (T3 — dead code, CV 0.65-1.2 incompatible with KILLSHOT)
+                                                              # PTS: manual override only — PTS is T2, so tier check fires before stat check for auto-qualify
 # Manual override (via --killshot NAME): bypasses v2 filters but still counts toward weekly cap
 KILLSHOT_MANUAL_FLOOR   = 75.0                             # Minimum score to allow manual promote
 KILLSHOT_WEEKLY_CAP     = 2                                # v2: was 3 — rarer = more signal
@@ -266,7 +269,7 @@ SIGMA = {
     # NBA / NHL (unchanged — these are well-calibrated)
     "AST": {"mult": 0.45, "min": 1.3},
     "REB": {"mult": 0.58, "min": 2.5},
-    "SOG": {"mult": 0.55, "min": 1.2},
+    "SOG": {"mult": 0.55, "min": 1.2},  # dead: POISSON_STATS takes priority
     "REC": {"mult": 0.50, "min": 1.2},
     "PTS": {"mult": 0.35, "min": 4.5},
     # "3PM" not here — P16 routes 3PM through NB_STATS/NB_R (Negative Binomial). Do NOT add to SIGMA.
@@ -274,7 +277,7 @@ SIGMA = {
     # "K" not here — moved to NB_STATS (Negative Binomial, r=5.0). SaberSim conservative IP bias kills unders.
     "OUTS": {"mult": 0.30, "min": 3.0},   # Pitcher outs — actual σ ≈ 4.5-5.0 outs/start (was 0.22 → 3.3, too tight)
     "HA":   {"mult": 0.50, "min": 2.5},   # Pitcher hits allowed — Normal (15% overdispersed vs Poisson)
-    "HITS": {"mult": 0.90, "min": 0.7},   # Batter hits — Poisson is good at low counts
+    "HITS": {"mult": 0.90, "min": 0.7},   # dead: POISSON_STATS takes priority
     "TB":   {"mult": 1.20, "min": 1.5},   # Batter total bases — was 41% UNDER real variance (lumpy dist)
     # "HRR" not here — moved to NB_STATS (Negative Binomial, r=1.5). Normal gave P(HRR>1.5)=63% vs actual 48%.
 }
@@ -1002,7 +1005,8 @@ def check_prop_gates(pick):
         return False, "G13B"
 
     # G14: projection clearance gate — ensures model has directional conviction.
-    # Normal/SIGMA stats (PTS, OUTS, HA, TB, HRR): proj must clear line by ≥0.10σ.
+    # Normal/SIGMA stats (PTS, OUTS, HA, TB): proj must clear line by ≥0.10σ.
+    # HRR is in NB_STATS (not SIGMA), so it is exempt from G14.
     # Poisson stats (AST, REB, SOG, etc.) are exempt — Poisson probability correctly
     # handles cases where the discrete distribution favors the pick even when proj
     # slightly crosses the line (e.g. AST 4.5 under with proj=4.6 still gives ~51%
@@ -5919,7 +5923,15 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     if killshots is None:
         killshots = []
     ks_u = sum(p.get("size", 0) for p in killshots)
-    total_u_all = total_u + ks_u + units_already_bet
+    # 16.3: include same-session parlay sizes (daily_lay + longshot) in display total.
+    # SGP is posted via a separate flow and not passed here; the real 12u cap is still
+    # enforced on the next sport's cross-run read of pick_log.csv.
+    _lay_u = size_daily_lay(
+        alt_spread_parlay.get("combined_prob", 0),
+        alt_spread_parlay.get("parlay_odds", 0),
+    ) if alt_spread_parlay and alt_spread_parlay.get("legs") else 0.0
+    _longshot_u = LONGSHOT_SIZE if safest6_parlay and safest6_parlay.get("legs") else 0.0
+    total_u_all = total_u + ks_u + _lay_u + _longshot_u + units_already_bet
 
     checks = [
         (f"Premium card: {n_prem} picks generated", n_prem == MAX_PREMIUM_PICKS or n_prem == 0),
@@ -5937,7 +5949,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"G11 enforced: Max pitcher props per pitcher = {max_pitcher_props}", max_pitcher_props <= 1),
         (f"G11b enforced: Max batter corr props per batter = {max_batter_corr}", max_batter_corr <= 1),
         (f"All sizes ≤ 1.25u", all(p.get("size",0) <= 1.25 for p in all_qualified)),
-        (f"Daily cap (prev {units_already_bet:.2f}u + premium {total_u:.2f}u + KILLSHOT {ks_u:.2f}u = {total_u_all:.2f}u) ≤ 12u", total_u_all <= 12.0),
+        (f"Daily cap (prev {units_already_bet:.2f}u + premium {total_u:.2f}u + KILLSHOT {ks_u:.2f}u + parlays {_lay_u+_longshot_u:.2f}u = {total_u_all:.2f}u) ≤ 12u", total_u_all <= 12.0),
     ]
     for label, ok in checks:
         mark = "✓" if ok else "✗"

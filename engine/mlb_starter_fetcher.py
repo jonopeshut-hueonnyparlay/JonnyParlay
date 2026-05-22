@@ -91,8 +91,8 @@ def _name_key(name: str) -> str:
     return f"{parts[-1]}_{parts[0][:3]}"
 
 
-def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, str]:
-    """Return {team_abbrev: pitcher_full_name} for today's probable starters.
+def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, list[str]]:
+    """Return {team_abbrev: [pitcher_full_name, ...]} for today's probable starters.
 
     Uses the MLB Stats API probablePitcher hydration. A player listed as
     probablePitcher is treated as confirmed for the pitcher-gate in run_picks.py

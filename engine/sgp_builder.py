@@ -406,8 +406,8 @@ def _copula_joint_approx(probs, avg_rho):
     """Fast equicorrelation Gaussian copula approximation for combo scoring.
 
     Linearly interpolates between independence (ρ=0) and perfect correlation
-    (ρ=1, joint = min(p_i)).  Error < 3% for ρ ∈ [0, 0.40] — accurate enough
-    to rank 91k combos; full MC is reserved for the final chosen SGP.
+    (ρ=1, joint = min(p_i)).  Error ~15-20% for ρ ∈ [0.20, 0.35] — accurate
+    enough to rank 91k combos; full MC is reserved for the final chosen SGP.
     """
     p_indep = 1.0
     for p in probs:
