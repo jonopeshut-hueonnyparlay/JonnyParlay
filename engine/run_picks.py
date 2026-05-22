@@ -2217,8 +2217,11 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
 
         # P9: Platt calibration — compress overconfident win_probs toward actual hit rate.
         # Calibrate over_p; derive under_p to preserve over+under=1.
-        over_p = _platt_calibrate_prop(over_p)
-        under_p = 1.0 - over_p
+        # Skip for MLB: Platt was fitted on NBA+NHL props only; applying it to MLB
+        # stat distributions (K%, OUTS, HA) would mis-calibrate until an MLB sample exists.
+        if _sport != "MLB":
+            over_p = _platt_calibrate_prop(over_p)
+            under_p = 1.0 - over_p
 
         # Calculate edges
         over_edge, under_edge, nv_over, nv_under = calc_edge(over_p, over_odds, under_odds)
@@ -6697,6 +6700,7 @@ def main():
                     reader = csv.DictReader(f)
                     repost_rows = [r for r in reader
                                    if r.get("run_type", "") in {"primary", "", None}
+                                   and r.get("tier", "") != "KILLSHOT"
                                    and r.get("date", "") == today_str]
             if repost_rows:
                 # Reconstruct minimal pick dicts from log

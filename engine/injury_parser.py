@@ -301,6 +301,15 @@ def _get_team_rotation(
             season_filter=season, min_minutes=REDISTRIB_MIN_ELIGIBLE, db_path=db_path)
         if df.empty:
             continue
+        # Exclude traded-away players: if most recent game is > 30 days before
+        # before_date they're no longer on this team's active roster.
+        from datetime import datetime as _dt, timedelta as _td
+        try:
+            _cutoff = (_dt.strptime(before_date, "%Y-%m-%d") - _td(days=30)).strftime("%Y-%m-%d")
+            if str(df["game_date"].max()) < _cutoff:
+                continue
+        except Exception:
+            pass
         avg_min = df["min"].mean()
         records.append({
             "player_id": r["player_id"],
@@ -496,27 +505,28 @@ def get_injury_context(
 
     out_players: List[Tuple[int, int, str]] = []  # (player_id, team_id, position)
 
-    for _, row in injury_df.iterrows():
-        pid    = int(row["player_id"])
-        code   = row["status_code"]
-        if not code:
-            continue
-        injury_statuses[pid] = code
+    # Single connection for the entire OUT-player lookup (H9: was one conn per player)
+    conn = get_conn(db_path)
+    try:
+        for _, row in injury_df.iterrows():
+            pid    = int(row["player_id"])
+            code   = row["status_code"]
+            if not code:
+                continue
+            injury_statuses[pid] = code
 
-        if code in ("O",):  # confirmed out / doubtful-treated-as-out
-            conn = get_conn(db_path)
-            try:
+            if code in ("O",):  # confirmed out / doubtful-treated-as-out
                 team_row = conn.execute(
                     "SELECT team_id, position FROM players WHERE player_id=?", (pid,)
                 ).fetchone()
-            finally:
-                conn.close()
-            if team_row:
-                out_players.append((
-                    pid,
-                    int(team_row["team_id"]),
-                    team_row["position"] or "",
-                ))
+                if team_row:
+                    out_players.append((
+                        pid,
+                        int(team_row["team_id"]),
+                        team_row["position"] or "",
+                    ))
+    finally:
+        conn.close()
 
     log.info("Injury statuses: %d players flagged (%d OUT)",
              len(injury_statuses),
