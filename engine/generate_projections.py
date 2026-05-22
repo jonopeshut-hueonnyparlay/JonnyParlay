@@ -416,17 +416,19 @@ def run(
         log.info("Late run: skipping game seed (already seeded this morning)")
 
     # 1. Implied totals + team totals (Odds API)
-    if not late_run:
-        log.info("Fetching implied totals...")
+    # Module-level cache: keyed by game_date so the late run reuses the morning
+    # fetch instead of making a second live Odds API call.
+    if not hasattr(generate_projections, "_totals_cache"):
+        run._totals_cache = {}
+    if not late_run or game_date not in run._totals_cache:
+        log.info("Fetching implied totals%s...", " (late run — cache miss)" if late_run else "")
         implied_totals, team_totals = fetch_nba_implied_totals(game_date, db_path)
+        run._totals_cache[game_date] = (implied_totals, team_totals)
         log.info("  totals: %d games, team_totals: %d entries", len(implied_totals), len(team_totals))
     else:
-        # Late run: re-use implied totals from DB / last write via csv_writer cache.
-        # The Odds API window is still open but we don't want to spend the quota;
-        # totals rarely change in the final 90 min before tip-off.
-        log.info("Late run: re-using cached implied totals from csv_writer (no Odds API call)")
-        implied_totals, team_totals = fetch_nba_implied_totals(game_date, db_path)
-        log.info("  totals: %d games, team_totals: %d entries (cached)", len(implied_totals), len(team_totals))
+        implied_totals, team_totals = run._totals_cache[game_date]
+        log.info("Late run: reusing cached implied totals (%d games, %d team totals — no Odds API call)",
+                 len(implied_totals), len(team_totals))
 
     # Warn for any scheduled game missing an implied total (pace constraint won't apply)
     try:

@@ -192,7 +192,7 @@ SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_bui
 
 # ── KILLSHOT tier (v2 — safer/tighter; see CLAUDE.md) ─────────
 # Auto-qualify gate: ALL must pass
-KILLSHOT_SCORE_FLOOR    = 90.0                             # Pick Score floor
+KILLSHOT_SCORE_FLOOR    = 65.0                             # Pick Score floor (post-Platt max win_prob ~0.666 → max achievable score ~95 at edge ceiling; 65 = strong pick requiring wp≥0.65 + edge≥12%+)
 KILLSHOT_TIER_REQUIRED  = "T1"                             # v2: strict T1 only (excludes T1B, T2, T3)
 KILLSHOT_WIN_PROB_FLOOR = 0.65                             # v2: hard win-prob floor
 KILLSHOT_ODDS_MIN       = -200                             # v2: no razor-thin chalk
@@ -5213,7 +5213,7 @@ def select_killshots(qualified, today_str, manual_players=None):
 
     Auto-qualify (all must pass):
       - tier == T1 strictly (no T1B/T2/T3)
-      - pick_score >= KILLSHOT_SCORE_FLOOR (90)
+      - pick_score >= KILLSHOT_SCORE_FLOOR (65)
       - win_prob >= KILLSHOT_WIN_PROB_FLOOR (0.65)
       - odds in [KILLSHOT_ODDS_MIN, KILLSHOT_ODDS_MAX] ([-200, +110])
       - stat in KILLSHOT_STAT_ALLOW ({PTS, AST, SOG})  # REB dropped L9, 3PM dropped (T3 — CV incompatible)

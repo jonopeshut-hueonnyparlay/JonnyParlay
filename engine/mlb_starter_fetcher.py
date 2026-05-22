@@ -119,7 +119,9 @@ def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, str]:
         log.warning("MLB Stats API fetch failed: %s", exc)
         return {}
 
-    result: dict[str, str] = {}
+    # dict[abbrev, list[names]] — list handles doubleheaders where a team has
+    # two probable starters (one per game); second game no longer overwrites first.
+    result: dict[str, list[str]] = {}
 
     try:
         for date_block in data.get("dates", []):
@@ -133,7 +135,7 @@ def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, str]:
                         abbrev = _TEAM_ID_TO_ABBREV.get(team_id, "")
                         name = pitcher.get("fullName", "")
                         if abbrev and name:
-                            result[abbrev] = name
+                            result.setdefault(abbrev, []).append(name)
                             log.info("Probable starter %s: %s", abbrev, name)
     except Exception as exc:
         log.warning("MLB Stats API parse failed: %s", exc)
@@ -143,14 +145,17 @@ def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, str]:
 
 
 def is_confirmed(pitcher_name: str, team_abbrev: str,
-                 confirmed_starters: dict[str, str]) -> bool:
-    """Return True if pitcher_name matches the confirmed starter for team_abbrev.
+                 confirmed_starters: dict[str, list[str]]) -> bool:
+    """Return True if pitcher_name matches any confirmed starter for team_abbrev.
 
+    confirmed_starters is a dict[abbrev, list[names]] — the list handles
+    doubleheaders where a team has two starters on the same day.
     Uses fuzzy name_key matching so 'José Berríos' matches 'Jose Berrios'.
     """
     if not confirmed_starters:
         return False
-    api_name = confirmed_starters.get(team_abbrev.upper(), "")
-    if not api_name:
+    api_names = confirmed_starters.get(team_abbrev.upper(), [])
+    if not api_names:
         return False
-    return _name_key(pitcher_name) == _name_key(api_name)
+    pitcher_key = _name_key(pitcher_name)
+    return any(pitcher_key == _name_key(n) for n in api_names)
