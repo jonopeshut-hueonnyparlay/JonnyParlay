@@ -61,6 +61,7 @@ NBA_COLUMNS = [
     "Name", "Pos", "Team", "Opp", "Status",
     "Saber Team", "Saber Total",
     "PTS", "RB", "AST", "3PT", "dk_std", "pts_cv",
+    "cold_start_subtype", "injury_trigger",
 ]
 
 # Status codes -> SaberSim Status column value
@@ -327,7 +328,9 @@ def _proj_to_row(
         "AST":         proj.get("proj_ast", 0.0),
         "3PT":         proj.get("proj_fg3m", 0.0),
         "dk_std":      proj.get("dk_std", 0.0),
-        "pts_cv":      proj.get("pts_cv") or "",  # G15 HIGH-VAR gate in run_picks.py
+        "pts_cv":      proj.get("pts_cv") or "",
+        "cold_start_subtype": proj.get("cold_start_subtype") or "",
+        "injury_trigger":     proj.get("injury_trigger", False),
     }
 
 

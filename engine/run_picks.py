@@ -444,10 +444,30 @@ def _build_context_prompt(sport, stat, player, direction, line, game, today, pre
     )
 
 PICK_SCORE_MODES = {
-    "Default":      (0.60, 0.40),
-    "Conservative": (0.70, 0.30),
-    "Aggressive":   (0.45, 0.55),
+    "Default":      (0.40, 0.60),
+    "Conservative": (0.55, 0.45),
+    "Aggressive":   (0.30, 0.70),
 }
+
+# Tier multiplier applied to final pick_score.
+# T2 is the reference tier (best empirical win rate, 61.1% vs T1=45.1% at n=51/54).
+PICK_SCORE_TIER_MULT = {
+    "T1":       0.90,
+    "T1B":      0.93,
+    "T2":       1.00,
+    "T3":       0.95,
+    "KILLSHOT": 1.00,
+}
+
+# Additive score penalties for cold_start sub-types (lower projection reliability).
+COLD_START_SCORE_PENALTY = {
+    "taxi":             -15,
+    "returner":         -10,
+    "extended_absence":  -8,
+    "new_acquisition":   -5,
+}
+
+INJURY_TRIGGER_BONUS = 7  # redistribution-bump picks: books slow to adjust, edge is real
 
 # Sportsbook display / normalization — imported above from book_names (audit H-13).
 # Keeping CO_LEGAL_BOOKS, BOOK_DISPLAY, _norm_book, display_book callable at
@@ -799,18 +819,30 @@ def calc_edge(model_prob, over_odds, under_odds):
     under_edge = (1.0 - model_prob) - nv_under
     return over_edge, under_edge, nv_over, nv_under
 
-def pick_score(win_prob, edge, mode="Default"):
-    """Calculate Pick Score: 0.60×wp_normalized + 0.40×edge_normalized.
+def pick_score(win_prob, edge, mode="Default", tier=None,
+               cold_start_subtype=None, injury_trigger=False):
+    """Calculate Pick Score: edge-dominant weighted composite with tier and signal adjustments.
+
+    Weights (wp/edge): Default=40/60, Conservative=55/45, Aggressive=30/70.
+    Edge ceiling lowered to 15% (from 20%) to match actual p90 of the distribution.
+    Tier multiplier: T1=0.90×, T1B=0.93×, T2=1.00× (reference), T3=0.95×.
+    Cold-start penalty: taxi=-15, returner=-10, extended_absence=-8, new_acquisition=-5.
+    Injury trigger bonus: +7 for redistribution-bump picks.
 
     R11 NOTE: Game line picks (totals, spreads, ML) intentionally score lower than
     props. Win probs for game lines cluster near 50-55% (well-priced markets),
     while props can reach 60-70%+ on model-vs-market gaps.  This is correct behavior —
     game lines are lower-conviction by design and rarely surface in the Premium 5.
     """
-    sw, ew = PICK_SCORE_MODES.get(mode, (0.60, 0.40))
+    sw, ew = PICK_SCORE_MODES.get(mode, (0.40, 0.60))
     wp_n = (win_prob * 100 - 50) / 25 * 100
-    e_n = (edge * 100) / 20 * 100
-    return sw * wp_n + ew * e_n
+    e_n  = (edge * 100) / 15 * 100          # ceiling: 15% (was 20%)
+    score = sw * wp_n + ew * e_n
+    score *= PICK_SCORE_TIER_MULT.get(tier, 1.00)
+    score += COLD_START_SCORE_PENALTY.get(cold_start_subtype, 0)
+    if injury_trigger:
+        score += INJURY_TRIGGER_BONUS
+    return score
 
 def base_units(edge):
     """VAKE base unit from edge.
@@ -1497,6 +1529,11 @@ def parse_csv(filepath):
                 # H3: custom projection engine writes dk_std (empirical σ including high-var floor).
                 # SaberSim CSVs also carry this column. 0.0 = absent → falls back to SIGMA["PTS"].
                 p["dk_std"] = float(clean.get("dk_std", clean.get("DK_STD", 0)) or 0)
+                # Custom engine extras — absent/blank in SaberSim CSVs (gates no-op when None/False).
+                _cv_raw = clean.get("pts_cv", "")
+                p["pts_cv"] = float(_cv_raw) if _cv_raw else None
+                p["cold_start_subtype"] = clean.get("cold_start_subtype") or None
+                p["injury_trigger"] = clean.get("injury_trigger", "").lower() in ("true", "1", "yes")
             elif sport == "NHL":
                 # Filter goalies
                 if p["pos"].upper() == "G":
@@ -2206,8 +2243,12 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
             if tier is None:
                 continue  # banned (REB overs)
 
+            # Custom-engine pick_score signals (absent/None for SaberSim CSV runs).
+            _cold_start_subtype = proj_player.get("cold_start_subtype")
+            _injury_trigger     = bool(proj_player.get("injury_trigger", False))
+
             # Get team abbreviation from CSV match
-            csv_team = prop.get("proj_player", {}).get("team", "")
+            csv_team = proj_player.get("team", "")
 
             pick = {
                 "player": prop["player"],
@@ -2229,6 +2270,9 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 "tier": tier,
                 "pick_type": "prop",
                 "missing_side": False,
+                "pts_cv":             proj_player.get("pts_cv"),
+                "cold_start_subtype": _cold_start_subtype,
+                "injury_trigger":     _injury_trigger,
             }
 
             # Apply gates
@@ -2247,7 +2291,9 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 picks.append(pick)
                 continue
 
-            pick["pick_score"] = pick_score(win_prob, adj_edge, mode)
+            pick["pick_score"] = pick_score(win_prob, adj_edge, mode, tier=tier,
+                                            cold_start_subtype=_cold_start_subtype,
+                                            injury_trigger=_injury_trigger)
             picks.append(pick)
 
     return picks
@@ -2339,7 +2385,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             passed, gate = check_game_gates(pick)
             pick["gate_result"] = "PASS" if passed else gate
             if passed and edge >= 0.05:
-                pick["pick_score"] = pick_score(wp, edge, mode)
+                pick["pick_score"] = pick_score(wp, edge, mode, tier=pick["tier"])
             else:
                 pick["size"] = 0
             picks.append(pick)
@@ -2441,7 +2487,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             passed, gate = check_game_gates(pick)
             pick["gate_result"] = "PASS" if passed else gate
             if passed and edge >= spread_min_edge:
-                pick["pick_score"] = pick_score(cover_prob, edge, mode)
+                pick["pick_score"] = pick_score(cover_prob, edge, mode, tier=pick["tier"])
             else:
                 pick["size"] = 0
             picks.append(pick)
@@ -2556,7 +2602,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             passed, gate = check_game_gates(pick)
             pick["gate_result"] = "PASS" if passed else gate
             if passed and edge >= min_edge:
-                pick["pick_score"] = pick_score(win_prob, edge, mode)
+                pick["pick_score"] = pick_score(win_prob, edge, mode, tier=pick["tier"])
             else:
                 pick["size"] = 0
             picks.append(pick)
@@ -2627,7 +2673,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             passed, gate = check_game_gates(pick)
             pick["gate_result"] = "PASS" if passed else gate
             if passed and edge >= tt_min_edge:
-                pick["pick_score"] = pick_score(wp, edge, mode)
+                pick["pick_score"] = pick_score(wp, edge, mode, tier=pick["tier"])
             else:
                 pick["size"] = 0
             picks.append(pick)
@@ -2775,7 +2821,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                                 passed, gate = check_game_gates(pick)
                                 pick["gate_result"] = "PASS" if passed else gate
                                 if passed and edge >= 0.03:  # T1B: 3% min edge
-                                    pick["pick_score"] = pick_score(wp, edge, mode)
+                                    pick["pick_score"] = pick_score(wp, edge, mode, tier=pick["tier"])
                                 else:
                                     pick["size"] = 0
                                 picks.append(pick)
@@ -2846,7 +2892,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                             passed, gate = check_game_gates(pick)
                             pick["gate_result"] = "PASS" if passed else gate
                             if passed and edge >= min_edge:
-                                pick["pick_score"] = pick_score(wp, edge, mode)
+                                pick["pick_score"] = pick_score(wp, edge, mode, tier=pick["tier"])
                             else:
                                 pick["size"] = 0
                             picks.append(pick)
@@ -2912,7 +2958,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                         passed, gate = check_game_gates(pick)
                         pick["gate_result"] = "PASS" if passed else gate
                         if passed and edge >= 0.05:
-                            pick["pick_score"] = pick_score(cover_p, edge, mode)
+                            pick["pick_score"] = pick_score(cover_p, edge, mode, tier=pick["tier"])
                         else:
                             pick["size"] = 0
                         picks.append(pick)
@@ -3120,7 +3166,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
             passed, gate = check_game_gates(pick)
             pick["gate_result"] = "PASS" if passed else gate
             # FIX H2: Use standard pick_score() function
-            pick["pick_score"] = pick_score(win_prob, adj_edge, mode) if passed else None
+            pick["pick_score"] = pick_score(win_prob, adj_edge, mode, tier=pick["tier"]) if passed else None
             picks.append(pick)
 
     return picks
@@ -3720,6 +3766,74 @@ def fmt_dir(direction):
 
 def fmt_pct(val):
     return f"{val*100:.1f}%"
+
+def log_candidates(candidates, mode, today_str):
+    """Write the full gate-passing pick pool to pick_log_candidates.csv for formula backtesting.
+
+    Each row is one qualifying pick (before apply_caps / premium selection) with:
+      - All standard pick fields (wp, edge, tier, pick_score under new formula)
+      - candidate_rank: rank by current pick_score (1 = highest)
+      - score_old_6040: score under old 60/40 formula (pre-refactor reference)
+      - score_5050: score under 50/50 formula
+    """
+    from paths import DATA_DIR
+    path = DATA_DIR / "pick_log_candidates.csv"
+    fieldnames = [
+        "date", "run_time", "sport", "player", "team", "stat", "line", "direction",
+        "proj", "win_prob", "edge", "odds", "book", "tier", "pick_score", "size",
+        "game", "mode", "candidate_rank", "score_old_6040", "score_5050",
+        "cold_start_subtype", "injury_trigger",
+    ]
+    now = __import__("datetime").datetime.now()
+    run_time = now.strftime("%H:%M")
+    write_header = not path.exists() or path.stat().st_size == 0
+
+    ranked = sorted(candidates, key=lambda p: p.get("pick_score", 0), reverse=True)
+
+    def _old_score(p):
+        wp_n = (p.get("win_prob", 0.5) * 100 - 50) / 25 * 100
+        e_n  = (p.get("adj_edge", p.get("edge", 0)) * 100) / 20 * 100
+        return 0.60 * wp_n + 0.40 * e_n
+
+    def _5050_score(p):
+        wp_n = (p.get("win_prob", 0.5) * 100 - 50) / 25 * 100
+        e_n  = (p.get("adj_edge", p.get("edge", 0)) * 100) / 15 * 100
+        tier = p.get("tier")
+        return (0.50 * wp_n + 0.50 * e_n) * PICK_SCORE_TIER_MULT.get(tier, 1.00)
+
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        if write_header:
+            writer.writeheader()
+        for rank, p in enumerate(ranked, 1):
+            edge = p.get("adj_edge", p.get("edge", 0))
+            writer.writerow({
+                "date":               today_str,
+                "run_time":           run_time,
+                "sport":              p.get("sport", ""),
+                "player":             p.get("player", ""),
+                "team":               p.get("team_abbrev", ""),
+                "stat":               p.get("stat", ""),
+                "line":               p.get("line", ""),
+                "direction":          p.get("direction", ""),
+                "proj":               round(p.get("proj", 0), 2),
+                "win_prob":           round(p.get("win_prob", 0), 4),
+                "edge":               round(edge, 4),
+                "odds":               p.get("odds", ""),
+                "book":               p.get("book", ""),
+                "tier":               p.get("tier", ""),
+                "pick_score":         round(p.get("pick_score", 0), 2),
+                "size":               p.get("size", 0),
+                "game":               p.get("game", ""),
+                "mode":               mode,
+                "candidate_rank":     rank,
+                "score_old_6040":     round(_old_score(p), 2),
+                "score_5050":         round(_5050_score(p), 2),
+                "cold_start_subtype": p.get("cold_start_subtype", ""),
+                "injury_trigger":     p.get("injury_trigger", False),
+            })
+    print(f"  [--log-candidates] Logged {len(ranked)} candidates → {path.name}")
+
 
 def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
     """Append all qualified picks to pick_log.csv for backtesting.
@@ -5859,6 +5973,9 @@ def main():
     parser.add_argument("--no-sgp", action="store_true", help="Skip SGP builder (same-game parlay suggestions)")
     parser.add_argument("--sgp-only", action="store_true", help="Run SGP builder only — skip everything else (premium card, bonus, daily lay, longshot, killshots)")
     parser.add_argument("--bonus-only", action="store_true", help="Run bonus drop + SGP only; skip premium card, daily lay, longshot, killshots, preview")
+    parser.add_argument("--log-candidates", action="store_true",
+                        help="Log all gate-passing picks (full candidate pool) to data/pick_log_candidates.csv "
+                             "with alternative formula scores. Use for backtesting formula changes.")
 
     args = parser.parse_args()
 
@@ -6202,6 +6319,11 @@ def main():
 
     # Base sizing for qualifying picks (Full Card)
     qualified = size_picks_base(qualified) if qualified else []
+
+    # Candidate logging: write full pool (all gate-passing picks) to pick_log_candidates.csv
+    # for formula backtesting. Runs after sizing so size is populated; before caps so pool is complete.
+    if getattr(args, "log_candidates", False) and qualified:
+        log_candidates(qualified, args.mode, today_str)
 
     # Apply caps.
     # A1 (audit 2026-05-06): --no-cap bypasses apply_caps entirely so

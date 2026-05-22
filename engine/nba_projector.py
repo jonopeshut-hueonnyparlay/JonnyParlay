@@ -1579,6 +1579,8 @@ def project_player(
         "is_home": is_home,
         "source": "custom_v1",
         "dk_std": dk_std,
+        "cold_start_subtype": cold_start_subtype,
+        "injury_trigger": bool(injury_minutes_redistrib_bump and float(injury_minutes_redistrib_bump) > 0),
     }
 
 def run_projections(
