@@ -11,6 +11,13 @@ What this does:
     4. Reports Brier score (raw and calibrated).
     5. Optionally writes calibration coefficients to docs/calibration/.
 
+WARNING — DO NOT PASTE OUTPUT INTO run_picks.py:
+    The win_prob in pick_log.csv is ALREADY Platt-calibrated (via PLATT_A/PLATT_B in
+    run_picks.py).  Fitting another logistic layer on top would double-calibrate,
+    shrinking probabilities toward 0.50 twice and producing a worse model.
+    To recalibrate: use calibrate_platt.py (fits on over_p_raw, the pre-Platt signal)
+    and paste its PLATT_A/PLATT_B output into run_picks.py.
+
 Platt scaling formula:
     calibrated_prob = sigmoid(a * model_prob + b)
     where a and b are fitted by logistic regression on outcomes.

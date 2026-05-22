@@ -878,15 +878,18 @@ def _sgp_book(legs):
     return modal_book
 
 
-def build_sgp_embed(legs, parlay_odds, game, sgp_size=None):
+def build_sgp_embed(legs, parlay_odds, game, sgp_size=None, _copula_joint=None):
     now_et = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
     thesis = _generate_thesis(legs)
     book = _sgp_book(legs)
     cohesion_raw = _correlation_cohesion(legs)
-    # L8: compute copula joint prob once; reuse for sizing + display.
-    _probs = [l["fair_prob"] for l in legs]
-    _corr  = _build_corr_matrix(legs)
-    copula_joint = _copula_joint_prob(_probs, _corr)
+    # Compute copula joint prob once; reuse for sizing + display.
+    # Caller may pass _copula_joint to avoid a second MC run (post_sgp computes it first).
+    if _copula_joint is None:
+        _probs = [l["fair_prob"] for l in legs]
+        _corr  = _build_corr_matrix(legs)
+        _copula_joint = _copula_joint_prob(_probs, _corr)
+    copula_joint = _copula_joint
     parlay_implied = _implied_prob(parlay_odds)
     # Dynamic sizing if not supplied — pass copula to avoid recomputation.
     if sgp_size is None:
@@ -1047,9 +1050,12 @@ def post_sgp(legs, parlay_odds, game, suppress_ping=False, today_str=None, save=
         _guard = None
     book = _sgp_book(legs)
     cohesion_val = _correlation_cohesion(legs)
-    sgp_size = size_sgp(legs, cohesion_val)
+    _probs = [l["fair_prob"] for l in legs]
+    _corr = _build_corr_matrix(legs)
+    _cj = _copula_joint_prob(_probs, _corr)
+    sgp_size = size_sgp(legs, cohesion_val, _copula_joint=_cj)
     print(f"  [SGP-sizing] avg_wp={sum(l['fair_prob'] for l in legs)/len(legs):.2f} cohesion={cohesion_val:.2f} avg_edge={sum(l['edge'] for l in legs)/len(legs):.3f} → {sgp_size:.2f}u")
-    payload = build_sgp_embed(legs, parlay_odds, game, sgp_size=sgp_size)
+    payload = build_sgp_embed(legs, parlay_odds, game, sgp_size=sgp_size, _copula_joint=_cj)
     try:
         from run_picks import _webhook_post
         ok = _webhook_post(webhook, payload, label=f"SGP: {game}")

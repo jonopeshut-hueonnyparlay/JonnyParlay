@@ -976,8 +976,8 @@ def check_prop_gates(pick):
     # OUTS: Same conservative IP bias as K — unders structurally lose (actual IP > SaberSim median).
     if stat == "OUTS" and direction == "under":
         return False, "G_OUTS_UNDER"
-    # HA: T1B tier definition is unders 3.5+ only. The tier routing allows overs through by default — block here.
-    if stat == "HA" and direction == "over":
+    # HA / HITS: T1B tier definition is unders 3.5+ only. Block overs — they fall to T2 with no research basis.
+    if stat in ("HA", "HITS") and direction == "over":
         return False, "G_HA_DIR"
 
     # G9: universal floor
@@ -2319,7 +2319,10 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
 def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default"):
     """Evaluate game lines (totals, spreads, MLs, team totals)."""
     picks = []
-    sigmas = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])
+    sigmas = GAME_SIGMA.get(sport)
+    if sigmas is None:
+        log.warning("evaluate_game_lines: no GAME_SIGMA entry for sport %r — skipping game lines", sport)
+        return []
 
     # Build team projection map
     team_proj = {}
@@ -4803,50 +4806,6 @@ def _log_longshot(safest6_parlay, today_str, save=True):
         logger.error(f"Longshot log failed: {e}")
 
 
-def post_card_announcement(premium, mode, today, suppress_ping=False):
-    """Post a card-drop tease to #announcements when the premium card goes live."""
-    if not DISCORD_ANNOUNCE_WEBHOOK or not premium:
-        return
-    guard_key = f"card_announcement:{today}"
-    if not _discord_claim_post(guard_key):
-        print(f"  [Discord] ⏭️  Card announcement already posted for {today} — skipping")
-        return
-    potd = premium[0]
-    potd_dir  = potd.get("direction", "").upper()
-    potd_line = potd.get("line", "")
-    potd_stat = potd.get("stat", "")
-    if potd_stat == "TEAM_TOTAL":
-        potd_label = f"{potd.get('player', '')} {potd_dir} {potd_line}"
-    else:
-        potd_last = potd.get("player", "").split()[-1]
-        potd_label = f"{potd_last} {potd_dir} {potd_line} {potd_stat}"
-    sport_counts = {}
-    for p in premium[:5]:
-        s = p.get("sport", "")
-        if s:
-            sport_counts[s] = sport_counts.get(s, 0) + 1
-    sport_str = " | ".join(f"{s} ({n})" for s, n in sorted(sport_counts.items())) if sport_counts else ""
-    total_u = sum(p.get("size", 0) for p in premium[:5])
-    payload = {
-        "username": "PicksByJonny",
-        "content": "" if suppress_ping else "@everyone",
-        "embeds": [{
-            "title": "🔒 Premium card is live",
-            "description": (
-                f"{sport_str} | {min(len(premium), 5)} picks | {total_u:.2f}u\n"
-                f"POTD: **{potd_label}**\n\n"
-                f"→ #premium-portfolio"
-            ),
-            "color": 0xFFD700,
-            "footer": {"text": f"{BRAND_TAGLINE} · {today}"}
-        }]
-    }
-    if _webhook_post(DISCORD_ANNOUNCE_WEBHOOK, payload, label="card announcement"):
-        print(f"  [Discord] ✅ Announcement posted to #announcements")
-    else:
-        _discord_release_post(guard_key)
-
-
 def _card_guard_should_block_logging(card_was_up: bool, no_discord: bool, force_card: bool) -> bool:
     """Return True iff the premium-card guard should suppress log_picks.
 
@@ -6286,7 +6245,7 @@ def main():
     if args.alt_parlay:
         sport_sigmas = {}
         for sport in all_players:
-            sport_sigmas[sport] = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])
+            sport_sigmas[sport] = GAME_SIGMA.get(sport) or GAME_SIGMA["NBA"]
         alt_spread_parlay = build_alt_spread_parlay(all_game_lines, all_team_proj, sport_sigmas, all_alt_spreads, debug=getattr(args, "debug_daily_lay", False))
 
         # ET-aware date header (audit H-1).
@@ -6759,6 +6718,8 @@ def main():
             # was already posted (e.g. better projection data downloaded mid-afternoon).
             if not _bonus_only:
                 post_killshots_to_discord(killshots, today, today_str, suppress_ping=suppress_ping)
+            elif killshots:
+                print(f"  [Discord] --bonus-only: skipping {len(killshots)} pending KILLSHOT(s) — run without --bonus-only to post.")
             if _repost_daily_lay:
                 print("  [Discord] --repost-daily-lay: force-posting daily lay...")
                 post_daily_lay(alt_spread_parlay, today_str, suppress_ping=True, save=_save)

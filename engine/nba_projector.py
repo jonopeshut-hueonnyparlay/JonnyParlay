@@ -68,9 +68,11 @@ LEAGUE_AVG_PACE   = 100.22  # 2025-26 season-to-date (team_season_stats RS avg, 
 # this basis; refits should re-aggregate from team_season_stats and document
 # the season they used so the basis stays consistent.
 LEAGUE_AVG_TOTAL  = 222.0
-# Playoffs run slower / lower-scoring — separate baselines
+# Playoffs run slower / lower-scoring.
+# Note: Vegas implied totals are normalised against LEAGUE_AVG_TOTAL (RS) even in playoffs —
+# a playoff total of ~210 gives _base_pf = 210/222 ≈ 0.946 which implicitly encodes the
+# pace discount without a separate constant.
 LEAGUE_AVG_PACE_PO  = 96.5
-LEAGUE_AVG_TOTAL_PO = 210.0
 
 # Per-stat pace elasticity exponents — Research Brief 5, Q8.4, 2026-05-02.
 # Exponent < 1 dampens the pace effect on that stat relative to linear scaling.

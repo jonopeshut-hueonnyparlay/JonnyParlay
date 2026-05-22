@@ -118,6 +118,20 @@ def main() -> None:
         sys.exit(1)
 
     df = load_settled_props(log_path, args.sport)
+
+    # H3 gate: require ≥100 native over_p_raw rows (schema v4+) before trusting fit.
+    # Legacy fallback rows use already-calibrated win_prob, introducing double-calibration
+    # bias. Below 100 real rows the fit is noisy AND contaminated.
+    if "over_p_raw" in df.columns:
+        n_raw = int(pd.to_numeric(df["over_p_raw"], errors="coerce").notna().sum())
+    else:
+        n_raw = 0
+    if n_raw < 100:
+        print(f"H3 GATE: only {n_raw}/100 required over_p_raw rows — Platt refit blocked.")
+        print("         Keep logging picks; re-run once ≥100 native rows are settled.")
+        print(f"         (Total settled: {len(df)}, but {len(df)-n_raw} use legacy win_prob fallback.)")
+        sys.exit(0)
+
     if len(df) < 50:  # L16: raised from 30 → 50; CV folds are too small below this
         print(f"WARNING: only {len(df)} settled picks — Platt fit requires ≥50 for reliable CV.")
         print("Continue anyway? [y/N] ", end="", flush=True)

@@ -464,12 +464,14 @@ def get_injury_context(
     # Only process players on teams that actually have a game today
     conn = get_conn(db_path)
     active_team_ids: set[int] = set()
-    for row in conn.execute(
-        "SELECT home_team_id, away_team_id FROM games WHERE game_date=?", (date_str,)
-    ).fetchall():
-        active_team_ids.add(row["home_team_id"])
-        active_team_ids.add(row["away_team_id"])
-    conn.close()
+    try:
+        for row in conn.execute(
+            "SELECT home_team_id, away_team_id FROM games WHERE game_date=?", (date_str,)
+        ).fetchall():
+            active_team_ids.add(row["home_team_id"])
+            active_team_ids.add(row["away_team_id"])
+    finally:
+        conn.close()
 
     injury_df = fetch_injury_report(date)
     if injury_df.empty:
