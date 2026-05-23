@@ -1075,7 +1075,7 @@ def check_prop_gates(pick):
     return True, None
 
 def check_game_gates(pick):
-    """Apply gates GG1-GG5."""
+    """Apply gates GG1-GG6."""
     edge = pick["adj_edge"]
     proj = pick["proj"]
     line = pick["line"]
@@ -1105,6 +1105,16 @@ def check_game_gates(pick):
     # The model finds "edge" vs market but win_prob < 50% and pick_score goes negative.
     if pick.get("stat") in ("SPREAD", "F5_SPREAD") and pick.get("odds", 0) > 0:
         return False, "GG5"
+
+    # GG6: Projection clearance for total-type markets (TEAM_TOTAL, TOTAL, F5_TOTAL).
+    # Proj must be on the correct side of the line — if the model projects fewer runs
+    # than the line, betting the over is pure market arbitrage with no model conviction.
+    if stat in ("TEAM_TOTAL", "TOTAL", "F5_TOTAL"):
+        direction = pick.get("direction", "")
+        if direction == "over" and proj <= line:
+            return False, "GG6"
+        if direction == "under" and proj >= line:
+            return False, "GG6"
 
     return True, None
 
