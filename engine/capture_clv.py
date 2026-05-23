@@ -868,7 +868,9 @@ def get_closing_odds_for_pick(pick: dict, outcomes_by_market: dict,
 
 
 def calc_clv(your_odds: float, closing_odds: float) -> float:
-    """CLV = closing_implied - your_implied. Positive = beat the close."""
+    """CLV = closing_implied - your_implied. Positive = beat the close.
+    Both sides use raw vigged implied (no vig removal). Direction is preserved;
+    magnitude is slightly compressed vs vig-free CLV. Standard industry practice."""
     return implied_prob(closing_odds) - implied_prob(your_odds)
 
 

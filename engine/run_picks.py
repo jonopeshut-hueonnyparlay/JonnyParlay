@@ -955,6 +955,8 @@ def check_prop_gates(pick):
 
         # G_WNBA_OPEN: no picks in first N days — opening-day extreme variance from
         # new-team/new-role players that SaberSim cannot price (May 13 2026: -19.8 PTS miss)
+        # Note: season_day ≤ 0 (pre-season) is not blocked — SaberSim doesn't generate
+        # pre-season CSVs in practice, so this theoretical gap has no real exposure.
         if 1 <= season_day <= WNBA_OPENING_GATE_DAYS:
             return False, "G_WNBA_OPEN"
 
@@ -1127,7 +1129,9 @@ def apply_hard_rules(picks):
 def auto_r12_from_log(today_str: str, window_days: int = 5) -> list[str]:
     """Read pick_log.csv and return player names with a loss in the last window_days.
     These are auto-added to the R12 cooldown list so you never have to pass --cooldown manually.
-    Only counts primary/bonus picks (not manual) to avoid polluting the list with one-offs."""
+    Only counts primary/bonus picks (not manual) to avoid polluting the list with one-offs.
+    No sport filter: a player on NBA cooldown also suppresses NHL/MLB entries for that name.
+    Near-zero practical risk given naming divergence across sports."""
     log_path = Path(PICK_LOG_PATH)
     if not log_path.exists():
         return []
@@ -2254,6 +2258,8 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         # Calibrate over_p; derive under_p to preserve over+under=1.
         # Skip for MLB: Platt was fitted on NBA+NHL props only; applying it to MLB
         # stat distributions (K%, OUTS, HA) would mis-calibrate until an MLB sample exists.
+        # WNBA is intentionally included (not MLB, so Platt applies). NBA+NHL coefficients
+        # are a reasonable approximation for WNBA; WNBA-specific refit pending sample growth.
         if _sport != "MLB":
             over_p = _platt_calibrate_prop(over_p)
             under_p = 1.0 - over_p
@@ -3697,6 +3703,8 @@ def build_alt_spread_parlay(game_lines, team_proj_map, sport_sigmas, alt_spread_
 
         implied = abs(odds) / (abs(odds) + 100.0) if odds < 0 else 100.0 / (odds + 100.0)
         cover_prob = 1.0 - normal_cdf(-line, margin, sigma)
+        # Raw vigged implied (not no-vig) — alt-spread lines are one-sided, making no-vig
+        # impossible. Conservative: vigged implied is harder to beat at 0.025 threshold.
         edge = cover_prob - implied
 
         # Per-leg quality gates: screen out noise before composite scoring

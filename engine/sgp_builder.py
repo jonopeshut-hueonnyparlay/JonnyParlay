@@ -735,6 +735,9 @@ def size_sgp(legs, cohesion_score, _copula_joint=None):
         probs = [l["fair_prob"] for l in legs]
         corr_mat = _build_corr_matrix(legs)
         _copula_joint = _copula_joint_prob(probs, corr_mat)
+    # parlay_implied is raw vigged (not no-vig). ~3-8 pp of the 10 pp gap is expected
+    # vig removal, not model alpha — gate is slightly more permissive than intended for
+    # low-edge combos. Acceptable until SGP Platt calibration gate (100 slips) is hit.
     parlay_implied = _implied_prob(_parlay_american(legs))
     if _copula_joint - parlay_implied >= 0.10:
         return SGP_SIZE_PREMIUM
