@@ -4340,7 +4340,10 @@ def build_premium_embed(premium, mode, today, suppress_ping=False, sport=None):
             pick_label = p["player"]  # already "TEAM ML", e.g. "MON ML"
         elif stat in ("SPREAD", "TOTAL", "F5_TOTAL", "F5_SPREAD", "F5_ML"):
             pick_label = f"{p['player']} {direction} {line_val}"
-        elif stat in ("NRFI", "YRFI", "GOLF_WIN"):
+        elif stat in ("NRFI", "YRFI"):
+            matchup = p.get("team_abbrev") or p.get("game", "")
+            pick_label = f"{matchup} {stat}" if matchup else stat
+        elif stat == "GOLF_WIN":
             pick_label = f"{p['player']} {direction}"
         elif stat == "PARLAY":
             pick_label = (p.get("player") or "Parlay").strip()
@@ -4376,7 +4379,7 @@ def build_premium_embed(premium, mode, today, suppress_ping=False, sport=None):
     }
 
 
-def build_potd_embed(potd, today):
+def build_potd_embed(potd, today, sport=None):
     """Build the standalone POTD embed (posted after premium card, same channel)."""
     stat = potd.get("stat", "")
     direction = potd["direction"].upper()
@@ -4398,7 +4401,10 @@ def build_potd_embed(potd, today):
         pick_label = potd["player"]
     elif stat in ("SPREAD", "TOTAL", "F5_TOTAL", "F5_SPREAD", "F5_ML"):
         pick_label = f"{potd['player']} {direction} {line_val}"
-    elif stat in ("NRFI", "YRFI", "GOLF_WIN"):
+    elif stat in ("NRFI", "YRFI"):
+        matchup = potd.get("team_abbrev") or potd.get("game", "")
+        pick_label = f"{matchup} {stat}" if matchup else stat
+    elif stat == "GOLF_WIN":
         pick_label = f"{potd['player']} {direction}"
     elif stat == "PARLAY":
         pick_label = (potd.get("player") or "Parlay").strip()
@@ -4424,10 +4430,11 @@ def build_potd_embed(potd, today):
         f"{ctx_line}"
     )
 
+    sport_suffix = f" · {sport}" if sport else ""
     return {
         "username": "PicksByJonny",
         "embeds": [{
-            "title": f"⭐ Pick of the Day — {today}",
+            "title": f"⭐ Pick of the Day{sport_suffix} — {today}",
             "description": description,
             "color": 0xFF4500,  # OrangeRed
             "thumbnail": {"url": BRAND_LOGO},
@@ -4473,7 +4480,7 @@ def post_to_discord(premium, mode, today, suppress_ping=False, force=False, spor
         print(f"  [Discord] ⏭️  POTD already posted for {_sport_label} {today} — skipping")
     else:
         potd = premium[0]
-        potd_payload = build_potd_embed(potd, today)
+        potd_payload = build_potd_embed(potd, today, sport=sport)
         if _webhook_post(DISCORD_WEBHOOK_URL, potd_payload, label=f"POTD: {potd['player']} {potd['stat']}"):
             print(f"  [Discord] ✅ POTD posted: {potd['player']} {potd['stat']}")
         else:
@@ -4805,6 +4812,9 @@ def _log_longshot(safest6_parlay, today_str, save=True):
         if direction == "cover":
             sign = "+" if float(line or 0) > 0 else ""
             return f"{short} {sign}{line} {stat}"
+        if stat in ("NRFI", "YRFI"):
+            matchup = p.get("team_abbrev", "")
+            return f"{matchup} {stat}" if matchup else stat
         # Standard over/under prop or TEAM_TOTAL
         dir_char = "O" if direction == "over" else "U"
         return f"{short} {dir_char}{line} {stat}"
