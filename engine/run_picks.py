@@ -978,8 +978,10 @@ def check_prop_gates(pick):
         return False, "G_K_NO_UNDERS"
     if stat == "K" and direction == "over" and line < 6.0:
         return False, "G_K_MIN_LINE"
-    # OUTS: Same conservative IP bias as K — unders structurally lose (actual IP > SaberSim median).
-    if stat == "OUTS" and direction == "under":
+    # OUTS: Conservative IP bias makes unders lose structurally (actual IP > SaberSim median).
+    # Hard kill softened to WP≥0.60 gate: extreme model conviction can overcome bias when
+    # SaberSim projects a very short outing and market line is set high.
+    if stat == "OUTS" and direction == "under" and prob < 0.60:
         return False, "G_OUTS_UNDER"
     # HA / HITS: T1B tier definition is unders 3.5+ only. Block overs — they fall to T2 with no research basis.
     if stat in ("HA", "HITS") and direction == "over":
@@ -3062,7 +3064,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
             ip = p.get("IP", 1) or 1.0
             er_per_ip = p.get("ER", 0) / ip
             # I4: Compute projected FIP for more stable pitcher quality estimate
-            # FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.20 (FIP constant ~3.20)
+            # FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.17 (FIP constant 3.17 = 2024 lgERA 4.08)
             hr = p.get("HR", 0)  # R4: HR allowed — now correctly stored for pitchers in parse_csv
             bb = p.get("BB", 0)
             k_val = p.get("K", 0)
