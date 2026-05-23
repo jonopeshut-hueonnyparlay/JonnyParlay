@@ -241,7 +241,7 @@ PROP_MARKETS = {
     ],
     "NHL": ["player_shots_on_goal", "player_assists"],
     "MLB": ["pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed",
-            "batter_hits", "batter_total_bases",
+            "batter_hits",
             "batter_hits_runs_rbis"],
 }
 
@@ -1000,9 +1000,14 @@ def check_prop_gates(pick):
         if line > 0.5 and prob < 0.65:
             return False, "G13B"
 
-    # G13B: TB WP floor — matches _STAT_MIN_WIN_PROB sanity checklist.
-    if stat == "TB" and prob < 0.60:
-        return False, "G13B"
+    # G_HRR_LINE: Kill HRR at line ≥ 1.0 until NB model is refit from Stats API data.
+    # NB(r=1.5) inflates P(X≥1.5) to ~72% vs 48% empirical — G13B WP floor never fires.
+    if stat == "HRR" and line >= 1.0:
+        return False, "G_HRR_LINE"
+
+    # G_TB_DISABLED: TB killed — Normal dist wrong for discrete stat; rebuild with ZI-Poisson/NB.
+    if stat == "TB":
+        return False, "G_TB_DISABLED"
 
     # G14: projection clearance gate — ensures model has directional conviction.
     # Normal/SIGMA stats (PTS, OUTS, HA, TB): proj must clear line by ≥0.10σ.
@@ -3034,6 +3039,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
     Base rate: ~70% NRFI league-wide (~16.3% scoring prob per team per 1st inning)
     Adjust per team based on pitcher ER rate + opposing team quality.
     """
+    return []  # G_NRFI_DISABLED: 28.9% WR on 211 shadow picks; model uncalibrated.
     if sport != "MLB":
         return []
 
@@ -5941,7 +5947,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8/G8B enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over at line ≤ 4.5", not has_g8_fail),
-        (f"G13B enforced: TB WP≥60%, HRR WP≥58% (line≤0.5) / WP≥65% (line>0.5)", not has_g13b_fail),
+        (f"G13B enforced: TB killed (G_TB_DISABLED), HRR WP≥58% (line=0.5 only; line≥1.0 killed by G_HRR_LINE)", not has_g13b_fail),
         (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
         (f"G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)", not has_g15_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
