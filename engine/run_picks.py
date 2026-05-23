@@ -1636,7 +1636,7 @@ def parse_csv(filepath):
         print(f"  Loaded {path.name}: {len(deduped)} players (Showdown deduped from {len(players)}), sport: {sport}")
     else:
         print(f"  Loaded {path.name}: {len(deduped)} players, sport: {sport}")
-    return deduped, sport
+    return deduped, sport, path
 
 # ============================================================
 #  ODDS FETCHER
@@ -6107,8 +6107,10 @@ def main():
         csv_paths = [found[i] for i in indices if 0 <= i < len(found)]
 
     all_players = {}
+    csv_paths_resolved = []
     for path in csv_paths:
-        players, sport = parse_csv(path)
+        players, sport, resolved_path = parse_csv(path)
+        csv_paths_resolved.append(resolved_path)
         if sport not in all_players:
             all_players[sport] = []
         all_players[sport].extend(players)
@@ -6814,7 +6816,7 @@ def main():
     if not getattr(args, 'no_sgp', False):
         try:
             from sgp_builder import run_sgp_builder
-            _sgp_csv_strs = [str(p) for p in csv_paths]
+            _sgp_csv_strs = [str(p) for p in csv_paths_resolved]
             # --sgp-only forces a live post even if --no-discord was set
             _sgp_only = getattr(args, 'sgp_only', False)
             _sgp_dry  = (args.dry_run or args.no_discord) and not _sgp_only
