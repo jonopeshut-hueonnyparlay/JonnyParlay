@@ -1004,10 +1004,10 @@ def check_prop_gates(pick):
         if line > 0.5 and prob < 0.65:
             return False, "G13B"
 
-    # G_HRR_LINE: Kill HRR at line ≥ 1.0 until NB model is refit from Stats API data.
-    # NB(r=1.5) inflates P(X≥1.5) to ~72% vs 48% empirical — G13B WP floor never fires.
-    if stat == "HRR" and line >= 1.0:
-        return False, "G_HRR_LINE"
+    # G_HRR_DISABLED: HRR fully killed — 57.4% empirical WR at line=0.5 is break-even at juice.
+    # Model over-projects HRR; NB(r=1.5) inflates probabilities vs observed outcomes.
+    if stat == "HRR":
+        return False, "G_HRR_DISABLED"
 
     # G_TB_DISABLED: TB killed — Normal dist wrong for discrete stat; rebuild with ZI-Poisson/NB.
     if stat == "TB":
@@ -5967,7 +5967,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8/G8B enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over at line ≤ 4.5", not has_g8_fail),
-        (f"G13B enforced: TB killed (G_TB_DISABLED), HRR WP≥58% (line=0.5 only; line≥1.0 killed by G_HRR_LINE)", not has_g13b_fail),
+        (f"G13B enforced: TB killed (G_TB_DISABLED), HRR fully killed (G_HRR_DISABLED)", not has_g13b_fail),
         (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
         (f"G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)", not has_g15_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
