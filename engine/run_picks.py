@@ -948,6 +948,13 @@ def check_prop_gates(pick):
     if stat == "AST" and direction == "over" and line <= 4.5 and sport != "WNBA":
         return False, "G8B"
 
+    # G8C: SOG under at line ≤ 2.5 — 1-7 record (12.5% WR) across 2026 playoffs.
+    # Elite NHL forwards (Makar, Eichel, MacKinnon, Gauthier, Dahlin) consistently
+    # exceed 2.5 shots in playoff settings; Poisson model underestimates their shot
+    # volume even when edge/WP appear favourable. U3.5 lines remain allowed.
+    if stat == "SOG" and direction == "under" and line <= 2.5:
+        return False, "G8C"
+
     # WNBA structural gates — applied after sport is known
     if sport == "WNBA":
         today_date = datetime.now().date()
@@ -1179,6 +1186,8 @@ def apply_r12_cooldown(picks, cooldown_players):
     return [p for p in picks if normalize_name(p["player"]) not in cool_set]
 
 MAX_PREMIUM_PICKS = 3  # per-sport cap (multi-sport days: MLB+WNBA+NHL+NBA)
+MIN_PICK_SCORE    = 25  # Minimum pick_score to appear on premium card — kills coin-flip filler
+MIN_OVER_SCORE    = 40  # Higher score floor for over picks — overs 5-13 (27.8% WR) vs 18 at sub-40 avg
 
 def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     """
@@ -1209,6 +1218,11 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
 
     def can_add(p):
         game = p.get("game", "")
+        # Score floors: kill low-conviction filler (score<25 overall; overs need 40+)
+        if p.get("pick_score", 0) < MIN_PICK_SCORE:
+            return False
+        if p["direction"] == "over" and p.get("pick_score", 0) < MIN_OVER_SCORE:
+            return False
         if game_count[game] >= max_per_game:  # R7
             return False
         if stat_count[p["stat"]] >= 1:  # R10: max 1 pick per stat (3-pick card)
@@ -5976,7 +5990,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 1),
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
-        (f"G8/G8B enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over at line ≤ 4.5", not has_g8_fail),
+        (f"G8/G8B/G8C enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over ≤ 4.5; no SOG under ≤ 2.5", not has_g8_fail),
         (f"G13B enforced: TB killed (G_TB_DISABLED), HRR fully killed (G_HRR_DISABLED)", not has_g13b_fail),
         (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
         (f"G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)", not has_g15_fail),
