@@ -908,12 +908,17 @@ def check_prop_gates(pick):
     if stat == "AST" and direction == "over" and line <= 4.5 and sport != "WNBA":
         return False, "G8B"
 
-    # G8C: SOG under at line ≤ 2.5 — 1-7 record (12.5% WR) across 2026 playoffs.
-    # Elite NHL forwards (Makar, Eichel, MacKinnon, Gauthier, Dahlin) consistently
-    # exceed 2.5 shots in playoff settings; Poisson model underestimates their shot
-    # volume even when edge/WP appear favourable. U3.5 lines remain allowed.
-    if stat == "SOG" and direction == "under" and line <= 2.5:
+    # G8C: SOG under at line ≤ 3.5 — extended from ≤2.5 (2026-05-23).
+    # ≤2.5 was 51.9% WR (losing at juice). 3.1–3.5 added: 42.9% WR, model 63.7% (n=14).
+    # Both ranges show systematic model over-prediction; Poisson underestimates elite shot volume.
+    if stat == "SOG" and direction == "under" and line <= 3.5:
         return False, "G8C"
+
+    # G8D: 3PM over at line ≤ 1.5 — 50.0% actual vs 70.4% model (n=16, gap −20pp).
+    # Binary line (needs 2+ threes) creates structural over-projection; consistent with
+    # G8B/G8C pattern. Was too noisy at n=8-9 (May 13); confirmed at n=16.
+    if stat == "3PM" and direction == "over" and line <= 1.5:
+        return False, "G8D"
 
     # WNBA structural gates — applied after sport is known
     if sport == "WNBA":
@@ -1148,6 +1153,7 @@ def apply_r12_cooldown(picks, cooldown_players):
 MAX_PREMIUM_PICKS = 3  # per-sport cap (multi-sport days: MLB+WNBA+NHL+NBA)
 MIN_PICK_SCORE    = 25  # Minimum pick_score to appear on premium card — kills coin-flip filler
 MIN_OVER_SCORE    = 40  # Higher score floor for over picks — overs 5-13 (27.8% WR) vs 18 at sub-40 avg
+MIN_WIN_PROB      = 0.55  # WP 0.50-0.60 bucket: 39.3% actual vs 55% model (n=61, gap -15.7pp, 2026-05-23)
 
 def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     """
@@ -1182,6 +1188,8 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
         if p.get("pick_score", 0) < MIN_PICK_SCORE:
             return False
         if p["direction"] == "over" and p.get("pick_score", 0) < MIN_OVER_SCORE:
+            return False
+        if p.get("win_prob", 1.0) < MIN_WIN_PROB:
             return False
         if game_count[game] >= max_per_game:  # R7
             return False
@@ -5530,7 +5538,9 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     has_g8_fail = any(
         (p["stat"] in ("AST","REB","SOG","K","HA","HITS") and p["line"] <= 1.5) or
         (p["stat"] == "AST" and p["direction"] == "over" and p["line"] <= 4.5
-         and p.get("sport") != "WNBA")
+         and p.get("sport") != "WNBA") or
+        (p["stat"] == "SOG" and p["direction"] == "under" and p["line"] <= 3.5) or
+        (p["stat"] == "3PM" and p["direction"] == "over" and p["line"] <= 1.5)
         for p in all_qualified
     )
     has_heavy_juice = any(p["odds"] <= -150 for p in all_qualified)
@@ -5595,7 +5605,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 1),
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
-        (f"G8/G8B/G8C enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over ≤ 4.5; no SOG under ≤ 2.5", not has_g8_fail),
+        (f"G8/G8B/G8C/G8D enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over ≤ 4.5; no SOG under ≤ 3.5; no 3PM over ≤ 1.5", not has_g8_fail),
         (f"G13B enforced: TB killed (G_TB_DISABLED), HRR fully killed (G_HRR_DISABLED)", not has_g13b_fail),
         (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
         (f"G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)", not has_g15_fail),
