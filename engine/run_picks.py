@@ -53,11 +53,6 @@ def _pick_log_lock(log_path, timeout=30):
         yield
     # _FileLockTimeout propagates naturally if the lock can't be acquired.
 
-try:
-    import anthropic as _anthropic
-    _ANTHROPIC_AVAILABLE = True
-except ImportError:
-    _ANTHROPIC_AVAILABLE = False
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -410,41 +405,6 @@ VAKE_MULT = {
     "variance":    {"T1": 1.00, "T1B": 1.00, "T2": 0.85, "T3": 0.65, "T4": 0.40},
     "tier":        {"T1": 1.00, "T1B": 1.00, "T2": 0.90, "T3": 0.60, "T4": 0.35},
 }
-
-# ── Context Sanity Layer ──────────────────────────────────────
-CONTEXT_API_MODEL       = "claude-haiku-4-5-20251001"
-CONTEXT_MAX_WORKERS     = 8      # concurrent API calls
-_CONTEXT_CACHE          = {}     # {(sport, player, stat, line, direction, date_str): (verdict, reason, score)}
-
-def _build_context_prompt(sport, stat, player, direction, line, game, today, pregame_notes=""):
-    """Build a sanity-check prompt for a single pick.
-
-    This is NOT a projection system — SaberSim already handles matchup/form analysis.
-    The only job here is to catch obvious red flags that broke AFTER the CSV was exported:
-    player injured/scratched, late lineup change, something clearly wrong.
-
-    Args:
-        sport, stat, player, direction, line, game, today: pick fields
-        pregame_notes: pre-scanned injury/lineup bulletin from run_pregame_scan
-    """
-    notes_block = f"\nToday's injury/lineup news:\n{pregame_notes}\n" if pregame_notes else "\n(No pregame intel available)\n"
-
-    return (
-        f"Date: {today} | Pick: {player} {direction} {line} {stat} | Game: {game}"
-        f"{notes_block}\n"
-        f"Two-part check for {player} tonight:\n"
-        f"1. RED FLAG? Is {player} listed OUT, DOUBTFUL, scratched, or did a serious injury break today?\n"
-        f"2. If no red flag — give a 'supports' verdict if ANY of these are true:\n"
-        f"   - {player} is confirmed active/healthy/present tonight\n"
-        f"   - {player} has been in strong recent form\n"
-        f"   - A key opponent defender or teammate is out affecting this matchup\n"
-        f"   - Any other clear positive context for this bet\n\n"
-        f'Output ONLY this JSON: {{"verdict": "conflicts"|"neutral"|"supports", "reason": "<10 words>", "score": 0-3}}\n\n'
-        f'- "conflicts" = player OUT, DOUBTFUL, scratched, or serious new injury — ONLY for clear hard stops\n'
-        f'- "supports"  = confirmed active OR any positive signal found — lean toward this when no red flag\n'
-        f'- "neutral"   = genuinely nothing found either way\n'
-        f'- score: 0 (nothing found) | 1 (weak signal) | 2 (solid signal) | 3 (strong confirmation)'
-    )
 
 PICK_SCORE_MODES = {
     "Default":      (0.40, 0.60),
@@ -4378,14 +4338,9 @@ def build_premium_embed(premium, mode, today, suppress_ping=False, sport=None):
                 last = parts[-2]
             pick_label = f"{last} {direction} {line_val} {stat}"
 
-        ctx_verdict = p.get("context_verdict", "")
-        ctx_reason  = p.get("context_reason", "")
-        ctx_flag    = " ⚠️" if ctx_verdict == "conflicts" else ""
         inj_flag    = " 🔄" if p.get("injury_trigger") else ""
-        lines.append(f"{e} **{pick_label}** | {odds_str} | {book_str} | **{size:.2f}u**{ctx_flag}{inj_flag}")
+        lines.append(f"{e} **{pick_label}** | {odds_str} | {book_str} | **{size:.2f}u**{inj_flag}")
         lines.append(f"╰ {game} | Edge {edge_str} | Score {score_str}")
-        if ctx_verdict == "supports" and ctx_reason:
-            lines.append(f"  ↳ ✅ {ctx_reason}")
 
     lines.append(f"\n━━━━━━━━━━━━━━━━")
     lines.append(f"**Total:** {total_u:.2f}u")
@@ -4439,10 +4394,6 @@ def build_potd_embed(potd, today, sport=None):
             last = parts[-2]
         pick_label = f"{last} {direction} {line_val} {stat}"
 
-    ctx_verdict = potd.get("context_verdict", "")
-    ctx_reason  = potd.get("context_reason", "")
-    ctx_line    = f"\n↳ ✅ {ctx_reason}" if ctx_verdict == "supports" and ctx_reason else ""
-
     description = (
         f"━━━━━━━━━━━━━━━━\n"
         f"**{pick_label}**\n"
@@ -4451,7 +4402,6 @@ def build_potd_embed(potd, today, sport=None):
         f"{odds_str} @ {book_str} | **{size:.2f}u**\n\n"
         f"Edge: **{edge_str}** | Score: **{score_str}**\n"
         f"Proj: {proj:.1f} {stat.lower()}"
-        f"{ctx_line}"
     )
 
     sport_suffix = f" · {sport}" if sport else ""
@@ -5390,333 +5340,6 @@ def post_killshots_to_discord(killshots, today, today_str, suppress_ping=False):
             print(f"  [Discord] ⚠ KILLSHOT post failed: {pick['player']} {pick['stat']}")
 
 
-# ============================================================
-#  CONTEXT SANITY LAYER
-# ============================================================
-
-_STAT_DISPLAY = {
-    "SOG":        "shots on goal",
-    "PTS":        "points",
-    "REB":        "rebounds",
-    "AST":        "assists",
-    "3PM":        "3-pointers made",
-    "REC":        "receptions",
-    "SPREAD":     "spread",
-    "ML_FAV":     "moneyline (fav)",
-    "ML_DOG":     "moneyline (dog)",
-    "TOTAL":      "game total",
-    "TEAM_TOTAL": "team total",
-    "F5_ML":      "F5 moneyline",
-    "F5_SPREAD":  "F5 spread",
-    "F5_TOTAL":   "F5 total",
-    "NRFI":       "no run first inning",
-    "YRFI":       "yes run first inning",
-    "PARLAY":     "parlay",
-    "GOLF_WIN":   "tournament win",
-}
-
-def fmt_stat(stat: str) -> str:
-    """Return human-readable stat label for context prompts."""
-    return _STAT_DISPLAY.get(stat, stat)
-
-
-def run_pregame_scan(sports, today_str):
-    """Fire one Haiku+web_search call per sport to get a broad injury/lineup bulletin.
-
-    Called once before individual pick context checks.  The bulletins are passed
-    into each pick's prompt as pregame_notes so the model doesn't have to re-search
-    for broad injury news on every single pick.
-
-    Args:
-        sports:     iterable of sport strings found in today's qualifying picks
-        today_str:  YYYY-MM-DD
-
-    Returns:
-        dict mapping sport → bulletin text  (empty string if scan failed)
-    """
-    if not _ANTHROPIC_AVAILABLE:
-        return {}
-
-    _sport_prompts = {
-        "NBA": (
-            f"Today is {today_str}. Search for today's NBA injury report and lineup news. "
-            "List any players who are OUT, QUESTIONABLE, or DOUBTFUL. "
-            "Also note any confirmed starters or key role changes. "
-            "Be concise — 4-8 bullet points max."
-        ),
-        "WNBA": (
-            f"Today is {today_str}. Search for today's WNBA injury report and lineup news. "
-            "List any players who are OUT, QUESTIONABLE, or DOUBTFUL. "
-            "Also note any confirmed starters or key role changes. "
-            "Be concise — 4-8 bullet points max."
-        ),
-        "NHL": (
-            f"Today is {today_str}. Search for today's NHL injury report and lineup news. "
-            "List confirmed scratches, players marked OUT or QUESTIONABLE, "
-            "and any confirmed starting goalies announced. "
-            "Be concise — 4-8 bullet points max."
-        ),
-        "MLB": (
-            f"Today is {today_str}. Search for today's MLB starting pitchers and key lineup news. "
-            "List confirmed starters, any notable batting order changes, and injured/scratched players. "
-            "Be concise — 4-8 bullet points max."
-        ),
-    }
-
-    def _fetch(sport):
-        prompt = _sport_prompts.get(sport, "")
-        if not prompt:
-            return sport, ""
-        try:
-            client = _anthropic.Anthropic()
-            resp = client.messages.create(
-                model      = CONTEXT_API_MODEL,
-                max_tokens = 500,
-                tools      = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 2}],
-                messages   = [{"role": "user", "content": prompt}],
-            )
-            text = ""
-            for block in reversed(resp.content):
-                if hasattr(block, "text") and block.text.strip():
-                    text = block.text.strip()
-                    break
-            return sport, text
-        except Exception as e:
-            logger.warning(f"[Context] Pregame scan error for {sport}: {e}")
-            return sport, ""
-
-    unique_sports = list(dict.fromkeys(s for s in sports if s in _sport_prompts))
-    if not unique_sports:
-        return {}
-
-    print(f"  [Context] Pre-scanning injury/lineup news for: {', '.join(unique_sports)} ...")
-    bulletins = {}
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        futures = {ex.submit(_fetch, sport): sport for sport in unique_sports}
-        for fut in as_completed(futures):
-            sport, text = fut.result()
-            bulletins[sport] = text
-            status = "✅" if text else "—"
-            print(f"  [Context]   {status} {sport} pregame scan {'done' if text else 'empty'}")
-    return bulletins
-
-
-def run_context_check(pick, today_str, pregame_notes=""):
-    """Fire a Claude API call with web search for one qualifying pick.
-
-    Returns (verdict, reason, score):
-        verdict: 'supports' | 'neutral' | 'conflicts'
-        reason:  brief explanation string (≤12 words)
-        score:   0-3 confluence count (independent positive signals)
-
-    Errors / missing anthropic → ('neutral', 'error description', 0).
-    Results are cached per (player, stat, direction, date) for the session.
-    """
-    cache_key = (pick.get("sport", ""), pick["player"], pick["stat"], str(pick.get("line", "")), pick["direction"], today_str)
-    if cache_key in _CONTEXT_CACHE:
-        return _CONTEXT_CACHE[cache_key]
-
-    if not _ANTHROPIC_AVAILABLE:
-        return "neutral", "anthropic package not installed", 0
-
-    sport  = pick.get("sport", "NBA")
-    prompt = _build_context_prompt(
-        sport         = sport,
-        stat          = pick["stat"],
-        player        = pick["player"],
-        direction     = pick["direction"].capitalize(),
-        line          = pick["line"],
-        game          = pick.get("game", "TBD"),
-        today         = today_str,
-        pregame_notes = pregame_notes,
-    )
-
-    try:
-        client   = _anthropic.Anthropic()          # reads ANTHROPIC_API_KEY from env
-        response = client.messages.create(
-            model     = CONTEXT_API_MODEL,
-            max_tokens= 120,
-            system    = (
-                "You output ONLY valid JSON. No prose. No markdown. No explanation. "
-                'Respond with exactly: {"verdict": "...", "reason": "...", "score": N} '
-                "Nothing before or after the JSON object."
-            ),
-            messages  = [{"role": "user", "content": prompt}],
-        )
-
-        # Extract the last text block (appears after any web_search tool_result blocks)
-        result_text = ""
-        for block in reversed(response.content):
-            if hasattr(block, "text") and block.text.strip():
-                result_text = block.text.strip()
-                break
-
-        # Parse JSON verdict
-        verdict, reason, score = "neutral", "", 0
-        parsed_ok = False
-
-        m = re.search(r'\{[^{}]+\}', result_text, re.DOTALL)
-        if m:
-            try:
-                data    = json.loads(m.group())
-                verdict = data.get("verdict", "neutral").lower()
-                reason  = data.get("reason", "")
-                try:
-                    score = max(0, min(3, int(data.get("score", 0))))
-                except (TypeError, ValueError):
-                    score = 0
-                parsed_ok = True
-            except (json.JSONDecodeError, ValueError, TypeError):
-                pass
-
-        # Fallback: keyword scan if JSON didn't parse at all OR verdict is invalid
-        if not parsed_ok or verdict not in ("conflicts", "neutral", "supports"):
-            tl = result_text.lower()
-            _conflict_words = (
-                "out ", "ruled out", "scratch", "doubtful", "injured", "injury",
-                "did not play", "won't play", "listed out", "inactive",
-            )
-            verdict = "conflicts" if any(w in tl for w in _conflict_words) else "neutral"
-            for sent in re.split(r'[.!?\n]', result_text):
-                sent = re.sub(r'\*+', '', sent).strip().lstrip('—–- \t:')
-                if sent and not sent.startswith('{') and len(sent) > 8:
-                    reason = " ".join(sent.split()[:10])
-                    break
-            if not reason:
-                reason = "no detail"
-
-        # Clean up reason
-        reason = re.sub(r'\*+', '', reason)
-        reason = re.sub(r'^[—–\-\s:]+', '', reason).strip()
-        reason = " ".join(reason.split()[:10])
-
-        if verdict not in ("conflicts", "neutral", "supports"):
-            verdict = "neutral"
-
-    except Exception as e:
-        logger.warning(f"[Context] API error for {pick['player']}: {e}")
-        verdict, reason, score = "neutral", "api error", 0
-
-    _CONTEXT_CACHE[cache_key] = (verdict, reason, score)
-    return verdict, reason, score
-
-
-def apply_context_sanity(qualified, today_str, skip=False, mode="Default",
-                         auto_tiers=None):
-    """Post-gate context sanity layer — runs after all math gates, before sizing.
-
-    For each qualifying pick:
-      - Fires a Claude API call (optional pregame web_search) using a sport-specific prompt
-      - Returns structured verdict: 'supports' | 'neutral' | 'conflicts' + score 0-3
-      - On 'conflicts': pick is cut entirely (moved to context_rejects,
-        gate_result = 'CONTEXT_CONFLICT' in diagnostics)
-      - On 'supports' / 'neutral' / 'skipped' / 'timeout' / 'api error': pick passes
-
-    Returns (still_qualified, context_rejects).
-    Pass skip=True (--no-context default) to bypass entirely.
-
-    auto_tiers: set of tier strings (e.g. {"T1"}) that are always checked
-    regardless of the skip flag. All other picks still respect skip.
-
-    Audit H-11: when the feature is globally disabled (skip=True), we mark
-    the verdict as ``"disabled"`` — NOT ``"skipped"``. These are different
-    states:
-      * ``disabled``  — Jono didn't ask for the context layer. Feature is
-                       dark. Rows with this value were never evaluated.
-      * ``skipped``   — feature was on but we short-circuited for a specific
-                       reason (e.g. anthropic package missing).
-      * ``neutral``   — evaluated, no flags either way.
-      * ``supports``  — evaluated, positive signal.
-      * ``conflicts`` — evaluated, red flag (pick is cut; see caller).
-
-    Keeping them distinct means future schema migrations can tell "never
-    looked" apart from "looked and punted", and any logging bug on the
-    context side fails loudly (unexpected verdict) instead of silently
-    poisoning a blank column.
-    """
-    if not qualified:
-        return qualified, []
-
-    # Split: auto_tiers picks are always checked; everything else respects skip.
-    if auto_tiers:
-        always_check = [p for p in qualified if p.get("tier") in auto_tiers]
-        flag_check   = [p for p in qualified if p.get("tier") not in auto_tiers]
-    else:
-        always_check = []
-        flag_check   = qualified
-
-    if skip:
-        for p in flag_check:
-            p["context_verdict"] = "disabled"
-            p["context_reason"]  = ""
-            p["context_score"]   = 0
-        to_check = always_check
-    else:
-        to_check = qualified  # all picks when --context is passed
-
-    if not to_check:
-        return qualified, []
-
-    print(f"\n  [Context] Running sanity layer on {len(to_check)} pick(s) "
-          f"({'T1 auto' if skip else 'all'})...")
-    if not _ANTHROPIC_AVAILABLE:
-        logger.warning("Context: anthropic package not found — skipping (pip install anthropic)")
-        for p in to_check:
-            p["context_verdict"] = "skipped"
-            p["context_reason"]  = "anthropic not installed"
-            p["context_score"]   = 0
-        return qualified, []
-
-    # Step 1: Pre-scan injury/lineup news per sport (one call per sport, not per pick)
-    sports_in_run = [p.get("sport", "NBA") for p in to_check]
-    pregame_bulletins = run_pregame_scan(sports_in_run, today_str)
-
-    # Step 2: Run all individual pick checks concurrently
-    futures_map = {}
-    with ThreadPoolExecutor(max_workers=CONTEXT_MAX_WORKERS) as ex:
-        for p in to_check:
-            notes = pregame_bulletins.get(p.get("sport", "NBA"), "")
-            fut = ex.submit(run_context_check, p, today_str, notes)
-            futures_map[fut] = p
-        for fut in as_completed(futures_map):
-            pick = futures_map[fut]
-            try:
-                verdict, reason, score = fut.result(timeout=45)
-            except Exception:
-                verdict, reason, score = "neutral", "timeout", 0
-            pick["context_verdict"] = verdict
-            pick["context_reason"]  = reason
-            pick["context_score"]   = score
-
-    # Only picks with 'conflicts' verdict are cut. neutral/supports/skipped all pass.
-    # flag_check picks already have "disabled" set above and always pass through.
-    still_qualified  = list(flag_check) if skip else []
-    context_rejects  = []
-
-    for p in to_check:
-        verdict = p["context_verdict"]
-
-        if verdict == "conflicts":
-            p["gate_result"] = "CONTEXT_CONFLICT"
-            context_rejects.append(p)
-            print(f"  [Context] ❌ CUT:      {p['player']:<22} {p['stat']:<4} | {p['context_reason']}")
-        elif verdict == "supports":
-            print(f"  [Context] ✅ SUPPORTS: {p['player']:<22} {p['stat']:<4} | {p['context_reason']}")
-            still_qualified.append(p)
-        else:
-            # neutral / skipped / timeout / api error — all pass
-            print(f"  [Context] —  PASS:     {p['player']:<22} {p['stat']:<4} | {p['context_reason'] or 'no flag'}")
-            still_qualified.append(p)
-
-    n_supports  = sum(1 for p in still_qualified if p.get("context_verdict") == "supports")
-    n_conflicts = len(context_rejects)
-    print(
-        f"\n  [Context] Done — {len(still_qualified)}/{len(qualified)} pass "
-        f"({n_supports} with positive signal, {n_conflicts} cut)"
-    )
-    return still_qualified, context_rejects
-
-
 def format_output(premium, safest5, all_qualified, all_picks, mode, today,
                    safest6_parlay=None, alt_spread_parlay=None, max_per_game=2,
                    killshots=None, units_already_bet=0.0):
@@ -5804,40 +5427,22 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
             out.append(f"  {p.get('size',0):.2f}u | {p['player']} {fmt_dir(p['direction'])}{p['line']} @ {fmt_odds(p['odds'])} ({display_book(p['book'])}) | {fmt_pct(p['win_prob'])} | {fmt_pct(p['adj_edge'])} | {p['game']}")
     out.append("")
 
-    # === G. CONTEXT FLAGS ===
-    # H-11: "disabled" joins "neutral"/"skipped"/"" as a non-flag verdict —
-    # a disabled-feature row has nothing to report.
-    ctx_picks = [p for p in all_qualified
-                 if p.get("context_verdict") not in ("neutral", "skipped", "disabled", "")]
-    if ctx_picks:
-        out.append(f"{'='*50}")
-        out.append("G. CONTEXT FLAGS")
-        out.append(f"{'='*50}")
-        for p in sorted(ctx_picks, key=lambda x: x.get("context_verdict", "")):
-            v = p.get("context_verdict", "")
-            icon = "✅" if v == "supports" else "⚠️ "
-            label = f"{p['player']} {fmt_dir(p['direction'])}{p['line']} {p['stat']}"
-            reason = p.get("context_reason", "")
-            out.append(f"  {icon} {label:<38} {reason}")
-        out.append("")
-
-    # === H. SANITY CHECK TABLE (PASS picks only) ===
+    # === G. SANITY CHECK TABLE (PASS picks only) ===
     out.append(f"{'='*50}")
-    out.append("H. SANITY CHECK TABLE")
+    out.append("G. SANITY CHECK TABLE")
     out.append(f"{'='*50}")
-    out.append(f"{'Pick':<35} {'Proj':>5} {'Line':>5} {'Fair%':>6} {'NV%':>6} {'Edge':>6} {'AdjE':>6} {'Size':>5} {'Tier':>4} {'Ctx':<8}")
-    out.append("─" * 110)
+    out.append(f"{'Pick':<35} {'Proj':>5} {'Line':>5} {'Fair%':>6} {'NV%':>6} {'Edge':>6} {'AdjE':>6} {'Size':>5} {'Tier':>4}")
+    out.append("─" * 100)
     pass_picks = sorted(all_qualified, key=lambda x: x.get("adj_edge", 0), reverse=True)
     for p in pass_picks:
         label = f"{p['player']} {fmt_dir(p['direction'])}{p['line']} {p['stat']}"[:34]
         size  = p.get("size", 0)
         nv    = p.get("nv_prob", 0)
         raw_e = p["raw_edge"]
-        ctx   = p.get("context_verdict", "—")[:8]
         out.append(
             f"{label:<35} {p['proj']:5.1f} {p['line']:5.1f} {p['win_prob']*100:5.1f}% "
             f"{nv*100:5.1f}% {raw_e*100:5.1f}% {p['adj_edge']*100:5.1f}% "
-            f"{size:5.2f} {p.get('tier',''):>4} {ctx:<8}"
+            f"{size:5.2f} {p.get('tier',''):>4}"
         )
     out.append("")
 
@@ -6087,7 +5692,7 @@ def main():
                              "faster CLV accumulation — does not affect Discord or live pick flow.")
     parser.add_argument("--test",       action="store_true", help="Suppress @everyone ping on all Discord posts (safe preview)")
     parser.add_argument("--repost",     action="store_true", help="Re-fire premium card + POTD from the most recent primary log entry")
-    parser.add_argument("--context", action="store_true", help="Enable context sanity layer (Claude API calls for injury/news check)")
+
     parser.add_argument("--killshot", default="", help="Manually promote picks to KILLSHOT tier (comma-separated player last names, e.g. 'Pastrnak,McDavid')")
     parser.add_argument("--log-manual", action="store_true", help="Log a manually posted pick to pick_log.csv (interactive prompt)")
     parser.add_argument("--debug-daily-lay", action="store_true", help="Verbose debug output for alt spread parlay builder")
@@ -6419,18 +6024,9 @@ def main():
     shadow_picks  = [p for p in qualified if p.get("sport") in SHADOW_SPORTS]
     qualified     = [p for p in qualified if p.get("sport") not in SHADOW_SPORTS]
 
-    # ── Context sanity layer ──────────────────────────────────────────────────
-    # T1 picks are always checked (KILLSHOT risk — @everyone ping, wrong pick = brand damage).
-    # All other picks: opt-in via --context flag.
     today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
-    today_str_cs = today_str
-    qualified, context_rejects = apply_context_sanity(
-        qualified, today_str_cs, skip=not args.context, mode=args.mode,
-        auto_tiers=set(),
-    )
-    failed.extend(context_rejects)
 
-    print(f"\n  Qualified picks (post-context): {len(qualified)}")
+    print(f"\n  Qualified picks: {len(qualified)}")
     print(f"  Failed gates: {len(failed)}")
 
     # Gate failure diagnostic
