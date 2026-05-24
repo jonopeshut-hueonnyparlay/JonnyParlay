@@ -14,9 +14,9 @@
 - `PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate.
 
 ## Data-gated / Open
-- **H3 (Platt refit)**: gated on ~300 post-v4 `over_p_raw` rows (45 as of 2026-05-22). Check: count non-empty `over_p_raw` in pick_log.csv.
-- **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv` (46/100 as of 2026-05-22). Daemon stable post-2026-05-09 MAX_UPTIME fix.
-- **SGP Platt calibration gate**: 42/100 as of 2026-05-22. Current Platt (A=1.4988, B=−0.8102) built on NBA props; applying to SGP leg probs over-corrects (model→58% vs 69% actual win rate). Gate: 100 scored SGP slips before any Platt refit on SGP data.
+- **H3 (Platt refit)**: gated on ~300 post-v4 `over_p_raw` rows (49 as of 2026-05-23). Check: count non-empty `over_p_raw` in pick_log.csv.
+- **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv` (49/100 as of 2026-05-23). Daemon stable post-2026-05-09 MAX_UPTIME fix.
+- **SGP Platt calibration gate**: 42/100 as of 2026-05-23. Current Platt (A=1.4988, B=−0.8102) built on NBA props; applying to SGP leg probs over-corrects (model→58% vs 69% actual win rate). Gate: 100 scored SGP slips before any Platt refit on SGP data.
 - **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`): refit 2026-05-09 on 76,604 trailing-10-game snapshots. MPG threshold confirmed at 26 (24-26 MPG players project like sixth_man regardless of sr; +6.9% PO bias with starter scalar vs -4.6% with sixth_man). 20/12/5 MPG and 0.60 sr unchanged.
 - **Position model** (2026-05-10): all position groupings expanded from G/F/C → PG/SG/SF/PF/C. `_pos_group()` in nba_projector, `_position_group()` in projections_db, and `_normalise_position()` in injury_parser all consistent. NBA API only returns G/F/C + combos → effective mapping: G→SG, F→SF, G-F→SF, F-C→PF, C→C. PG tier ready for finer data. Injury redistribution `_POS_FLOW` expanded to 5-position flows. All Bayesian priors (REB/AST/STL/BLK/TOV/archetypes) split using StatMuse 2024-25 per-36 ratios; weighted averages preserved. DB migrated: 587 players re-pulled, team_def_splits recomputed (2880 rows, SG/SF/PF/C groups). PF_high BLK tier added (≥0.020 BLK/min, ~Turner/JJJ). C/PF classification threshold raised 5→10 games.
 - **`_POS_FLOW` PG receiver fix** (2026-05-10): NBA API never returns position=PG, so the PG receiver slot in every `_POS_FLOW` row was always skipped → SG injuries silently redistributed only 78% of missing minutes. PG weight folded into SG; same-position weights unchanged. Empirical surplus analysis (84k rows, 3 seasons) attempted but methodology flawed for same-position flows: 64% of C-absent events have no rotation-quality backup C (teams go small ball), diluting C→C empirical signal to near-zero. Intuitive same-position weights correct for the cases the code actually handles.
@@ -65,15 +65,14 @@ Discord bot display name: **PicksByJonny**
 | `engine/results_graphic.py` | Generates PNG results card posted to Discord after recap. |
 | `engine/analyze_picks.py` | Backtest analysis dashboard. Usage: `python analyze_picks.py [--sport X] [--since YYYY-MM-DD] [--stat X] [--shadow] [--export]` |
 | `engine/weekly_recap.py` | Weekly P&L recap posted to #announcements every Sunday. |
-| `engine/morning_preview.py` | Posts daily card teaser to #announcements after run_picks.py runs. |
 | `data/pick_log.csv` | Model-generated ledger (primary / bonus / daily_lay / sgp / longshot). Starts Apr 14 2026. **29-column** header (schema_version=4, last col is `over_p_raw`). |
 | `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 29-column schema. Graded alongside main log but never posted to Discord. Excluded from CLV daemon. |
 | `data/pick_log_mlb.csv` | Historical MLB shadow log (pre-go-live, Apr 12–May 19). MLB now posts to main `pick_log.csv`. |
+| `data/pick_log_wnba.csv` | WNBA shadow log — separate from pick_log.csv. 43 picks (May 19–21), 42 graded. Go-live gate: 100 graded picks post-dampener (Jun 3+). |
 | `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. Same-Game Parlay builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
 | `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
 | `setup_clv_task.ps1` | Registers CLV daemon scheduled task. S4U logon + WakeToRun. `ExecutionTimeLimit=22h`. Re-run as admin to reset. |
 | `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. |
-| `tests/test_context.py` | Manual test harness for context system — run on Windows to test `--context` flag behaviour. |
 
 ## Discord Structure (Target)
 ```
@@ -114,7 +113,7 @@ ARCHIVE: (collapsed)
 ## Python Dependencies
 - Install: `pip install -r requirements.txt --break-system-packages`
 - **Hard deps (required to import):** `filelock` (cross-process locks), `requests`
-- **Soft deps (feature-gated):** `openpyxl` (xlsx recap), `Pillow` (results_graphic PNG), `anthropic` (--context mode)
+- **Soft deps (feature-gated):** `openpyxl` (xlsx recap), `Pillow` (results_graphic PNG)
 
 ## pick_log.csv Schema (current — schema_version 4, 29 columns)
 `date, run_time, run_type, sport, player, team, stat, line, direction, proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode, result, closing_odds, clv, card_slot, is_home, context_verdict, context_reason, context_score, legs, over_p_raw`
@@ -136,10 +135,7 @@ Authoritative source: `engine/pick_log_schema.py`. Updated to v4 by RB8 IMMEDIAT
 - **NHL SOG stat cap:** max 6 picks per run (`STAT_CAP = {"SOG": 6, ...}`; default cap = 2 for other stats).
 
 ## Context Sanity System
-**Status: DISABLED by default.** Enable with `--context` flag. Requires `anthropic` package + `ANTHROPIC_API_KEY`.
-- `run_pregame_scan()` — one Haiku + web_search call per sport (concurrent)
-- `run_context_check()` — one call per pick (up to 8 concurrent), checks for OUT/scratched flags
-- `conflicts` → pick cut | `supports` → pass + annotation | `neutral` → pass
+**DELETED 2026-05-23.** All context system code removed from run_picks.py. The `context_verdict` column in pick_log.csv remains (existing rows carry "disabled" value). The `--context` flag no longer exists.
 
 ## MLB Status
 **LIVE as of 2026-05-20.** Picks post to Discord and log to `pick_log.csv`. CLV captured automatically by daemon. Historical shadow log at `data/pick_log_mlb.csv` (Apr 12–May 19, pre-go-live).

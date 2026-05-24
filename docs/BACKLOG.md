@@ -4,7 +4,7 @@ Ordered by ease of implementation / lowest risk first.
 Items that need research resolve to "ship" or "close" at end of session.
 Passive items are blocked on data accumulation — nothing to do.
 
-Last updated: 2026-05-13 (session 2)
+Last updated: 2026-05-23
 
 ---
 
@@ -36,7 +36,7 @@ Last updated: 2026-05-13 (session 2)
 | # | Item | Notes |
 |---|------|-------|
 | 10 | ~~**Round-stratified playoff scalars v2**~~ ✅ CLOSED | Analysed 2026-05-12. Round effect is real but CF=82 rows, Finals=108 rows — too thin for reliable separate scalars. Revisit after 2-3 more full playoff seasons. Pooled 1.075 stays. |
-| 11 | ~~**Context system re-enable (KILLSHOT only)**~~ ✅ | Done (prev session). `auto_tiers={"T1"}` live in apply_context_sanity — T1 picks always context-checked regardless of --context flag. |
+| 11 | ~~**Context system re-enable (KILLSHOT only)**~~ ✅ DELETED | Shipped then reversed. Context sanity system deleted entirely 2026-05-23 — all context code removed from run_picks.py. `context_verdict` column stays in pick_log.csv schema (existing rows). |
 
 ---
 
@@ -68,6 +68,9 @@ Each of these is a focused session: pull data, form a verdict, implement a targe
 | 20 | **Referee tendency data** | Low — small additive multiplier in nba_projector |
 | 21 | ~~**Line shopping gap analysis**~~ ✅ CLOSED | Analysed 2026-05-13. Implementation is correct: cross-book best over/under odds is industry-standard no-vig removal. Dedup keeps best adj_edge line per player/stat/direction. No multi-line duplication. No structural gap found. |
 | 22 | **SGP copula — PARTIAL / DATA-GATED** | Analysed 2026-05-13. 8W-28L actual (22.2%) vs model 30.5% indep product. Root cause: SGP builder uses raw pre-Platt leg WPs (76.1% avg model → ~69% actual). Applying current Platt over-corrects (→58%). Copula correlation structure (ρ values) is reasonable — input probs are the problem. SGPs profitable vs market (+2.2pp edge vs market's 20% implied). Fix: data-gated pending H3 Platt refit + n≥100 SGP graded slips. |
+| 33 | ~~**G8C — SOG under ban ≤2.5**~~ ✅ CLOSED | Shipped 2026-05-23. SOG unders at line ≤2.5 banned (empirical WR break-even at juice). |
+| 34 | ~~**HRR killed**~~ ✅ CLOSED | Shipped 2026-05-23. G_HRR_DISABLED — 57.4% empirical WR at line=0.5 is break-even at juice. HRR stat removed from pipeline. |
+| 35 | ~~**GG6 projection clearance**~~ ✅ CLOSED | Shipped 2026-05-23. TEAM_TOTAL/TOTAL/F5_TOTAL picks require proj on correct side of line. |
 
 ---
 
@@ -94,9 +97,11 @@ Each of these is a focused session: pull data, form a verdict, implement a targe
 
 | # | Item | Gate |
 |---|------|------|
-| 28 | **H3 Platt refit** | ~13/300 `over_p_raw` rows. Auto-unblocks around ~300. |
-| 29 | **CLV signal calibration** | ~11/100 shadow CLV rows. Will identify which edge signals predict positive CLV. |
+| 28 | **H3 Platt refit** | 49/300 `over_p_raw` rows (2026-05-23). Auto-unblocks around ~300. |
+| 29 | **CLV signal calibration** | 49/100 shadow CLV rows in pick_log_custom.csv (2026-05-23). Will identify which edge signals predict positive CLV. |
 | 30 | **Shadow CLV go-live** | Follows #29. Jono's call. |
+| 31 | **SGP Platt calibration** | 42/100 graded SGP slips (2026-05-23). Gate before any Platt refit on SGP data. |
+| 32 | **WNBA go-live** | 43 picks logged, 42 graded (pick_log_wnba.csv). Go-live gate: 100 graded picks post-dampener (Jun 3+). |
 
 ---
 
