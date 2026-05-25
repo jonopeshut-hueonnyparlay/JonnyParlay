@@ -2371,7 +2371,7 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                                             cold_start_subtype=_cold_start_subtype,
                                             injury_trigger=_injury_trigger, stat=stat)
             if adj_edge >= 0.15:
-                log.warning("[LARGE-EDGE] %s %s %s %.1f%% edge — verify lineup/injury before accepting",
+                logger.warning("[LARGE-EDGE] %s %s %s %.1f%% edge — verify lineup/injury before accepting",
                             prop["player"], stat, direction, adj_edge * 100)
             picks.append(pick)
 
