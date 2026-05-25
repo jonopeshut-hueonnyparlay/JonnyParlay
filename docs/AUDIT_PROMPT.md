@@ -1,90 +1,248 @@
 # JonnyParlay Full System Audit Prompt
 
-Use this prompt to commission a complete line-by-line audit of the entire codebase.
-Paste into a fresh Cowork session with the JonnyParlay folder mounted.
+Paste into a fresh Claude Code session. This covers every layer of the engine.
+Read CLAUDE.md first for system context before starting.
 
 ---
 
 ## PROMPT
 
-You are auditing the JonnyParlay sports betting engine — a production Python system that runs daily, posts picks to Discord, logs results, and tracks CLV. Real money is on the line. Be thorough and unsparing.
+You are performing a comprehensive technical audit of the JonnyParlay sports betting engine.
+This is a production system posting picks to Discord daily with real money on the line.
+We are about to go monetized. The model must be correct. Be thorough and unsparing.
 
-**Audit every line of every file listed below. Flag anything that is broken, fragile, inconsistent, or silently wrong.**
+Read `CLAUDE.md` in full before starting — it contains the authoritative system spec.
 
-### Files to audit (in order):
+---
 
-1. `engine/run_picks.py` — main engine (~4650 lines)
-2. `engine/grade_picks.py` — grading + Discord recap
-3. `engine/capture_clv.py` — CLV capture daemon
-4. `engine/clv_report.py` — CLV analysis CLI
-5. `engine/results_graphic.py` — PNG results card generator
-6. `engine/analyze_picks.py` — backtest analysis dashboard
-7. `engine/weekly_recap.py` — weekly P&L recap
-8. `engine/morning_preview.py` — daily card announcement
+## TRACK A — Probability Pipeline (highest priority)
 
-### For each file, check:
+Read `engine/run_picks.py` in full. Audit every probability calculation.
 
-**Correctness**
-- Logic errors, off-by-one errors, wrong comparisons
-- Math errors in edge/probability/CLV calculations
-- Gates/rules that can be bypassed or fire incorrectly
-- Any function that silently returns wrong results
+### A1. Distribution model correctness
 
-**Data integrity**
-- CSV read/write consistency — column counts, header mismatches, field ordering
-- Pick_log paths — all must use `~/Documents/JonnyParlay/data/pick_log.csv` (with `data/` subdir)
-- Dedup logic — any case where the same pick could be double-logged or double-posted
-- Grading logic — any case where a win grades as loss or vice versa
+For each stat in `POISSON_STATS`, `NB_STATS`, `COMBO_STATS`, and everything using `SIGMA`:
+- Is the chosen distribution (Poisson / NB / Normal / combo-Normal) mathematically correct for that stat?
+- For NB stats: is the `NB_R` value empirically calibrated or a guess? When was it last updated?
+- For Poisson stats: is Poisson actually a good fit (var ≈ mean)? Check the comment history for evidence.
+- For Normal stats: are the `SIGMA` multiplier/min values empirically calibrated or guesses?
+- Are there any stats that should be in a different distribution model?
 
-**Robustness**
-- Unhandled exceptions that would crash silently
-- API failures with no fallback
-- File not found cases that return wrong defaults instead of erroring
-- Race conditions between daemon writes and engine reads to pick_log.csv
+### A2. Platt scaling
 
-**Consistency across files**
-- BOOK_DISPLAY dicts — are all 18 CO_LEGAL_BOOKS present in every file that has one?
-- HEADER columns — do all write sites (primary log, bonus log, manual log, daily_lay log) write the same 27 columns in the same order?
-- `is_home` field — logged correctly for SPREAD/ML/F5 picks? Read correctly at grade time?
-- Book key normalization — are regional suffixes (e.g. `hardrockbet_fl`) handled consistently everywhere?
-- Timezone handling — all Discord timestamps and date comparisons in correct timezone?
+- Find `PLATT_A`, `PLATT_B` constants. What is the current formula?
+- Is it raw-probability space `sigmoid(A*p + B)` or logit-space `sigmoid(A*logit(p) + B)`?
+- Which formula is mathematically correct for Platt scaling? (Answer: logit-space)
+- What is the H3 gate status — how many `over_p_raw` rows exist in `data/pick_log.csv`?
+- Is `calibrate_platt.py` using logit-space? Does it have the `--force` and `--native-only` flags?
 
-**Discord posting**
-- Any webhook that could double-post on reruns
-- Guard files / `_card_already_posted_today` — any edge case that bypasses the guard
-- Any embed field that could overflow Discord's 1024-char field limit or 6000-char embed limit
+### A3. over_p calculation
 
-**CLV daemon specifically**
-- Capture window logic — is T-5 to T+1 min correct for all sports?
-- Game matching (`game_str_matches`) — any case where the wrong event gets matched?
-- Line matching (`best_price`) — could it grab the wrong side (over vs under, home vs away)?
-- Write logic — could a CLV write corrupt an existing row?
+- Trace `over_p` from raw projection through to the logged `over_p_raw` column.
+- Is `over_p_raw` being logged BEFORE Platt calibration is applied? Verify.
+- Is `win_prob` (the field used for gates and sizing) being computed AFTER Platt? Verify.
+- Can `over_p_raw` ever equal the post-Platt value? If so, that contaminates future refits.
 
-**Performance / API usage**
-- Any unnecessary API calls in hot loops
-- Cache usage — is the 15-min odds cache in run_picks.py being used correctly?
+### A4. Confidence scalar (I6)
 
-### Output format:
+- Find `conf` / `adj_edge` / `adj_wp` in `evaluate_props()`.
+- Is the confidence scalar applied to BOTH `adj_edge` AND `win_prob`? It must be — asymmetric application inflates pick_score for low-GP players.
+- Are the GP thresholds (10 / 20 games) reasonable? Is there empirical justification?
 
-For each issue found:
+### A5. Gate logic audit
+
+For every gate in `check_game_gates()` and `check_prop_gates()`:
+- What is the gate testing?
+- Is there empirical evidence it improves outcomes? (Check `docs/research/EMPIRICAL_ANALYSIS_2026-05-24.md`)
+- Are any gates contradictory (gate A passes what gate B blocks)?
+- Are any gates redundant (one subsumes another)?
+- G8D specifically: is 3PM over ≤1.5 blocked? Check the empirical data — 1.5-line 3PM over has -23.8pp gap (n=13).
+- G8C specifically: is SOG under ≤2.5 AND ≤3.5 blocked? Check the empirical data.
+- Is MIN_WIN_PROB meaningful? The 0.55-0.60 bucket has 33.3% WR (worse than 0.50-0.55 at 43.6%). Should MIN_WIN_PROB be raised or the gate redesigned?
+
+### A6. Edge calculation
+
+- Trace `raw_edge` from `nv_prob` to final value.
+- Is vig removal correct? Is the formula `p_implied = 1/(1 + 100/abs(odds))` for favorites and `p_implied = odds/(100 + odds)` for underdogs? Verify both branches.
+- Is the no-vig probability calculated correctly from the two-sided market?
+- Any case where `nv_prob` is used raw (without vig removal)?
+
+### A7. Combo stat probability
+
+- For COMBO stats (PRA, PR, PA, RA): how is the joint probability computed?
+- Is correlation between components modeled? If not, is the independence assumption documented?
+- Are the combo sigma values based on the correlated joint distribution or the sum of individual sigmas?
+
+---
+
+## TRACK B — Gate Empirical Validation
+
+Load `data/pick_log.csv`. Using the empirical data in `docs/research/EMPIRICAL_ANALYSIS_2026-05-24.md` (n=182 settled primary/bonus picks):
+
+### B1. Which gates/filters are empirically unjustified?
+- Identify every gate whose blocked category would have outperformed the allowed category.
+- Identify every gate whose allowed category has negative EV based on empirical data.
+
+### B2. Stat-direction performance
+Cross-reference every (stat, direction) pair with n≥10 against the model WP:
+- Which pairs have model WP > 10pp above actual WR?
+- Which are systematic losers (negative units)?
+- Are these pairs currently blocked, or still allowed through?
+
+### B3. Tier performance
+- T1 is -3.75u with 46.6% WR. T2 is +12.00u with 60.3% WR.
+- Is T1 genuinely the highest-quality tier by model definition? If T1 is empirically losing to T2, investigate whether the tier assignment criteria are correct.
+
+### B4. Pick score predictive validity
+- Using `docs/research/EMPIRICAL_ANALYSIS_2026-05-24.md` Section 7 (Pick Score Bucket):
+  - Scores <40 have ≤40% WR. Scores 60+ have ≥66% WR.
+  - Is `MIN_PICK_SCORE` set appropriately? Is there a missing gate at score ≥40?
+
+### B5. Odds bucket performance
+- +100 to +149 range picks are losing (-4.5u combined, n=48). Is there a gate on plus-money odds?
+- Should overs at long-plus odds be blocked (over bets at +120 or higher)?
+
+---
+
+## TRACK C — Projection System
+
+Read `engine/nba_projector.py`, `engine/projections_db.py`, `engine/injury_parser.py`.
+
+### C1. Scalar freshness (from CLAUDE.md)
+- `PLAYOFF_MINUTES_SCALAR`: refit 2026-05-06. Still valid for current playoff round?
+- `REGULAR_SEASON_MINUTES_SCALAR`: refit 2026-05-10. Are we in playoffs? If so, is the RS scalar still being used anywhere by mistake?
+- `PLAYOFF_RATE_DEFLATORS`: refit 2026-05-10. Are current deflators consistent with actual observed bias in the empirical data?
+- `LEAGUE_AVG_PACE`: is the 2025-26 value still current? Check if there's a refresh mechanism.
+
+### C2. Role classification
+- `classify_role()` thresholds: 26/20/12/5 MPG. Are there players near the boundary who are miscategorized?
+- Is `starter_rate` (0.60 threshold) still relevant mid-playoffs when lineups are set?
+
+### C3. Injury redistribution
+- `_POS_FLOW`: is the PG receiver fix applied? (PG weight folded into SG slot)
+- Is `ENABLE_INJURY_BONUS` only active when an injury trigger fires, or always?
+- Can a player receive surplus minutes from their own absence (self-assignment bug)?
+
+### C4. Lineup integration
+- `lineup_fetcher.py`: is the confirmed-starter data actually used to adjust minute projections?
+- Is there a staleness guard on lineup data?
+
+---
+
+## TRACK D — Scoring & Sizing
+
+### D1. pick_score formula
+- Read `pick_score()` function. What inputs does it use?
+- Is `win_prob` post-Platt or pre-Platt at the time `pick_score` is called?
+- Does pick_score use `adj_wp` (confidence-adjusted) or raw `win_prob`?
+- Is the formula documented with an empirical basis or is it a heuristic?
+
+### D2. KILLSHOT gate
+- Read the KILLSHOT qualification criteria. Cross-reference with CLAUDE.md:
+  - tier=T1 strict, pick_score≥65, win_prob≥0.65, odds ∈ [-200,+110], stat ∈ {PTS, AST, SOG}
+- Is each criterion actually enforced in code? Find the exact check.
+- Weekly cap: is the counter properly reset each week? What's the reset logic?
+- Is there a way KILLSHOT fires even when win_prob is the pre-confidence adj_wp? It shouldn't.
+
+### D3. Unit sizing
+- VAKE sizing: trace from `win_prob` to final `size`. What fraction of Kelly is being used?
+- Daily cap (12u): is it enforced across ALL run_types, or just primary/bonus?
+- Sport caps (NBA=8u, NHL=5u): applied before or after daily cap check?
+- SGP sizing: is 0.25u/0.50u correct given average SGP WR?
+
+---
+
+## TRACK E — Data Quality
+
+### E1. pick_log.csv integrity
+Run these checks on `data/pick_log.csv`:
+- Column count = 29 for every row (no schema drift mid-file)
+- `result` values ∈ {W, L, VOID, NaN} — no typos
+- `win_prob` in [0, 1] for all non-null rows
+- `edge` in [-0.5, 0.5] for all non-null rows
+- `over_p_raw` in [0, 1] for all non-null rows — these are raw probabilities
+- `direction` ∈ {over, under, win} for all non-null rows
+- `run_type` ∈ {primary, bonus, manual, daily_lay, sgp, longshot} for all rows
+- Rows with `result=NaN` — are these picks from today (expected) or old ungraded picks (bug)?
+- Rows where `tier=T1` but `win_prob < 0.55` — should these exist?
+- SGP rows: do all have a valid `legs` JSON array?
+
+### E2. projections.db integrity
+- Table row counts: players, teams, games, player_game_stats, team_def_splits
+- Are there player_game_stats rows with `min=0` that could corrupt NB_R calibrations?
+- Are there NULL values in columns used for probability calculation (ast, pts, reb, fg3m)?
+- Is `pull_log` being used to prevent duplicate data pulls?
+- How stale is the latest game data? (`SELECT MAX(date) FROM games`)
+
+### E3. over_p_raw tracking
+- Current count of non-null over_p_raw in settled primary/bonus rows
+- Compare to H3 gate requirement (100 rows)
+- Are there rows that SHOULD have over_p_raw but don't (e.g., primary props logged after schema v4 date 2026-05-05)?
+
+---
+
+## TRACK F — Code Quality & Architecture
+
+### F1. Constants consistency
+- Are `PLATT_A`, `PLATT_B` defined in exactly one place? Or scattered?
+- Is `NB_R` defined in one place only?
+- Are there any hardcoded odds, thresholds, or probabilities outside of the constants section?
+- Does CLAUDE.md accurately reflect the current constant values?
+
+### F2. Dead code
+- Any function defined but never called
+- Any commented-out code blocks that are not documented as intentionally preserved
+- Any feature flag that is always True/False (effectively dead branch)
+
+### F3. Magic numbers
+- Any numeric literal in a probability/sizing calculation that has no constant name or comment
+- Any threshold in a gate that is not tied to an empirical basis comment
+
+### F4. Error handling at boundaries
+- File I/O: what happens if pick_log.csv is missing? Locked? Corrupted header?
+- API calls: what happens if the Odds API returns malformed JSON? Rate-limit error?
+- DB: what happens if projections.db is locked by generate_projections.py simultaneously?
+
+### F5. File lock safety
+- `filelock` usage: is it applied everywhere pick_log.csv is written? (run_picks, grade_picks, capture_clv all write it)
+- Is the lock timeout set appropriately?
+
+---
+
+## TRACK G — Documentation vs Reality
+
+Read `CLAUDE.md` and verify every claim against the actual code:
+- `PLATT_A = 1.4988, PLATT_B = -0.8102` — confirm these match `engine/run_picks.py`
+- `NB_R["3PM"] = 12.3` — CLAUDE.md says 12.3 but was just updated to 9.15. Update CLAUDE.md if stale.
+- All scalar values listed under "Active Scalars" — verify each matches the code
+- H3 gate count: was 49 as of 2026-05-23. Current count from pick_log?
+- CLV gate count: was 49/100 as of 2026-05-23. Still accurate?
+- Any file or function referenced in CLAUDE.md that no longer exists
+
+---
+
+## OUTPUT FORMAT
+
+For each finding:
 ```
-FILE: engine/xxx.py
+TRACK: [A-G]
+FILE: engine/xxx.py  (or data/pick_log.csv etc.)
 LINE: ~NNN
 SEVERITY: CRITICAL | HIGH | MEDIUM | LOW
-ISSUE: [what is wrong]
-IMPACT: [what breaks or goes wrong in production]
-FIX: [exact code change needed]
+ISSUE: [what is wrong — be specific]
+IMPACT: [what breaks in production]
+FIX: [exact change needed, with code if applicable]
 ```
 
-Severity definitions:
-- **CRITICAL**: picks miscalculated, wrong results graded, money miscounted, data corrupted
-- **HIGH**: silent failures, wrong output, pick_log corruption risk
-- **MEDIUM**: edge cases that could cause wrong behavior under specific conditions
-- **LOW**: code smell, inconsistency, minor inefficiency
+Severity:
+- **CRITICAL**: wrong probability output, wrong grades, money miscounted, data corrupted
+- **HIGH**: silent wrong result, systematic bias, pick_log corruption risk
+- **MEDIUM**: wrong output under specific conditions, stale calibration with measurable bias
+- **LOW**: inconsistency, undocumented assumption, minor inefficiency
 
-At the end, provide:
-1. A prioritized fix list (CRITICAL first)
-2. Any cross-file inconsistencies not covered above
-3. Anything that looks intentional but is worth questioning
+At the end:
+1. Prioritized fix list (CRITICAL → HIGH → MEDIUM)
+2. List every CLAUDE.md line that is stale or wrong
+3. One paragraph: the single biggest structural risk in the current model
 
-Do not summarize what the code does correctly. Only report problems.
+Do not summarize correct behavior. Only report problems.

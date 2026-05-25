@@ -11,10 +11,11 @@
 - `HIGH_VAR_CV_THRESHOLD`=0.60, `HIGH_VAR_MIN_GAMES`=8 (3PT specialist bimodal flag, RB8 H5).
 - Blowout sigmoid: k=0.15, mid=20.0, max_reduction=0.19 (refit 2026-05-06 on 24,600 rows).
 - `PLAYOFF_RATE_DEFLATORS`: pts=0.934, ast=0.870, fg3m=0.948, blk=1.152. Refit 2026-05-10 from 20-date playoff backtest (1071 player-games, Apr 18–May 8 2026). PTS added (was missing, +0.791 over-projection). AST/fg3m updated from stale n=43. BLK added as inflator (under-projected -0.074, t=-2.74; more half-court defense in playoffs). Post-fix biases: PTS −0.007, AST −0.006, FG3M +0.003 (all ≈0); BLK will zero out after today.
-- `PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate.
+- `PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate. Formula: `sigmoid(A * logit(over_p) + B)` (logit-space Platt — updated 2026-05-25 in calibrate_platt.py; coefficients unchanged until gate fires).
+- `NB_R["3PM"]`=9.15 (refit 2026-05-25 from 1246 player-seasons; was 12.3 — too tight). `NB_R["AST"]`=9.68 (new 2026-05-25; AST moved from POISSON_STATS to NB_STATS, avg var/mu=1.2539 from 1395 player-seasons).
 
 ## Data-gated / Open
-- **H3 (Platt refit)**: gated on ~300 post-v4 `over_p_raw` rows (49 as of 2026-05-23). Check: count non-empty `over_p_raw` in pick_log.csv.
+- **H3 (Platt refit)**: gated on 100 post-v4 `over_p_raw` rows (50 as of 2026-05-25). Check: count non-empty `over_p_raw` in pick_log.csv. Use `python engine/calibrate_platt.py --native-only --force` to test; deploy only if OOS Brier improvement > 0.
 - **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv` (49/100 as of 2026-05-23). Daemon stable post-2026-05-09 MAX_UPTIME fix.
 - **SGP Platt calibration gate**: 42/100 as of 2026-05-23. Current Platt (A=1.4988, B=−0.8102) built on NBA props; applying to SGP leg probs over-corrects (model→58% vs 69% actual win rate). Gate: 100 scored SGP slips before any Platt refit on SGP data.
 - **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`): refit 2026-05-09 on 76,604 trailing-10-game snapshots. MPG threshold confirmed at 26 (24-26 MPG players project like sixth_man regardless of sr; +6.9% PO bias with starter scalar vs -4.6% with sixth_man). 20/12/5 MPG and 0.60 sr unchanged.
@@ -26,6 +27,7 @@ Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
 
 | Audit | Findings | Status |
 |-------|----------|--------|
+| 2026-05-25 probability pipeline | AST→NB(r=9.68), 3PM r refit, I6 wp fix, TEAM_TOTAL over block | ALL CLOSED (1 commit). |
 | 2026-05-22 full system (~26k lines) | 2C/14H/26M/~25L | C/H/M ALL CLOSED (8 commits). ~25L deferred. H3 data-gated. |
 | 2026-05-06 projection deep-dive | 0C/5H/8M/5L | ALL CLOSED (H3 data-gated) |
 | 2026-05-05 injury + deep audit | various | ALL CLOSED |
