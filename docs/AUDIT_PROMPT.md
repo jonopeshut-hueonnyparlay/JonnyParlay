@@ -58,7 +58,8 @@ Read `poisson_pmf`, `poisson_cdf`, `negbinom_pmf`, `negbinom_cdf`, `normal_cdf` 
 - For COMBO stats (PRA, PR, PA, RA): the joint prob uses correlated Normal. Is the correlation formula correct?
 - Specifically: is the joint sigma computed as `sqrt(var1 + var2 + 2*rho*sigma1*sigma2)`? Verify.
 - Is COMBO_RHO applied correctly — is it the Pearson correlation, and is it used in the right formula?
-- What happens for a combo stat where one component is in NB_STATS (e.g., AST)? Does the combo path still route to Normal? If so, is that correct?
+- AST and REB are now in NB_STATS for single-stat props. The combo path (`_combo_mu_sigma`) reads from SIGMA directly — SIGMA["AST"] (0.53/2.0) and SIGMA["REB"] (0.48/2.0) were added 2026-05-25 for this purpose. Verify the routing: single-stat AST → NB, combo AST → Normal via SIGMA["AST"]. Is the split clean with no leakage?
+- Normal approximation validity (verified 2026-05-25 from 51k rows at min>=20): PRA skew=0.74, PR=0.72, PA=0.80, RA=0.94. All ACCEPTABLE. RA is most skewed — flag only if lines cluster in the tail.
 
 ---
 
@@ -66,9 +67,10 @@ Read `poisson_pmf`, `poisson_cdf`, `negbinom_pmf`, `negbinom_cdf`, `normal_cdf` 
 
 ### B1. Distribution routing
 For every stat that can appear as a pick, trace which distribution path it takes:
-- PTS: Normal (SIGMA). REB: Normal. SOG: Poisson. 3PM: NB. AST: NB. REC: Normal. HITS: Poisson. OUTS: Normal. HA: Normal. K: NB. HRR: NB.
-- Is every stat correctly routed? Are there any stats that fall through to the default fallback `{"mult": 0.40, "min": 2.0}`? If so, flag those — uncalibrated fallback directly affects win_prob.
+- PTS: Normal (SIGMA). SOG: Poisson. 3PM: NB (r=9.15). AST: NB (r=9.68) for single-stat; Normal via SIGMA["AST"] for combo path only. REB: NB (r=10.18) for single-stat; Normal via SIGMA["REB"] for combo path only. REC: Normal. HITS: Poisson. OUTS: Normal. HA: Normal. K: NB (r=5.0, provisional). HRR: NB (r=1.5, provisional).
+- Is every stat correctly routed? Are there any stats that fall through to the default fallback `{"mult": 0.40, "min": 2.0}`? If so, flag those — uncalibrated fallback directly affects win_prob. (AST and REB fallback no longer applies as of 2026-05-25.)
 - For WNBA: which stats route differently (3PM → Normal in WNBA, AST → NB everywhere)?
+- Verify POISSON_STATS and NB_STATS in both run_picks.py AND sgp_builder.py are in sync — divergence causes different probabilities for the same pick depending on which path generated it.
 
 ### B2. Platt scaling pipeline
 - Trace `over_p_raw` → `_platt_calibrate_prop()` → `win_prob`. Is `over_p_raw` logged BEFORE Platt? Is `win_prob` computed AFTER Platt?
@@ -223,10 +225,9 @@ For every gate, filter, or rule derived from pick_log empirical data:
 - KILLSHOT sizing (3u default, 4u if wp≥0.70 AND edge≥0.06): is this applied correctly?
 
 ### F4. SGP / parlay / daily_lay sizing and probability
-- How are leg probabilities combined for daily_lay and longshot? Simple multiplication (independence assumption)?
-- For SGP: the leg probabilities come from the model. Are same-game legs treated as correlated?
-- Is the independence assumption documented and justified?
-- SGP sizing: 0.25u default, 0.50u premium (avg_wp≥0.70 AND cohesion≥0.55 AND avg_edge≥0.035). Verify.
+- How are leg probabilities combined for daily_lay and longshot? Simple multiplication (independence assumption). Cross-game legs have weak positive correlation — independence is conservative (not aggressive). This is correct and documented.
+- For SGP: same-game legs are correlated. The Gaussian copula (4000 MC samples) adjusts for this.
+- SGP sizing (as of 2026-05-25): two-gate logic. Gate 1: copula_joint > parlay_implied (positive EV vs book). Gate 2: copula_joint - no_vig_independent >= 0.015 (correlation adds ≥1.5pp above independence baseline). Verify both gates are implemented correctly in `size_sgp()`.
 - Daily_lay odds cap (+100 maximum): is this enforced?
 
 ---
@@ -286,14 +287,15 @@ For every gate, filter, or rule derived from pick_log empirical data:
 ## TRACK I — Calibration Methodology
 
 ### I1. SIGMA values
-- `SIGMA["PTS"]` mult=0.35, min=4.5 — what is the calibration basis? Script? Data source?
-- `SIGMA["REB"]` mult=0.58, min=2.5 — same.
-- `SIGMA["REC"]` mult=0.50, min=1.2 — same.
-- `SIGMA["OUTS"]` mult=0.30, min=3.0 — "recalibrated 2024 data" — what script? What data?
-- `SIGMA["HA"]` mult=0.50, min=2.5 — same.
-- `SIGMA_WNBA`: calibrated from 2024 WNBA season logs — is there a script? What data?
-- **For any SIGMA value with no documented calibration script: flag HIGH.** These directly affect win_prob for every prop.
-- Should there be a `calibrate_sigma.py` (analogous to `nb_calibrate.py`) that derives these from projections.db within-player variance?
+Calibration status as of 2026-05-25 — script: `engine/calibrate_sigma.py`.
+- `SIGMA["PTS"]` mult=0.35, min=5.0 — mult confirmed by MAE backtest (implied CV=0.337 at proj=20); min raised from 4.5 (MAE by role: spot=5.15, rotation=5.98). ✓ CALIBRATED.
+- `SIGMA["REB"]` mult=0.48, min=2.0 — 84k+ player-games, 3-season median CV=0.483 at min>=20. Combo path only (single-stat REB → NB). ✓ CALIBRATED.
+- `SIGMA["AST"]` mult=0.53, min=2.0 — NEW 2026-05-25, 3-season median CV=0.507. Combo path only (single-stat AST → NB). ✓ CALIBRATED.
+- `SIGMA["REC"]` mult=0.50, min=1.2 — NFL stat, not live. PROVISIONAL — no calibration data.
+- `SIGMA["OUTS"]` mult=0.30, min=3.0 — MLB pitcher stat. PROVISIONAL — needs MLB game log DB.
+- `SIGMA["HA"]` mult=0.50, min=2.5 — MLB pitcher stat. PROVISIONAL — needs MLB game log DB.
+- `SIGMA_WNBA`: calibrated from 2024 WNBA season logs — script? Verify data source and recency.
+- Flag any stat using the default fallback `{"mult": 0.40, "min": 2.0}` — as of 2026-05-25 this should not occur for any live stat.
 
 ### I2. Platt formula / space alignment
 - What formula is in `_platt_calibrate_prop()`? Raw-probability or logit-space?
@@ -302,11 +304,12 @@ For every gate, filter, or rule derived from pick_log empirical data:
 - `calibrate_winprob.py` produces a second set of A/B — these are double-calibration if used in production. Is the warning in the file sufficient? Could they accidentally get used?
 
 ### I3. NB_R values
-- 3PM: 1246 player-seasons (projections.db). Script: `engine/nb_calibrate.py`. ✓ Verify.
-- AST: 1395 player-seasons. Same script. ✓ Verify.
-- HRR: shadow log WR at line 1.5 (n=1810). Verify the calibration logic.
-- K: r=5.0 — described as an estimate. Has this been validated? What data would validate it?
-- Is there a recalibration schedule for NB_R?
+- 3PM: r=9.15, 1246 player-seasons (projections.db). Script: `engine/nb_calibrate.py`. ✓ Verify.
+- AST: r=9.68, 1395 player-seasons. Same script. ✓ Verify. (Moved from POISSON_STATS 2026-05-25.)
+- REB: r=10.18, 1395 player-seasons. Same script. ✓ Verify. (Moved from POISSON_STATS 2026-05-25.)
+- HRR: r=1.5 — moment-matched from shadow log WR (n=1810). Different methodology from var/mu approach. Documented in NB_R comment. PROVISIONAL.
+- K: r=5.0 — PROVISIONAL, undocumented estimate. MLB pitcher game logs needed. Documented in NB_R comment and nb_calibrate.py.
+- Is there a recalibration schedule for NB_R? After every DB update, nb_calibrate.py should be run.
 
 ### I4. Circular calibration check
 - For each calibration constant: what data was it fitted from?
@@ -317,8 +320,8 @@ For every gate, filter, or rule derived from pick_log empirical data:
 ### I5. Sport-specific calibration gaps
 - Is the same Platt used for NBA and NHL combined? Should they be separate?
 - Is MLB Platt the same as NBA/NHL? MLB has different stat distributions and vigorish structures.
-- Is the COMBO_RHO (75k player-games) stable across seasons and teams?
-- WNBA COMBO_RHO from 9 players / 336 games — confidence interval on each value?
+- COMBO_RHO re-verified 2026-05-25 (76,960 player-games, 595 players): PTS-REB=0.333, PTS-AST=0.233, REB-AST=0.251 — stable to <0.001 vs prior. ✓ No changes needed.
+- WNBA COMBO_RHO from 9 players / 336 games: SE ≈ 0.055 per pair. PTS-AST=0.04 and REB-AST=0.05 are statistically indistinguishable from zero. Values are directionally plausible but uncertain. Refit gate: 1000+ WNBA player-games. Flag if combo props are being posted with these uncertain correlations.
 
 ---
 
@@ -411,7 +414,7 @@ Read `CLAUDE.md` and verify every claim against the actual code:
 - `PLATT_A = 1.4988, PLATT_B = -0.8102` — confirm in `engine/run_picks.py`
 - Formula space note (raw-probability) — confirm in `_platt_calibrate_prop()`
 - `NB_R["3PM"] = 9.15`, `NB_R["AST"] = 9.68` — confirm
-- `SIGMA` dict — confirm AST/SOG/HITS/TB have been removed (dead code cleaned up)
+- `SIGMA` dict — confirm current values: PTS mult=0.35/min=5.0, REB mult=0.48/min=2.0 (combo path only), AST mult=0.53/min=2.0 (combo path only, NEW 2026-05-25). Confirm SOG/HITS/TB not present.
 - H3 gate count — current count from pick_log?
 - CLV gate count — current count from pick_log_custom.csv?
 - Every scalar listed under "Active Scalars" — skip (projection system, out of scope)
