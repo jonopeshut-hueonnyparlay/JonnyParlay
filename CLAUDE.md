@@ -12,7 +12,7 @@
 - Blowout sigmoid: k=0.15, mid=20.0, max_reduction=0.19 (refit 2026-05-06 on 24,600 rows).
 - `PLAYOFF_RATE_DEFLATORS`: pts=0.934, ast=0.870, fg3m=0.948, blk=1.152. Refit 2026-05-10 from 20-date playoff backtest (1071 player-games, Apr 18–May 8 2026). PTS added (was missing, +0.791 over-projection). AST/fg3m updated from stale n=43. BLK added as inflator (under-projected -0.074, t=-2.74; more half-court defense in playoffs). Post-fix biases: PTS −0.007, AST −0.006, FG3M +0.003 (all ≈0); BLK will zero out after today.
 - `PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate. Formula: `sigmoid(A * over_p + B)` (**raw-probability space — NOT logit-space**). At H3, BOTH formula AND coefficients change simultaneously from calibrate_platt.py output.
-- `NB_R["3PM"]`=9.15 (refit 2026-05-25 from 1246 player-seasons; was 12.3 — too tight). `NB_R["AST"]`=9.68 (new 2026-05-25; AST moved from POISSON_STATS to NB_STATS, avg var/mu=1.2539 from 1395 player-seasons).
+- `NB_R["3PM"]`=9.15 (refit 2026-05-25 from 1246 player-seasons; was 12.3 — too tight). `NB_R["AST"]`=9.68 (new 2026-05-25; AST moved from POISSON_STATS to NB_STATS, avg var/mu=1.2539 from 1395 player-seasons). `NB_R["REB"]`=10.18 (new 2026-05-25; REB moved from POISSON_STATS to NB_STATS, avg var/mu=1.4073 from 1395 player-seasons; SIGMA["REB"] kept for combo path).
 - `SIGMA` (run_picks.py, calibrated 2026-05-25 from 84k+ player-games, 3 seasons, within-player CV at min>=20): `PTS`=mult 0.35/min 5.0 (mult confirmed by MAE backtest; min raised from 4.5); `REB`=mult 0.48/min 2.0 (was 0.58/2.5 — combo path only, 3-season empirical CV=0.483); `AST`=mult 0.53/min 2.0 (NEW — combo path only for PA/RA/PRA; was uncalibrated fallback 0.40/2.0; 3-season CV=0.507).
 
 ## Data-gated / Open
