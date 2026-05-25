@@ -14,6 +14,10 @@ Read CLAUDE.md first for system context before starting.
 `engine/injury_parser.py`, `engine/generate_projections.py`, `engine/backtest_projections.py`,
 `engine/lineup_fetcher.py` — projection system is audited separately.
 
+**Crash protection — mandatory:** After completing each track, immediately write findings
+to `docs/audits/audit_YYYY-MM-DD_trackX.md` and run `git add -A && git commit -m "audit: track X findings"`.
+Do not wait until all tracks are done. If the session crashes, completed tracks must be recoverable.
+
 ---
 
 ## CORE PRINCIPLES (read before starting)
