@@ -263,6 +263,7 @@ MARKET_TO_STAT = {
 SIGMA = {
     # NBA / NHL — Normal distribution sigma: σ = max(proj * mult, min)
     # NOTE: AST removed — now NB_STATS (r=9.68). SOG/HITS removed — POISSON_STATS takes priority.
+    # REB kept here for combo path (_combo_mu_sigma) only — single-stat REB now uses NB_STATS (r=10.18).
     "REB": {"mult": 0.58, "min": 2.5},
     "REC": {"mult": 0.50, "min": 1.2},
     "PTS": {"mult": 0.35, "min": 4.5},
@@ -278,23 +279,26 @@ SIGMA = {
 
 # HA removed from Poisson — overdispersed at typical lines (std 2.70 vs Poisson-predicted 2.35)
 # K removed from Poisson — moved to NB_STATS (overdispersed; SaberSim conservative IP bias)
-POISSON_STATS = {"REB", "SOG", "REC", "HITS"}  # AST moved to NB_STATS (overdispersed; avg var/mu=1.2539)
+POISSON_STATS = {"SOG", "REC", "HITS"}  # AST moved to NB_STATS (avg var/mu=1.2539); REB moved to NB_STATS (avg var/mu=1.4073)
 POISSON_CUTOFF = 8.5
 
 # P16 — Negative binomial distribution for overdispersed count stats.
 # NB(mu, r): var = mu + mu²/r.  r calibrated from within-player conditional variance
 # (avg_var / avg_mu per player across 2024-25 DB), NOT population-level cross-player variance.
-#   3PM: avg(var/mu)=1.119 across n=418 player-seasons → r = mu²/(var-mu) = avg_mu²/(avg_mu*0.119)
-#        avg_mu=1.457  → r = 1.457/0.119 ≈ 12.3
+# All values via: r = avg_mu / (avg(var/mu) - 1). Source: engine/nb_calibrate.py.
+#   3PM: avg(var/mu)=1.1486 across n=1246 player-seasons → r=9.15 (was 12.3 — too tight)
+#   AST: avg(var/mu)=1.2539 across n=1395 player-seasons → r=9.68; Poisson was wrong (var>mu)
+#   REB: avg(var/mu)=1.4073 across n=1395 player-seasons → r=10.18; Poisson was wrong (var>mu)
 #   HRR: r=1.5 calibrated from shadow log: NB(r=1.5, μ=2.0) gives P(X≥2)=47.8% matching empirical 48% WR.
 #        Normal was giving 63% for same projection — structural zero-inflation (batter 0-H/R/RBI ~37% of games).
 #   K:   r=5.0 — pitcher Ks overdispersed vs Poisson (bimodal: early hook vs deep start).
 #        SaberSim projects conservative median IP; market prices to mode IP → K unders structurally lose.
 # STL/BLK not in any TIERS tier — included for completeness, no production impact yet.
-NB_STATS = {"3PM", "HRR", "K", "AST"}
+NB_STATS = {"3PM", "HRR", "K", "AST", "REB"}
 NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
     "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
+    "REB": 10.18,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
     "HRR": 1.5,    # calibrated from shadow log empirical WR at line 1.5 (n=1810)
     "K":   5.0,    # overdispersion estimate for pitcher K/start; K overs only at line >=6.0
 }

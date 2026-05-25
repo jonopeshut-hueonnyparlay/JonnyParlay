@@ -18,12 +18,12 @@ print("=" * 60)
 print(f"{'Stat':<6} {'n_psn':>6} {'avg_mu':>8} {'avg(v/u)':>10} {'r':>8} {'current_r':>10} {'Poisson?':>10}")
 print("-" * 60)
 
-CURRENT = {"3PM": 12.3, "AST": None, "REB": None}
+CURRENT = {"3PM": 9.15, "AST": 9.68, "REB": 10.18}
 
 for stat, col, current_r in [
-    ("3PM",  "fg3m", 12.3),
-    ("AST",  "ast",  None),
-    ("REB",  "reb",  None),
+    ("3PM",  "fg3m", 9.15),
+    ("AST",  "ast",  9.68),
+    ("REB",  "reb",  10.18),
 ]:
     cur.execute(f"""
         SELECT gs.player_id, ga.season,
@@ -68,6 +68,6 @@ print("Notes:")
 print("  r = avg_mu / (avg(var/mu) - 1)")
 print("  Larger r = less overdispersion (closer to Poisson)")
 print("  Smaller r = more overdispersion (fatter tail, lower confidence)")
-print("  3PM current r=12.3 was fitted from this same method on 2024-25 data")
+print("  Run after any DB update to check if r values need refreshing")
 
 conn.close()
