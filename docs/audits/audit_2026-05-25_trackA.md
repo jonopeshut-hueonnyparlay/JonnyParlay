@@ -1,7 +1,9 @@
-# Audit 2026-05-25 — Track A: Numerical Correctness
+# Audit 2026-05-25 — Track A: Numerical Correctness (v2 — post REB/AST→NB + SIGMA update)
 
-Auditor: Claude Sonnet 4.6 (automated)
+Auditor: Claude Sonnet 4.6 (fresh session, post-2026-05-25 changes)
 Scope: engine/run_picks.py — distribution functions, vig removal, push handling, combo probability
+Re-audited after: REB→NB(r=10.18), AST→NB(r=9.68), SIGMA["AST"] added (mult=0.53/min=2.0),
+  SIGMA["REB"] updated (mult=0.48/min=2.0 for combo path), SIGMA["PTS"] min raised 4.5→5.0.
 
 ---
 
@@ -44,25 +46,13 @@ Scope: engine/run_picks.py — distribution functions, vig removal, push handlin
 
 ## Findings
 
-### A-1 (HIGH) — AST sigma fallback in combo path
+### A-1 — CLOSED (was HIGH) — AST sigma fallback in combo path
 
-```
-TRACK: A
-FILE: engine/run_picks.py
-LINE: ~772
-SEVERITY: HIGH
-N: N/A (logic)
-ISSUE: AST was moved from SIGMA dict to NB_STATS. _combo_mu_sigma() looks up AST sigma via
-SIGMA.get("AST", {"mult": 0.40, "min": 2.0}). Since "AST" is absent from SIGMA, the
-uncalibrated fallback {"mult":0.40,"min":2.0} is used for every combo involving AST
-(PA, RA, PRA). At mu=5, NB-implied sigma=2.75 vs combo fallback=2.00 (−27% error).
-At mu=8, NB-implied=3.82 vs combo=3.20 (−16% error).
-IMPACT: Systematic under-estimation of AST variance in all PA/RA/PRA combos. Biases
-combo win_prob when line is away from projection — under-priced variance means
-over-stated confidence.
-FIX: Add "AST": {"mult": 0.40, "min": 2.75} (or calibrated value) to SIGMA with comment
-"combo-only — standalone AST uses NB path". Does not affect standalone AST picks.
-```
+**STATUS: FIXED** by 2026-05-25 changes. `SIGMA["AST"] = {"mult": 0.53, "min": 2.0}` is now
+present in run_picks.py (~line 270) with comment "NEW — combo path only; 3-season median CV=0.507".
+`_combo_mu_sigma()` now correctly uses the calibrated value for PA, RA, PRA combinations.
+Fresh-session verification confirmed at line ~785: `SIGMA.get("AST")` returns `{mult:0.53, min:2.0}`.
+**No further action needed.**
 
 ### A-2 (MEDIUM) — No push adjustment for combo stats
 
