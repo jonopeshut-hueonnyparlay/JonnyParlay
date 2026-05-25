@@ -2718,7 +2718,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             ))
 
         for direction in ("over", "under"):
-            # TEAM_TOTAL over blocked: 45.5% WR (n=11), -11.0pp gap — systematic loser
+            # TEAM_TOTAL over blocked: 45.5% WR (n=11), -11.0pp gap — provisional block (n<30, revisit at n=30)
             if direction == "over":
                 continue
             wp = over_p if direction == "over" else under_p
