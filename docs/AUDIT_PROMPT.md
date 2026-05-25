@@ -233,7 +233,153 @@ For every rule implemented since 2026-04-14 (start of pick_log), check the n at 
 
 ---
 
-## TRACK G — Documentation vs Reality
+## TRACK G — Calibration Methodology Audit
+
+The question for each calibration constant: what data was it fitted from, how, when, and is there a reproducible script?
+
+### G1. SIGMA values (Normal distribution σ for PTS, REB, REC, OUTS, HA)
+- For each stat in `SIGMA`: what was the calibration methodology? When was it last updated?
+- Is there a script that reproduces these values, or are they manual entries?
+- `SIGMA["PTS"]` mult=0.35, min=4.5 — what is the empirical basis? Is this fit from projections.db variance data, or a guess?
+- `SIGMA["REB"]` mult=0.58, min=2.5 — same question.
+- `SIGMA["REC"]` mult=0.50, min=1.2 — same.
+- `SIGMA["OUTS"]` mult=0.30, min=3.0 — comment says "recalibrated 2024 data" but no script reference.
+- `SIGMA["HA"]` mult=0.50, min=2.5 — basis?
+- **If any SIGMA value has no documented calibration basis, flag it HIGH.** These directly affect win_prob for the most common stats.
+- Should there be a `calibrate_sigma.py` script (analogous to `nb_calibrate.py`) that computes these from projections.db?
+
+### G2. Platt scaling — formula/coefficient alignment
+- What formula is used in `_platt_calibrate_prop()`? Raw-probability or logit-space?
+- What space were `PLATT_A`, `PLATT_B` fitted in?
+- Are the formula and coefficients consistent? **They MUST match — mismatched space causes up to 12pp error at high over_p.**
+- Read the migration note in the constants block. Is it accurate?
+- Is `calibrate_platt.py` currently outputting logit-space coefficients? If so, is the production formula still raw-space? This is a CRITICAL mismatch waiting to trap the H3 migration.
+
+### G3. NB_R values
+- For each stat in `NB_R`: what is the calibration source?
+  - 3PM: 1246 player-seasons from projections.db — verify script exists (`engine/nb_calibrate.py`)
+  - AST: 1395 player-seasons from projections.db — verify
+  - HRR: calibrated from shadow log WR at line 1.5 (n=1810) — is this still the right line to calibrate at?
+  - K: r=5.0 described as an estimate — has this ever been empirically validated? Should it be?
+- Is there a recalibration trigger/schedule for NB_R? (e.g., refit each off-season)
+
+### G4. COMBO_RHO correlations
+- 75,367 player-games — solid. But: is this from all seasons or just recent?
+- Are correlations stable year-to-year or do they shift with player usage patterns?
+- WNBA correlations from 9 players / 336 games — is this sufficient? What is the confidence interval on each value?
+
+### G5. Calibration completeness check
+- List every stat that appears in `POISSON_STATS`, `NB_STATS`, or `SIGMA` with no empirical calibration documentation.
+- List every stat that uses a fallback distribution (the default `{"mult": 0.40, "min": 2.0}` warning path).
+- Is there a process for adding a new stat to the engine? What calibration steps are required?
+
+---
+
+## TRACK H — Sharp Process & Industry Standards
+
+This track compares the engine against what professional sharp bettors and quantitative betting operations actually do. Do web research where needed.
+
+### H1. Closing Line Value methodology
+- How is CLV calculated? `clv = closing_implied_prob − your_implied_prob`?
+- Is vig removed from both sides before computing CLV, or is raw implied prob used?
+- Industry standard: vig-free CLV using a sharp reference market (Pinnacle, Circa). Are any of these books in the odds API?
+- Is positive CLV being tracked as the primary edge signal (not WR, which is sample-dependent)?
+- What is the current CLV distribution across settled picks? Is it positive on average?
+
+### H2. Vig removal correctness
+- What method is used to remove vig? ("additive" method: split hold equally, or "multiplicative"/Pinnacle method?)
+- Industry standard for sharp modeling is the Shin method or multiplicative (probability-proportional) vig removal, NOT the simple additive method. Which is being used?
+- Does it matter for typical juice levels (-110/-110)? Does it matter at asymmetric juice (-130/+110)?
+- Is vig removal applied identically in CLV calculation and in edge calculation?
+
+### H3. Kelly fraction
+- What fraction of Kelly is the sizing system using (VAKE)?
+- Industry standard for sharp operations: 1/4 to 1/2 Kelly is common. Full Kelly is theoretically optimal but assumes perfect probability estimates — practically never used.
+- Is the fraction appropriate given the uncertainty in win_prob estimates?
+- Is Kelly applied correctly? The formula is `f = (bp - q) / b` where b = decimal odds - 1, p = win_prob, q = 1-p. Verify this matches the implementation.
+
+### H4. Line shopping
+- Is the engine selecting the best available price across all CO-legal books?
+- Industry standard: always take the best price. Is this happening?
+- Is there a meaningful difference in odds between books, and are we capturing it?
+
+### H5. Sample size standards
+- Industry standard: ~500 bets minimum to assess model edge with reasonable confidence, ~1000+ for sport-specific analysis.
+- We have 182 settled picks. What claims can legitimately be made from this sample?
+- Which specific conclusions from our empirical analysis (stat-direction WR, tier WR, bucket WR) have sufficient n to act on? Which are preliminary observations only?
+- Are the confidence intervals on our key metrics (WR by tier, WR by stat) calculated and documented anywhere?
+
+### H6. Opening vs closing line timing
+- When are picks generated relative to line movement? (T-120 min default per CLAUDE.md)
+- Sharp bettors generally prefer to bet early (before sharp money moves lines) or confirm steam. Which approach is this engine using?
+- Is there a CLV analysis showing whether earlier or later bets perform better?
+
+### H7. Correlated leg risk (SGP)
+- In Same-Game Parlays, are legs properly treated as correlated?
+- Industry standard: naive independence assumption overstates SGP value. Books adjust for correlation. Is the engine accounting for this?
+- What method is used to combine leg probabilities? Simple multiplication (independence) or correlation-adjusted?
+
+### H8. Sharp vs square books
+- Are there books in `CO_LEGAL_BOOKS` that are known to be sharp (limit quickly) vs square (soft)?
+- Should model edge be weighted differently depending on which book offers the best price? (A line only available on a square book may be less meaningful than one available on Pinnacle/Circa.)
+- Are Pinnacle or Circa in the CO-legal book list? If not, is there a sharp reference market being used?
+
+### H9. Model vs market framework
+- At what point should the market price be trusted over the model?
+- Sharp practice: if your model says 65% and the market says 55%, investigate first — the market may have information you don't.
+- Is there any process for reconciling large model-vs-market discrepancies before betting?
+- Is the `edge` calculation purely model-vs-book, or does it incorporate any market consensus signal?
+
+### H10. Record-keeping and performance attribution
+- Are results tracked by: sport, stat, direction, tier, odds range, book, line size?
+- Is there a process for quarterly/seasonal review?
+- Industry standard: track CLV separately from WR. Positive CLV with negative WR = bad luck, not bad model. Negative CLV with positive WR = good luck, not a good model.
+- Is the CLV system producing enough data yet to attribute performance to model edge vs variance?
+
+---
+
+## TRACK I — Documentation vs Reality
+
+Read `CLAUDE.md` and verify every claim against the actual code:
+- `PLATT_A = 1.4988, PLATT_B = -0.8102` — confirm these match `engine/run_picks.py`
+- Confirm the formula space note (raw-probability space) is documented accurately
+- `NB_R["3PM"]` = 9.15, `NB_R["AST"]` = 9.68 — confirm current values match the code
+- `SIGMA` — confirm all listed entries still exist (AST/SOG/HITS/TB should be removed from dict now)
+- H3 gate count — current count from pick_log?
+- CLV gate count — current count from pick_log_custom.csv?
+- Any file or function referenced in CLAUDE.md that no longer exists
+- Any constant value in CLAUDE.md that is stale
+
+---
+
+## OUTPUT FORMAT
+
+For each finding:
+```
+TRACK: [A-I]
+FILE: engine/xxx.py  (or data/pick_log.csv etc.)
+LINE: ~NNN
+SEVERITY: CRITICAL | HIGH | MEDIUM | LOW
+N: [sample size if empirical, or "N/A" if logic-only]
+ISSUE: [what is wrong — be specific]
+IMPACT: [what breaks in production]
+FIX: [exact change needed, with code if applicable]
+```
+
+Severity:
+- **CRITICAL**: wrong probability output, wrong grades, money miscounted, data corrupted
+- **HIGH**: silent wrong result, systematic bias, pick_log corruption risk, uncalibrated constant directly affecting win_prob
+- **MEDIUM**: wrong output under specific conditions, stale calibration with measurable bias, thin-sample rule that may be wrong
+- **LOW**: inconsistency, undocumented assumption, minor inefficiency, industry-standard gap with no immediate production impact
+
+**For any finding where N < 30: automatically cap severity at MEDIUM regardless of apparent impact. Small samples reverse.**
+
+At the end:
+1. Prioritized fix list (CRITICAL → HIGH → MEDIUM)
+2. List of every rule/gate that is provisional (N < 30) — label clearly as "monitor, do not change"
+3. List every constant with no documented calibration basis — these are calibration debt
+4. List every CLAUDE.md line that is stale or wrong
+5. One paragraph: the single biggest structural risk in the current model vs what a professional sharp operation would do differently
 
 Read `CLAUDE.md` and verify every claim against the actual code:
 - `PLATT_A = 1.4988, PLATT_B = -0.8102` — confirm these match `engine/run_picks.py`

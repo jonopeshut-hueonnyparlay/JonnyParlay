@@ -261,20 +261,19 @@ MARKET_TO_STAT = {
 # ============================================================
 
 SIGMA = {
-    # NBA / NHL (unchanged — these are well-calibrated)
-    "AST": {"mult": 0.45, "min": 1.3},
+    # NBA / NHL — Normal distribution sigma: σ = max(proj * mult, min)
+    # NOTE: AST removed — now NB_STATS (r=9.68). SOG/HITS removed — POISSON_STATS takes priority.
     "REB": {"mult": 0.58, "min": 2.5},
-    "SOG": {"mult": 0.55, "min": 1.2},  # dead: POISSON_STATS takes priority
     "REC": {"mult": 0.50, "min": 1.2},
     "PTS": {"mult": 0.35, "min": 4.5},
-    # "3PM" not here — P16 routes 3PM through NB_STATS/NB_R (Negative Binomial). Do NOT add to SIGMA.
+    # "3PM" not here — NB_STATS/NB_R (Negative Binomial, r=9.15). Do NOT add.
     # MLB — RECALIBRATED to match real-world variance (2024 season data)
-    # "K" not here — moved to NB_STATS (Negative Binomial, r=5.0). SaberSim conservative IP bias kills unders.
-    "OUTS": {"mult": 0.30, "min": 3.0},   # Pitcher outs — actual σ ≈ 4.5-5.0 outs/start (was 0.22 → 3.3, too tight)
+    # "K" not here — NB_STATS (Negative Binomial, r=5.0).
+    # "HRR" not here — NB_STATS (Negative Binomial, r=1.5).
+    # "TB" not here — G_TB_DISABLED (structural kill A2 2026-05-22).
+    # "HITS" not here — POISSON_STATS takes priority.
+    "OUTS": {"mult": 0.30, "min": 3.0},   # Pitcher outs — σ ≈ 4.5-5.0 outs/start (recalibrated 2024 data)
     "HA":   {"mult": 0.50, "min": 2.5},   # Pitcher hits allowed — Normal (15% overdispersed vs Poisson)
-    "HITS": {"mult": 0.90, "min": 0.7},   # dead: POISSON_STATS takes priority
-    "TB":   {"mult": 1.20, "min": 1.5},   # Batter total bases — was 41% UNDER real variance (lumpy dist)
-    # "HRR" not here — moved to NB_STATS (Negative Binomial, r=1.5). Normal gave P(HRR>1.5)=63% vs actual 48%.
 }
 
 # HA removed from Poisson — overdispersed at typical lines (std 2.70 vs Poisson-predicted 2.35)
@@ -355,14 +354,21 @@ MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 
 # P9 — Platt scaling calibration for prop win_prob (2026-05-01).
 # Fitted from 76 settled primary/bonus props (NBA + NHL) via Nelder-Mead NLL.
-# Basis: over_p (not directional win_prob). Applied after calc_prop_prob:
-#   note: cal_over_p <- sigmoid(PLATT_A * over_p + PLATT_B)
-#   note: under_p <- 1 - cal_over_p  (preserves complementarity)
-# Result: model mean win_prob 0.696 → calibrated 0.579 = actual 0.579.
-# Brier score improvement: 6.0%.
-# Re-fit at 300+ picks (P19: isotonic regression). Source: calibrate_platt.py.
-PLATT_A = 1.4988   # slope
-PLATT_B = -0.8102  # intercept
+# FORMULA: raw-probability space — sigmoid(PLATT_A * over_p + PLATT_B)
+# These coefficients were fitted FOR this formula. Do NOT use them with logit-space.
+#
+# !! MIGRATION NOTE (2026-05-25): calibrate_platt.py now fits logit-space:
+#    sigmoid(A * logit(over_p) + B)
+#    When H3 fires (100 native rows), BOTH of the following must happen together:
+#      1. Update _platt_calibrate_prop() below to use logit-space
+#      2. Paste new A/B from calibrate_platt.py (they will be different values)
+#    Pasting logit-space A/B into the current raw-space formula is WRONG —
+#    at over_p=0.75 it would shift output by ~12pp.
+#
+# Result at fit time: model mean win_prob 0.696 → calibrated 0.579 = actual 0.579.
+# Brier improvement: 6.0% (in-sample). H3 gate: 100 native over_p_raw rows.
+PLATT_A = 1.4988   # slope  — raw-probability space (not logit-space)
+PLATT_B = -0.8102  # intercept — raw-probability space (not logit-space)
 
 GAME_SIGMA = {
     # "ml" sigma is separate from "spread" sigma — used only for moneyline win probability.
@@ -633,11 +639,12 @@ def is_decimal_leak(odds):
     return 1.0 < odds < 2.5
 
 def _platt_calibrate_prop(over_p: float) -> float:
-    """Apply P9 Platt scaling to raw over_p from the distribution model.
+    """Apply Platt scaling to raw over_p. Formula: sigmoid(PLATT_A * over_p + PLATT_B).
 
-    Returns calibrated over_p = sigmoid(PLATT_A * over_p + PLATT_B).
-    Caller must set under_p = 1 - result to preserve complementarity.
-    Only applies to props (not game lines — separate calibration required).
+    RAW-PROBABILITY SPACE. PLATT_A/B were fitted for this formula.
+    When migrating to logit-space at H3, change this line to:
+        raw = PLATT_A * math.log(over_p / (1.0 - over_p)) + PLATT_B
+    AND paste the new logit-space A/B simultaneously. Doing one without the other is wrong.
     """
     raw = PLATT_A * over_p + PLATT_B
     raw = max(-30.0, min(30.0, raw))   # numerical stability
