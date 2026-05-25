@@ -64,22 +64,23 @@ STAT_COLS = {"PTS": "PTS", "AST": "AST", "REB": "RB", "3PM": "3PT"}
 
 SIGMA = {
     "PTS": {"mult": 0.35, "min": 4.5},
-    "AST": {"mult": 0.45, "min": 1.3},
-    "REB": {"mult": 0.58, "min": 2.5},
-    # "3PM" intentionally absent — P16 routes 3PM through NB_STATS/NB_R. Do NOT add to SIGMA.
+    # AST moved to NB_STATS (r=9.68) — no longer Normal path.
+    # REB moved to NB_STATS (r=10.18) — no longer Normal path.
+    # "3PM" intentionally absent — NB_STATS/NB_R. Do NOT add to SIGMA.
 }
-POISSON_STATS = {"AST", "REB"}
+POISSON_STATS: set = set()  # AST and REB moved to NB_STATS; nothing left Poisson in SGP
 POISSON_CUTOFF = 8.5
 
 # P16 (M1, May 1 2026): Negative Binomial for overdispersed count stats.
 # Mirrors NB_STATS / NB_R in run_picks.py — keep in sync.
-# r values updated 2026-05-02 per Research Brief 5 (empirical per-game game-log analysis).
-# Previous 3PM r=12.3 underestimated overdispersion by ~6×.
-NB_STATS = {"3PM", "BLK", "STL"}
+# r values from engine/nb_calibrate.py (within-player conditional variance method).
+NB_STATS = {"3PM", "AST", "REB", "BLK", "STL"}
 NB_R = {
-    "3PM": 2.1,   # empirical per-game r; Research Brief 5, 2026-05-02
-    "BLK": 2.8,   # empirical per-game r; Research Brief 5, 2026-05-02
-    "STL": 3.6,   # empirical per-game r; Research Brief 5, 2026-05-02
+    "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 2.1/12.3)
+    "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
+    "REB": 10.18,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
+    "BLK": 2.8,    # empirical per-game r; Research Brief 5, 2026-05-02
+    "STL": 3.6,    # empirical per-game r; Research Brief 5, 2026-05-02
 }
 
 
@@ -226,7 +227,7 @@ def _fair_prob(proj, line, stat, direction):
             under_p = _poisson_cdf(k, proj)
             over_p = 1.0 - under_p
     elif stat in NB_STATS:
-        # P16 (M1) — Negative binomial for overdispersed count stats (3PM).
+        # P16 (M1) — Negative binomial for overdispersed count stats (3PM, AST, REB, BLK, STL).
         r = NB_R[stat]
         k = math.floor(line)
         if line == k:  # integer line — push-adjusted
