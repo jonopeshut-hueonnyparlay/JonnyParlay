@@ -27,7 +27,7 @@ Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
 
 | Audit | Findings | Status |
 |-------|----------|--------|
-| 2026-05-25 full system (12-track) | 2C/10H/23M/~25L | C/H/M ALL CLOSED (13 commits). ~25L deferred. |
+| 2026-05-25 full system (12-track) | 2C/10H/23M/~25L | C/H/M ALL CLOSED (18 commits). ~25L deferred. REB→NB(r=10.18) added post-audit. |
 | 2026-05-25 probability pipeline | AST→NB(r=9.68), 3PM r refit, I6 wp fix, TEAM_TOTAL over block | ALL CLOSED (1 commit). |
 | 2026-05-22 full system (~26k lines) | 2C/14H/26M/~25L | C/H/M ALL CLOSED (8 commits). ~25L deferred. H3 data-gated. |
 | 2026-05-06 projection deep-dive | 0C/5H/8M/5L | ALL CLOSED (H3 data-gated) |
