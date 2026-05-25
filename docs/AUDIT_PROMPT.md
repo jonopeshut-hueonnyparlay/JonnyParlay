@@ -104,47 +104,22 @@ Cross-reference every (stat, direction) pair with n≥10 against the model WP:
 
 ---
 
-## TRACK C — Projection System
+## TRACK C — Scoring & Sizing
 
-Read `engine/nba_projector.py`, `engine/projections_db.py`, `engine/injury_parser.py`.
-
-### C1. Scalar freshness (from CLAUDE.md)
-- `PLAYOFF_MINUTES_SCALAR`: refit 2026-05-06. Still valid for current playoff round?
-- `REGULAR_SEASON_MINUTES_SCALAR`: refit 2026-05-10. Are we in playoffs? If so, is the RS scalar still being used anywhere by mistake?
-- `PLAYOFF_RATE_DEFLATORS`: refit 2026-05-10. Are current deflators consistent with actual observed bias in the empirical data?
-- `LEAGUE_AVG_PACE`: is the 2025-26 value still current? Check if there's a refresh mechanism.
-
-### C2. Role classification
-- `classify_role()` thresholds: 26/20/12/5 MPG. Are there players near the boundary who are miscategorized?
-- Is `starter_rate` (0.60 threshold) still relevant mid-playoffs when lineups are set?
-
-### C3. Injury redistribution
-- `_POS_FLOW`: is the PG receiver fix applied? (PG weight folded into SG slot)
-- Is `ENABLE_INJURY_BONUS` only active when an injury trigger fires, or always?
-- Can a player receive surplus minutes from their own absence (self-assignment bug)?
-
-### C4. Lineup integration
-- `lineup_fetcher.py`: is the confirmed-starter data actually used to adjust minute projections?
-- Is there a staleness guard on lineup data?
-
----
-
-## TRACK D — Scoring & Sizing
-
-### D1. pick_score formula
+### C1. pick_score formula
 - Read `pick_score()` function. What inputs does it use?
 - Is `win_prob` post-Platt or pre-Platt at the time `pick_score` is called?
 - Does pick_score use `adj_wp` (confidence-adjusted) or raw `win_prob`?
 - Is the formula documented with an empirical basis or is it a heuristic?
 
-### D2. KILLSHOT gate
+### C2. KILLSHOT gate
 - Read the KILLSHOT qualification criteria. Cross-reference with CLAUDE.md:
   - tier=T1 strict, pick_score≥65, win_prob≥0.65, odds ∈ [-200,+110], stat ∈ {PTS, AST, SOG}
 - Is each criterion actually enforced in code? Find the exact check.
 - Weekly cap: is the counter properly reset each week? What's the reset logic?
 - Is there a way KILLSHOT fires even when win_prob is the pre-confidence adj_wp? It shouldn't.
 
-### D3. Unit sizing
+### C3. Unit sizing
 - VAKE sizing: trace from `win_prob` to final `size`. What fraction of Kelly is being used?
 - Daily cap (12u): is it enforced across ALL run_types, or just primary/bonus?
 - Sport caps (NBA=8u, NHL=5u): applied before or after daily cap check?
@@ -152,9 +127,9 @@ Read `engine/nba_projector.py`, `engine/projections_db.py`, `engine/injury_parse
 
 ---
 
-## TRACK E — Data Quality
+## TRACK D — Data Quality
 
-### E1. pick_log.csv integrity
+### D1. pick_log.csv integrity
 Run these checks on `data/pick_log.csv`:
 - Column count = 29 for every row (no schema drift mid-file)
 - `result` values ∈ {W, L, VOID, NaN} — no typos
@@ -167,56 +142,54 @@ Run these checks on `data/pick_log.csv`:
 - Rows where `tier=T1` but `win_prob < 0.55` — should these exist?
 - SGP rows: do all have a valid `legs` JSON array?
 
-### E2. projections.db integrity
+### D2. projections.db integrity
 - Table row counts: players, teams, games, player_game_stats, team_def_splits
 - Are there player_game_stats rows with `min=0` that could corrupt NB_R calibrations?
 - Are there NULL values in columns used for probability calculation (ast, pts, reb, fg3m)?
 - Is `pull_log` being used to prevent duplicate data pulls?
 - How stale is the latest game data? (`SELECT MAX(date) FROM games`)
 
-### E3. over_p_raw tracking
+### D3. over_p_raw tracking
 - Current count of non-null over_p_raw in settled primary/bonus rows
 - Compare to H3 gate requirement (100 rows)
 - Are there rows that SHOULD have over_p_raw but don't (e.g., primary props logged after schema v4 date 2026-05-05)?
 
 ---
 
-## TRACK F — Code Quality & Architecture
+## TRACK E — Code Quality & Architecture
 
-### F1. Constants consistency
+### E1. Constants consistency
 - Are `PLATT_A`, `PLATT_B` defined in exactly one place? Or scattered?
 - Is `NB_R` defined in one place only?
 - Are there any hardcoded odds, thresholds, or probabilities outside of the constants section?
 - Does CLAUDE.md accurately reflect the current constant values?
 
-### F2. Dead code
+### E2. Dead code
 - Any function defined but never called
 - Any commented-out code blocks that are not documented as intentionally preserved
 - Any feature flag that is always True/False (effectively dead branch)
 
-### F3. Magic numbers
+### E3. Magic numbers
 - Any numeric literal in a probability/sizing calculation that has no constant name or comment
 - Any threshold in a gate that is not tied to an empirical basis comment
 
-### F4. Error handling at boundaries
+### E4. Error handling at boundaries
 - File I/O: what happens if pick_log.csv is missing? Locked? Corrupted header?
 - API calls: what happens if the Odds API returns malformed JSON? Rate-limit error?
-- DB: what happens if projections.db is locked by generate_projections.py simultaneously?
 
-### F5. File lock safety
+### E5. File lock safety
 - `filelock` usage: is it applied everywhere pick_log.csv is written? (run_picks, grade_picks, capture_clv all write it)
 - Is the lock timeout set appropriately?
 
 ---
 
-## TRACK G — Documentation vs Reality
+## TRACK F — Documentation vs Reality
 
 Read `CLAUDE.md` and verify every claim against the actual code:
 - `PLATT_A = 1.4988, PLATT_B = -0.8102` — confirm these match `engine/run_picks.py`
-- `NB_R["3PM"] = 12.3` — CLAUDE.md says 12.3 but was just updated to 9.15. Update CLAUDE.md if stale.
-- All scalar values listed under "Active Scalars" — verify each matches the code
-- H3 gate count: was 49 as of 2026-05-23. Current count from pick_log?
-- CLV gate count: was 49/100 as of 2026-05-23. Still accurate?
+- `NB_R["3PM"]` and `NB_R["AST"]` — confirm current values match the code
+- H3 gate count — current count from pick_log?
+- CLV gate count — current count from pick_log_custom.csv?
 - Any file or function referenced in CLAUDE.md that no longer exists
 
 ---
@@ -225,7 +198,7 @@ Read `CLAUDE.md` and verify every claim against the actual code:
 
 For each finding:
 ```
-TRACK: [A-G]
+TRACK: [A-F]
 FILE: engine/xxx.py  (or data/pick_log.csv etc.)
 LINE: ~NNN
 SEVERITY: CRITICAL | HIGH | MEDIUM | LOW
