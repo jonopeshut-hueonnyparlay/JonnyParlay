@@ -1978,7 +1978,7 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
         # live in pick_log.csv (not a shadow log) must appear in the recap.
         day_picks = [r for r in rows
                      if r.get("date") == date_str
-                     and r.get("result") in ("W", "L", "P")]
+                     and r.get("result") in ("W", "L", "P", "VOID")]
         if not day_picks:
             print(f"  {label} No graded picks found for {date_str}")
             return (False, set())
@@ -2187,7 +2187,7 @@ def _post_merged_recaps(dates_for_recap, main_rows, recap_merge_logs, args):
         # hiding released premium picks from the daily results card.
         day_picks = [r for r in main_rows
                      if r.get("date") == date_str
-                     and r.get("result") in ("W", "L", "P")]
+                     and r.get("result") in ("W", "L", "P", "VOID")]
         if day_picks:
             post_grading_results(date_str, day_picks, main_rows,
                                  suppress_ping=args.test)

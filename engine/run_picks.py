@@ -150,7 +150,7 @@ from pick_log_schema import (  # noqa: E402
 # Canonical player-name folding (audit H-3). Every caller that compares
 # player names must go through fold_name so "Dončić" / "Doncic" collapse
 # to the same key.
-from name_utils import fold_name as _fold_name  # noqa: E402
+from name_utils import fold_name as _fold_name, name_key  # noqa: E402
 
 # Shared HTTP helpers (audit M-16). Canonical User-Agent on every outbound
 # Odds API request.
@@ -1491,20 +1491,6 @@ def normalize_name(name):
     """
     return _fold_name(name)
 
-def name_key(name):
-    """Generate a fuzzy match key: last name + first 3 chars of first name.
-    FIX M5: Strip Jr/Sr/II/III/IV/V suffixes before extracting last name,
-    so 'Jaren Jackson Jr.' → 'jackson_jar' instead of 'jr_jar'.
-    """
-    parts = normalize_name(name).split()
-    if len(parts) < 2:
-        return normalize_name(name)
-    suffixes = {"jr", "sr", "ii", "iii", "iv", "v"}
-    while len(parts) > 2 and parts[-1] in suffixes:
-        parts.pop()
-    first = parts[0][:3]
-    last = parts[-1]
-    return f"{last}_{first}"
 
 def parse_csv(filepath):
     """Parse SaberSim CSV. Returns list of player dicts and detected sport."""
