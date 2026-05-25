@@ -2370,9 +2370,12 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                     if 0 < _sday <= _dcap:
                         _score_edge = adj_edge * _mult
                         break
-            pick["pick_score"] = pick_score(win_prob, _score_edge, mode, tier=tier,
+            pick["pick_score"] = pick_score(adj_wp, _score_edge, mode, tier=tier,
                                             cold_start_subtype=_cold_start_subtype,
                                             injury_trigger=_injury_trigger, stat=stat)
+            if adj_edge >= 0.15:
+                log.warning("[LARGE-EDGE] %s %s %s %.1f%% edge — verify lineup/injury before accepting",
+                            prop["player"], stat, direction, adj_edge * 100)
             picks.append(pick)
 
     return picks
@@ -2729,8 +2732,9 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             ))
 
         for direction in ("over", "under"):
-            # TEAM_TOTAL over blocked: 45.5% WR (n=11), -11.0pp gap — provisional block (n<30, revisit at n=30)
-            if direction == "over":
+            # TEAM_TOTAL over blocked for NBA only: 45.5% WR (n=11), -11.0pp gap — provisional (n<30, revisit at n=30)
+            # Evidence is NBA-only; no data for NHL/MLB TEAM_TOTAL overs.
+            if direction == "over" and _sport == "NBA":
                 continue
             wp = over_p if direction == "over" else under_p
             edge = over_edge if direction == "over" else under_edge

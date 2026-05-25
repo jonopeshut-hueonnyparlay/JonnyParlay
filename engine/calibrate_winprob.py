@@ -227,8 +227,9 @@ def run_calibration(
     print("  Mean model win_prob: {:.1%}".format(overall_mean_pred))
     print("  Systematic bias:     {:+.4f}  ({})".format(
         bias, "over-confident" if bias > 0 else "under-confident"))
-    print("\n  Platt a (slope):     {:.4f}  (1.0 = perfect calibration)".format(a))
-    print("  Platt b (intercept): {:.4f}  (0.0 = no shift)".format(b))
+    print("\n  ⚠ DO NOT PASTE BELOW INTO run_picks.py — use calibrate_platt.py instead")
+    print("  WinProb calib slope (a):     {:.4f}  (1.0 = perfect calibration)".format(a))
+    print("  WinProb calib intercept (b): {:.4f}  (0.0 = no shift)".format(b))
     print("\n  Brier (raw, in-sample):   {:.4f}  [NOTE: biased low]".format(brier_raw))
     print("  Brier (cal, in-sample):   {:.4f}  [NOTE: biased low]".format(brier_cal))
     print("  Brier improvement IS:     {:.1f}%".format(result["brier_improvement_pct"]))

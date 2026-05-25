@@ -239,11 +239,6 @@ def main() -> None:
               f"raw={raw_p_win[mask].mean():.3f}  "
               f"cal={cal_p_win[mask].mean():.3f}")
     print()
-    print("  -- Paste into run_picks.py ----------------------------------")
-    print(f"  PLATT_A = {a:.4f}   # slope  (logit-space)")
-    print(f"  PLATT_B = {b:.4f}  # intercept  (logit-space)")
-    print(f"  # Formula: sigmoid(PLATT_A * logit(over_p) + PLATT_B)")
-    print()
     # M16: hard exit when OOS Brier improvement is negative — do NOT paste bad constants
     if not (brier_oos_pct != brier_oos_pct):  # check not NaN
         if brier_oos_pct < 0:
@@ -251,6 +246,18 @@ def main() -> None:
             print("  Do NOT update PLATT_A/PLATT_B.  Keep existing constants.")
             print("  Root causes: double-calibration bias, too few picks, or distribution shift.")
             sys.exit(1)
+    print("  -- H3 MIGRATION — paste BOTH blocks atomically ---------------")
+    print("  Step 1: update _platt_calibrate_prop() in run_picks.py:")
+    print("    raw = PLATT_A * logit(over_p) + PLATT_B   # logit-space (H3)")
+    print("    (remove the logit() call comments; update the space label)")
+    print()
+    print("  Step 2: update constants in run_picks.py:")
+    print(f"    PLATT_A = {a:.4f}   # slope  (logit-space — H3)")
+    print(f"    PLATT_B = {b:.4f}   # intercept  (logit-space — H3)")
+    print()
+    print("  ⚠  NEVER paste Step 2 without Step 1 — raw-space formula with")
+    print("     logit-space constants shifts win_prob by ±12–18pp on every prop.")
+    print("  ---------------------------------------------------------------")
 
 
 if __name__ == "__main__":
