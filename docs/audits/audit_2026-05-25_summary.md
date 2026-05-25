@@ -1,8 +1,28 @@
-# Audit 2026-05-25 — End Summary
+# Audit 2026-05-25 — End Summary (v2 — post REB/AST→NB + SIGMA re-verification)
 
-Auditor: Claude Sonnet 4.6 (12-agent parallel audit)
-Tracks: A–L (all completed, each committed separately)
+Auditor: Claude Sonnet 4.6 (original 12-agent audit + fresh re-verification session)
+Tracks: A–L (all completed and re-verified against 2026-05-25 code changes)
 n=182 settled primary/bonus picks; n=53 CLV samples
+
+## Re-Verification Closures (this session)
+
+The following findings from the original audit were CLOSED by 2026-05-25 code changes:
+
+| Finding | Was | Closed By |
+|---------|-----|-----------|
+| A-1: AST sigma fallback in combo path | HIGH | SIGMA["AST"]={mult:0.53,min:2.0} added for combo path |
+| B-1 / I-2 / L-1: CLAUDE.md wrong Platt formula space | CRITICAL (×3) | CLAUDE.md updated to raw-probability space |
+| D-2: CLAUDE.md wrong Platt space (Track D ref) | MEDIUM | Same as B-1 |
+| F-1: pick_score uses pre-confidence win_prob | MEDIUM | Line 2370 now passes adj_wp confirmed |
+| G-3: sgp_builder NB_R["3PM"]=2.1 vs 9.15 | HIGH | Both files now 9.15 (recalibrated 2026-05-25) |
+| G-4: AST uses wrong distribution in sgp_builder | HIGH | AST in NB_STATS(r=9.68) in sgp_builder confirmed |
+| H1 (below): G-3+G-4 combined as "sgp_builder distribution sync" | HIGH | CLOSED |
+
+New findings added this re-verification session:
+- G-7 (MEDIUM): sgp_builder SIGMA["PTS"] min=4.5 vs run_picks.py min=5.0 (not updated 2026-05-25)
+- G-8 (LOW): size_sgp Gate 1 docstring says "≥10pp margin" but code checks any positive margin (M8 two-gate not documented in docstring)
+
+---
 
 ---
 
@@ -12,14 +32,14 @@ n=182 settled primary/bonus picks; n=53 CLV samples
 
 | # | Track | File | Line | Description |
 |---|-------|------|------|-------------|
-| C1 | B, I, L | CLAUDE.md + run_picks.py | ~357–371, ~649 | **Platt formula space wrong in CLAUDE.md.** Code is raw-probability space `sigmoid(A * over_p + B)`. CLAUDE.md says logit-space. Applying same A/B to logit formula: ±12–18pp error on every prop pick. Active H3 migration trap. |
+| ~~C1~~ | B, I, L | CLAUDE.md + run_picks.py | ~357–371, ~649 | ~~**Platt formula space wrong in CLAUDE.md.**~~ **CLOSED 2026-05-25.** CLAUDE.md now correctly says raw-probability space. See B-1, I-2, L-1 in track files. |
 | C2 | J | data/pick_log.csv | — | **Mean CLV = −0.758%, beat rate 20.8% (n=53).** Market consistently moves against picks. This is the primary evidence of no edge. All other findings are secondary until this is investigated. |
 
 ### HIGH
 
 | # | Track | File | Line | Description |
 |---|-------|------|------|-------------|
-| H1 | G | sgp_builder.py | ~71, ~79 | **AST uses wrong distribution in sgp_builder** (Poisson→Normal instead of NB r=9.68). Also NB_R["3PM"]=2.1 in sgp_builder vs 9.15 in run_picks — both out of sync despite "keep in sync" comment. |
+| ~~H1~~ | G | sgp_builder.py | ~71, ~79 | ~~**AST uses wrong distribution in sgp_builder** (Poisson→Normal instead of NB r=9.68). Also NB_R["3PM"]=2.1 in sgp_builder vs 9.15 in run_picks.~~ **CLOSED 2026-05-25.** Both G-3 (NB_R["3PM"]) and G-4 (AST distribution) fixed. sgp_builder now synced. |
 | H2 | I | calibrate_platt.py + run_picks.py | ~100–119 | **H3 migration is a manual paste with no mechanical guard.** Formula change and constants must be done atomically; one without the other corrupts all win_probs. calibrate_platt.py should print a single atomic copy-paste block. |
 | H3 | I | calibrate_winprob.py vs calibrate_platt.py | ~61–78 | **Both scripts produce visually identical A/B output headers.** calibrate_winprob.py (double-calibration if pasted) looks like calibrate_platt.py (correct). Rename outputs to distinguish. |
 | H4 | I | run_picks.py + nb_calibrate.py | ~298, nb_cal ~21 | **K (r=5.0) is an undocumented estimate** with CV 35–100% too wide vs empirical. Live in production for K overs ≥ 6.0. nb_calibrate.py doesn't cover K; CURRENT dict is stale. |
@@ -34,15 +54,16 @@ n=182 settled primary/bonus picks; n=53 CLV samples
 
 | # | Track | File | Line | Description |
 |---|-------|------|------|-------------|
-| M1 | A | run_picks.py | ~772 | AST sigma uses uncalibrated fallback {mult:0.40,min:2.0} in combo path (PA, RA, PRA). NB migration removed AST from SIGMA but left no calibrated Normal sigma for combos. |
+| ~~M1~~ | A | run_picks.py | ~772 | ~~AST sigma uses uncalibrated fallback in combo path.~~ **CLOSED 2026-05-25.** SIGMA["AST"]={mult:0.53,min:2.0} added. See A-1. |
 | M2 | B | run_picks.py | ~2728–2730 | TEAM_TOTAL over block fires for ALL sports despite only NBA empirical basis (n=11). NHL/MLB TEAM_TOTAL overs blocked without evidence. |
 | M3 | C | run_picks.py | ~1490–1503 | Local name_key() in run_picks.py duplicates name_utils.name_key() — silent drift risk if name_utils is updated. |
 | M4 | D | run_picks.py | ~2728–2730 | (same as M2 — cross-sport over block) |
-| M5 | F | run_picks.py | ~2369 | pick_score() uses pre-confidence win_prob, not adj_wp. Low-sample players score 4–8 points higher than warranted. |
+| ~~M5~~ | F | run_picks.py | ~2369 | ~~pick_score() uses pre-confidence win_prob, not adj_wp.~~ **CLOSED.** Line 2370 confirmed to pass adj_wp. See F-1. |
 | M6 | F | run_picks.py | ~5285–5288 | Manual KILLSHOT override (--killshot) bypasses stat/tier checks entirely — only score ≥ 75 enforced. Any stat/tier can be manually promoted. |
 | M7 | F | run_picks.py | ~3609, ~3823 | Daily_lay and longshot use naive independence for combined_prob; daily_lay feeds this directly into Kelly sizing (~8–12% overstatement). |
 | M8 | F | sgp_builder.py | ~738 | SGP copula EV threshold uses vigged book-implied; ~3–8pp of the 10pp threshold is expected vig, not model alpha. Gate is more permissive than intended. |
 | M9 | G | run_picks.py | ~6104 | Bonus pick size not reserved in same-session 12u cap — can overshoot by up to 1.25u within one session. |
+| M-G7 | G | sgp_builder.py | ~66 | **NEW (this session)** sgp_builder SIGMA["PTS"] min=4.5 vs run_picks.py min=5.0. Not updated in sgp_builder when run_picks.py was raised 2026-05-25. Creates different win_prob for low-projection PTS in SGP vs single-stat contexts. |
 | M10 | G | run_picks.py + sgp_builder.py | — | SGP win_prob blank in pick_log — copula probability not stored, blocking calibration analysis. Actual WR 27.8% vs model 30.9% (3.1pp over-prediction). |
 | M11 | H | grade_picks.py | ~110 (analyze_picks) | analyze_picks.calc_metrics includes VOID picks in risked units — understates ROI vs production metrics. |
 | M12 | H | grade_picks.py | ~1979–1981 | VOID picks excluded from daily Discord recap — transparency gap vs card posted. |
@@ -100,9 +121,9 @@ Every constant below has no documented calibration script or requires independen
 
 | Priority | Section | Current Text | Correct Text |
 |----------|---------|-------------|-------------|
-| CRITICAL | Active Scalars — PLATT_A/B | "Formula: sigmoid(A * logit(over_p) + B) (logit-space Platt)" | "Formula: sigmoid(A * over_p + B) (raw-probability space — NOT logit-space). At H3, BOTH formula AND coefficients change simultaneously." |
+| ~~CRITICAL~~ | Active Scalars — PLATT_A/B | ~~"Formula: logit-space"~~ | **CLOSED 2026-05-25** — CLAUDE.md now says raw-probability space, NOT logit-space |
 | MEDIUM | Terms — Premium | "Top 5 picks from the model each day" | "Top 3 picks per sport each day" |
-| MEDIUM | Terms — SGP | "avg_wp≥0.70 AND cohesion≥0.55 AND avg_edge≥0.035" | "copula EV margin ≥ 0.10 AND cohesion ≥ 0.55 AND avg_edge ≥ 0.035" |
+| MEDIUM | Terms — SGP | "copula EV margin ≥ 0.10 AND cohesion≥0.55 AND avg_edge≥0.035" | M8 two-gate: "Gate 1: copula_joint > parlay_implied (any positive EV); Gate 2: copula_joint − no_vig_independent ≥ 0.015; plus cohesion≥0.55 AND avg_edge≥0.035" |
 | MEDIUM | Key Files — post_nrfi_bonus.py | Listed as existing file | Remove or restore from git history |
 | LOW | Sizing Caps — G12 | "12u (G12 check)" | "12u (literal 12.0 in apply_caps — G12 is pitcher-prop gate, unrelated)" |
 | LOW | Sizing Caps | "NBA=8.0u, NHL=5.0u" | Add "MLB=8.0u, WNBA=4.0u, NFL=5.0u" |
