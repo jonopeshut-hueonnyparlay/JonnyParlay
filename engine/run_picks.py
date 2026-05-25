@@ -262,11 +262,14 @@ MARKET_TO_STAT = {
 
 SIGMA = {
     # NBA / NHL — Normal distribution sigma: σ = max(proj * mult, min)
-    # NOTE: AST removed — now NB_STATS (r=9.68). SOG/HITS removed — POISSON_STATS takes priority.
-    # REB kept here for combo path (_combo_mu_sigma) only — single-stat REB now uses NB_STATS (r=10.18).
-    "REB": {"mult": 0.58, "min": 2.5},
+    # NOTE: SOG/HITS removed — POISSON_STATS takes priority.
+    # REB and AST kept here for combo path (_combo_mu_sigma) only:
+    #   single-stat REB → NB_STATS (r=10.18); single-stat AST → NB_STATS (r=9.68).
+    # Calibrated 2026-05-25 from 84k+ player-games (3 seasons), within-player CV at min>=20.
+    "REB": {"mult": 0.48, "min": 2.0},  # was 0.58/2.5 — empirical median CV=0.483 (3-season stable)
+    "AST": {"mult": 0.53, "min": 2.0},  # NEW — combo path only; 3-season median CV=0.507; fallback was 0.40/2.0
     "REC": {"mult": 0.50, "min": 1.2},
-    "PTS": {"mult": 0.35, "min": 4.5},
+    "PTS": {"mult": 0.35, "min": 5.0},  # mult confirmed by MAE backtest (σ≈6.74 at proj=20 → CV=0.337); min raised 4.5→5.0 (MAE by role: spot=5.15, rotation=5.98)
     # "3PM" not here — NB_STATS/NB_R (Negative Binomial, r=9.15). Do NOT add.
     # MLB — RECALIBRATED to match real-world variance (2024 season data)
     # "K" not here — NB_STATS (Negative Binomial, r=5.0).
