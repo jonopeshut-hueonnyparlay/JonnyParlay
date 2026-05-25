@@ -16,15 +16,16 @@ When `is_playoff=True` in nba_projector.py: PLAYOFF_MINUTES_SCALAR and PLAYOFF_R
 ### Blowout sigmoid in playoff mode
 Applied unconditionally (no playoff/RS check). Playoff spreads are tighter → sigmoid fires less often → correct emergent behavior. Sigmoid was fit without playoff/RS stratification per CLAUDE.md.
 
-### NBA combo stats (PA, RA, PRA) — AST sigma fallback
-See finding A-1 (HIGH). AST moved to NB_STATS but no calibrated sigma left in SIGMA for combo use. Falls to uncalibrated `{"mult":0.40,"min":2.0}`.
+### NBA combo stats (PA, RA, PRA) — AST sigma
+A-1 CLOSED (2026-05-25). `SIGMA["AST"] = {"mult": 0.53, "min": 2.0}` added for combo path.
+`_combo_mu_sigma()` now uses calibrated AST sigma for PA/RA/PRA combinations.
 
 ---
 
 ## D2. NHL-Specific
 
 ### SOG Poisson cutoff
-`POISSON_STATS = {"REB", "SOG", "REC", "HITS"}`. `POISSON_CUTOFF = 8.5`. All realistic NHL SOG lines (2.5–5.5) are well below 8.5. Poisson always used. G8C blocks SOG under ≤ 3.5. Correct.
+`POISSON_STATS = {"SOG", "REC", "HITS"}` (REB removed 2026-05-25 — moved to NB_STATS). `POISSON_CUTOFF = 8.5`. All realistic NHL SOG lines (2.5–5.5) are well below 8.5. Poisson always used. G8C blocks SOG under ≤ 3.5. Correct.
 
 ### NHL Platt — shared with NBA
 No separate NHL Platt calibration. NHL is included in the combined NBA+NHL Platt. Comment at ~line 2261: "Platt was fitted on NBA+NHL props only." Acceptable for now.
@@ -101,22 +102,10 @@ FIX: Add sport guard: `if direction == "over" and sport in {"NBA"}: continue`
 (PROVISIONAL — validate on NHL/MLB once n ≥ 30 per sport).
 ```
 
-### D-2 (MEDIUM) — CLAUDE.md states Platt is logit-space; code is raw-probability space
+### D-2 — CLOSED (was MEDIUM) — CLAUDE.md states Platt is logit-space; code is raw-probability space
 
-```
-TRACK: D
-FILE: CLAUDE.md + engine/run_picks.py
-LINE: CLAUDE.md memory section + ~357, ~649
-SEVERITY: MEDIUM (see B-1 for CRITICAL rating at the formula level)
-N: N/A
-ISSUE: Documented in B-1. The CLAUDE.md memory entry describing the deployed Platt formula
-as "logit-space" is wrong. This creates a hazard for H3 migration where someone could
-apply logit-space coefficients to a raw-space formula (or vice versa), causing ±12–18pp
-errors in all prop win_probs.
-IMPACT: Operational risk during H3 migration.
-FIX: Correct CLAUDE.md: "Formula: sigmoid(A * over_p + B) (raw-probability space —
-frozen until H3 gate fires, at which point BOTH formula AND A/B change simultaneously)."
-```
+**STATUS: FIXED** by 2026-05-25 CLAUDE.md update. See B-1 and L-1 for full detail.
+CLAUDE.md now correctly documents raw-probability space formula. **No further action needed.**
 
 ### D-3 (LOW) — Playoff mode detection is date-heuristic only for custom engine
 
