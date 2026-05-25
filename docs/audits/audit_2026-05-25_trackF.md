@@ -28,24 +28,15 @@ Formula is explicitly documented as a heuristic, not empirically derived.
 
 ---
 
-### F-1 (MEDIUM) — pick_score uses pre-confidence win_prob, not adj_wp
+### F-1 — CLOSED (was MEDIUM) — pick_score uses pre-confidence win_prob, not adj_wp
 
+**STATUS: FIXED.** Fresh-session verification at line 2370 confirms:
+```python
+pick["pick_score"] = pick_score(adj_wp, _score_edge, mode, tier=tier,
+                                cold_start_subtype=_cold_start_subtype,
+                                injury_trigger=_injury_trigger, stat=stat)
 ```
-TRACK: F
-FILE: engine/run_picks.py
-LINE: ~2369
-SEVERITY: MEDIUM
-N: N/A
-ISSUE: pick_score() is called with the Platt-calibrated win_prob (pre-I6 confidence scalar),
-not adj_wp. adj_wp = 0.50 + (win_prob - 0.50) * conf is computed at line ~2303 and stored
-in pick["win_prob"], but line ~2369 passes the un-adjusted win_prob to pick_score().
-For GP < 10 (conf=0.70): pick_score sees ~0.63 instead of ~0.579 — about 8 points inflated.
-For GP < 20 (conf=0.85): ~4 points inflated.
-IMPACT: Low-sample early-season players score 4–8 points higher than warranted, potentially
-surfacing on Premium card or bonus drops when they shouldn't.
-FIX: Change line ~2369 to pass adj_wp:
-    pick["pick_score"] = pick_score(adj_wp, _score_edge, mode, tier=tier, ...)
-```
+`adj_wp` (confidence-shrunk) is passed correctly. **No further action needed.**
 
 ### F-2 (LOW) — PICK_SCORE_TIER_MULT["KILLSHOT"] is dead code
 
@@ -186,14 +177,23 @@ SGP uses a Gaussian copula with pairwise ρ values via `_copula_joint_prob()` (~
 ### SGP sizing
 **Location:** engine/sgp_builder.py ~lines 711–744
 
-CLAUDE.md says: "0.25u default / 0.50u premium (avg_wp≥0.70 AND cohesion≥0.55 AND avg_edge≥0.035)"
+CLAUDE.md says: "0.25u default / 0.50u premium (copula EV margin ≥ 0.10 AND cohesion ≥ 0.55 AND avg_edge ≥ 0.035)"
 
-**Actual code (L8 update)**: the `avg_wp≥0.70` criterion was replaced by a Gaussian copula EV margin check:
+**Actual code (M8 update — two-gate approach)**: `avg_wp≥0.70` was replaced by:
 ```python
-if _copula_joint - parlay_implied >= 0.10:
-    return SGP_SIZE_PREMIUM  # 0.50u
+# Gate 1: positive EV vs vigged book parlay (any positive margin)
+if _copula_joint <= parlay_implied:
+    return SGP_SIZE_DEFAULT
+# Gate 2: copula adds ≥1.5pp above no-vig independence baseline
+no_vig_independent = product(fair_probs)
+if _copula_joint - no_vig_independent >= 0.015:
+    return SGP_SIZE_PREMIUM
+return SGP_SIZE_DEFAULT
 ```
-`cohesion≥0.55` and `avg_edge≥0.035` still required as prerequisites. CLAUDE.md is outdated (see Track L).
+`cohesion≥0.55` and `avg_edge≥0.035` still required as prerequisites.
+CLAUDE.md description ("copula EV margin ≥ 0.10") is stale — describes L8 logic, not M8.
+Gate 1 requires only ANY positive margin; binding constraint is Gate 2 (≥1.5pp correlation lift).
+See findings G-8 (docstring mismatch) and L-3 (CLAUDE.md stale).
 
 ### F-6 (MEDIUM) — SGP copula EV threshold uses vigged book-implied, not vig-free
 

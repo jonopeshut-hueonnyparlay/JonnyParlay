@@ -1,7 +1,8 @@
-# Audit 2026-05-25 — Track G: Portfolio & Correlation Risk
+# Audit 2026-05-25 — Track G: Portfolio & Correlation Risk (v2 — post REB/AST→NB + SIGMA update)
 
-Auditor: Claude Sonnet 4.6 (automated)
+Auditor: Claude Sonnet 4.6 (fresh session, post-2026-05-25 changes)
 Scope: engine/run_picks.py, engine/sgp_builder.py — same-game correlation, SGP leg correlation, concurrent run safety
+Re-audited: G-3 and G-4 confirmed FIXED. Two new findings (G-7, G-8) added from fresh read.
 
 ---
 
@@ -59,48 +60,20 @@ leaving headroom for bonus. Or re-check 12u cap before posting in post_extras_to
 ### SGP composite probability — correctly uses copula (GOOD)
 `_copula_joint_prob()` implements a Gaussian copula with pairwise ρ values. Full Monte Carlo (4000 samples) on final chosen SGP. Equicorrelation approximation used during 91k combo search. NOT a simple product. Approved.
 
-### G-3 (HIGH) — sgp_builder NB_R["3PM"] diverges from run_picks.py
+### G-3 — CLOSED (was HIGH) — sgp_builder NB_R["3PM"] diverges from run_picks.py
 
-```
-TRACK: G
-FILE: engine/sgp_builder.py
-LINE: ~79
-SEVERITY: HIGH
-N: N/A
-ISSUE: sgp_builder.py has NB_R["3PM"] = 2.1 ("empirical per-game r, Research Brief 5,
-2026-05-02"). run_picks.py (updated 2026-05-25) has NB_R["3PM"] = 9.15 (1246 player-seasons,
-avg(var/mu)=1.1486). Code comment in sgp_builder says "Mirrors NB_STATS/NB_R in run_picks.py
-— keep in sync" but they are OUT OF SYNC by a factor of 4.35.
-r=2.1 means far more variance than r=9.15. 3PM probability estimates differ significantly
-between the two systems. If per-game r is intentionally different from player-season r,
-the comment is actively misleading.
-IMPACT: 3PM SGP leg probabilities are miscalibrated relative to run_picks.py. Cohesion
-scores and sizing gate derived from 3PM legs use inconsistent volatility assumptions.
-FIX: Either (a) document explicitly that sgp_builder uses per-game r values (different
-methodology — intentional) and fix the comment; or (b) unify both to the same value
-and methodology. Requires a decision on whether per-game vs per-season r is correct
-for single-game SGP legs.
-```
+**STATUS: FIXED** by 2026-05-25 changes. sgp_builder.py line 79 now reads:
+`"3PM": 9.15,  # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 2.1/12.3)`
+Both files now use NB_R["3PM"] = 9.15 with the same methodology. **No further action needed.**
 
-### G-4 (HIGH) — AST uses wrong distribution in sgp_builder.py
+### G-4 — CLOSED (was HIGH) — AST uses wrong distribution in sgp_builder.py
 
-```
-TRACK: G
-FILE: engine/sgp_builder.py
-LINE: ~71 (POISSON_STATS), ~65–70 (SIGMA)
-SEVERITY: HIGH
-N: N/A
-ISSUE: In sgp_builder.py: AST is in POISSON_STATS and falls through to Normal distribution
-via SIGMA["AST"] = {"mult": 0.45, "min": 1.3}. In run_picks.py (updated 2026-05-25):
-AST was moved from POISSON_STATS to NB_STATS with NB_R["AST"] = 9.68 (avg var/mu=1.2539
-from 1395 player-seasons). The sgp_builder was NOT updated.
-IMPACT: AST SGP leg probabilities are computed with the wrong distribution. Normal
-distribution under-models AST tail variance vs NB(r=9.68). SGP legs on AST are
-systematically miscalibrated vs the same calculation in run_picks.py.
-FIX: In sgp_builder.py: (1) Remove AST from POISSON_STATS. (2) Add "AST" to NB_STATS.
-(3) Add "AST": 9.68 to NB_R. (4) Remove AST from SIGMA dict.
-This is a direct sync of the 2026-05-25 run_picks.py update.
-```
+**STATUS: FIXED** by 2026-05-25 changes. Fresh-session verification confirms sgp_builder.py:
+- `POISSON_STATS: set = set()` (empty — AST and REB both moved out)
+- `NB_STATS = {"3PM", "AST", "REB", "BLK", "STL"}` (AST and REB added)
+- `NB_R["AST"] = 9.68` (calibrated 2026-05-25)
+- `SIGMA["AST"]` removed from sgp_builder.py SIGMA dict
+AST now routes to NB(r=9.68) in both run_picks.py and sgp_builder.py. **No further action needed.**
 
 ### G-5 (MEDIUM) — SGP win_prob not stored in pick_log (blocks calibration)
 
@@ -137,6 +110,51 @@ All write paths in run_picks.py use `_pick_log_lock(log_path)`:
 - `capture_clv.write_closing_odds()` (~line 641) ✓ (separate FileLock)
 
 `filelock` is a hard import dependency — fails explicitly on missing package. No silent fallback. **No file corruption risk from concurrent writes.**
+
+### G-7 (MEDIUM) — sgp_builder.py SIGMA["PTS"] min=4.5 vs run_picks.py min=5.0
+
+```
+TRACK: G
+FILE: engine/sgp_builder.py
+LINE: ~66
+SEVERITY: MEDIUM
+N: N/A
+ISSUE: sgp_builder.py SIGMA["PTS"] = {"mult": 0.35, "min": 4.5}. run_picks.py raised
+SIGMA["PTS"] min from 4.5 to 5.0 on 2026-05-25 (confirmed at ~line 263). sgp_builder.py
+was NOT updated. Code comment: "Mirrors NB_STATS/NB_R in run_picks.py — keep in sync."
+At proj=4.5 and line=4.5: run_picks sigma=max(4.5*0.35, 5.0)=5.0 (floored);
+sgp_builder sigma=max(4.5*0.35, 4.5)=4.5 (floored). Different sigma → different win_prob
+for the same PTS prop in SGP vs single-stat contexts. Gap narrows for typical projections
+(proj≥14.3 puts both above their respective floors) but is non-zero for low-projection PTS.
+IMPACT: PTS SGP legs at low projections (proj<14.3) have slightly lower sigma in sgp_builder
+(tighter dist → higher win_prob for on-line props). Directionally over-optimistic for low-PTS SGPs.
+FIX: Update sgp_builder.py SIGMA["PTS"]["min"] = 5.0 to match run_picks.py.
+```
+
+### G-8 (LOW) — size_sgp Gate 1 docstring says "≥10pp margin" but code checks any positive margin
+
+```
+TRACK: G
+FILE: engine/sgp_builder.py
+LINE: ~712–742
+SEVERITY: LOW
+N: N/A
+ISSUE: size_sgp() docstring (line ~719) says "copula_ev_margin ≥ 0.10 — copula joint
+probability exceeds the parlay's implied probability by ≥ 10 percentage points."
+Actual Gate 1 code (M8, line ~742):
+    if _copula_joint <= parlay_implied:
+        return SGP_SIZE_DEFAULT
+This is a check for ANY positive EV margin, not ≥10pp. The binding constraint for premium
+sizing is Gate 2: copula_joint - no_vig_independent >= 0.015 (≥1.5pp correlation lift
+above no-vig independence baseline). The "≥10pp" threshold described in the docstring
+was the L8 design; M8 replaced it with two-gate logic.
+IMPACT: Docstring is actively misleading when reasoning about premium sizing. Anyone reading
+the docstring to understand sizing threshold will apply the wrong check. CLAUDE.md inherits
+the same stale description (see L-3).
+FIX: (1) Update docstring: "Gate 1: any positive EV vs vigged parlay (copula_joint >
+parlay_implied). Gate 2: correlation adds ≥1.5pp above no-vig independence baseline."
+(2) Update CLAUDE.md SGP entry to describe M8 two-gate logic.
+```
 
 ### G-6 (MEDIUM) — TOCTOU on 12u daily cap between near-concurrent sport runs
 

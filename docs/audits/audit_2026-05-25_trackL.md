@@ -1,7 +1,8 @@
-# Audit 2026-05-25 — Track L: Documentation vs Reality
+# Audit 2026-05-25 — Track L: Documentation vs Reality (v2 — post REB/AST→NB + SIGMA update)
 
-Auditor: Claude Sonnet 4.6 (automated)
+Auditor: Claude Sonnet 4.6 (fresh session, post-2026-05-25 changes)
 Scope: CLAUDE.md claims verified against engine/run_picks.py, engine/sgp_builder.py, data/pick_log.csv, data/pick_log_custom.csv, filesystem
+Re-audited: L-1 confirmed FIXED. Verification table entries #2, #5, #6 updated.
 
 ---
 
@@ -11,11 +12,11 @@ Scope: CLAUDE.md claims verified against engine/run_picks.py, engine/sgp_builder
 |---|---|---|---|---|
 | 1 | `PLATT_A = 1.4988` | `PLATT_A = 1.4988` | run_picks.py ~370 | ✓ MATCH |
 | 1b | `PLATT_B = -0.8102` | `PLATT_B = -0.8102` | run_picks.py ~371 | ✓ MATCH |
-| 2 | Formula: `sigmoid(A * logit(over_p) + B)` (logit-space) | Code uses **raw-probability space**: `sigmoid(PLATT_A * over_p + PLATT_B)`. Lines ~357, ~370, ~649 all explicitly label as "raw-probability space (not logit-space)". | run_picks.py ~357–371, ~649 | ✗ MISMATCH — CRITICAL |
+| 2 | Formula: `sigmoid(A * over_p + B)` (raw-probability space — NOT logit-space) | Code uses **raw-probability space**: `sigmoid(PLATT_A * over_p + PLATT_B)`. Code and CLAUDE.md now agree. FIXED 2026-05-25. | run_picks.py ~357–371, ~649 | ✓ MATCH (was MISMATCH — CRITICAL — now CLOSED as L-1) |
 | 3 | `NB_R["3PM"] = 9.15` | `"3PM": 9.15` | run_picks.py ~296 | ✓ MATCH |
 | 4 | `NB_R["AST"] = 9.68` | `"AST": 9.68` | run_picks.py ~297 | ✓ MATCH |
-| 5 | AST in NB_STATS, NOT POISSON_STATS | `NB_STATS = {"3PM","HRR","K","AST"}` — AST confirmed in NB; `POISSON_STATS = {"REB","SOG","REC","HITS"}` — AST absent | run_picks.py ~281, ~294 | ✓ MATCH |
-| 6 | SIGMA: AST/SOG/HITS/TB removed | SIGMA contains: REB, REC, PTS, OUTS, HA only. AST/SOG/HITS/TB all absent (noted as comments or gate-killed). | run_picks.py ~263–277 | ✓ MATCH |
+| 5 | AST and REB in NB_STATS, NOT POISSON_STATS | `NB_STATS = {"3PM","HRR","K","AST","REB"}` — AST and REB both confirmed in NB; `POISSON_STATS = {"SOG","REC","HITS"}` — AST and REB absent. UPDATED 2026-05-25. | run_picks.py ~281, ~294 | ✓ MATCH |
+| 6 | SIGMA: AST added for combo path (NEW); SOG/HITS/TB absent | SIGMA contains: PTS (min=5.0), REB (mult=0.48/min=2.0, combo only), AST (mult=0.53/min=2.0, combo only), REC, OUTS, HA. SOG/HITS/TB all absent. AST is back in SIGMA for combo path after 2026-05-25 fix. | run_picks.py ~263–277 | ✓ MATCH |
 | 7 | H3 gate: 50 over_p_raw rows as of 2026-05-25 | Counted **50** non-empty `over_p_raw` rows in pick_log.csv | data/pick_log.csv | ✓ MATCH |
 | 8 | CLV gate: 49/100 as of 2026-05-23 | Actual count: **63** CLV-populated rows in pick_log_custom.csv (stale — count has advanced) | data/pick_log_custom.csv | ✗ STALE (49→63, dated 2026-05-23) |
 | 9 | SGP Platt gate: 42/100 as of 2026-05-23 | Actual scored SGP slips: **43** | data/pick_log.csv | ✗ STALE (42→43) |
@@ -36,31 +37,15 @@ Scope: CLAUDE.md claims verified against engine/run_picks.py, engine/sgp_builder
 
 ## Additional Undocumented Discrepancies
 
-### L-1 (CRITICAL) — CLAUDE.md Platt formula space is wrong
+### L-1 — CLOSED (was CRITICAL) — CLAUDE.md Platt formula space is wrong
 
-```
-TRACK: L
-FILE: CLAUDE.md (Active Scalars → PLATT_A/B entry)
-LINE: CLAUDE.md memory section
-SEVERITY: CRITICAL
-N: N/A
-ISSUE: CLAUDE.md states "Formula: sigmoid(A * logit(over_p) + B) (logit-space Platt —
-updated 2026-05-25 in calibrate_platt.py; coefficients unchanged until gate fires)."
-Production formula in run_picks.py (~line 649) is: `raw = PLATT_A * over_p + PLATT_B`
-(RAW-PROBABILITY SPACE). Code comments at lines ~357 and ~370 explicitly label the
-constants as "raw-probability space (not logit-space)."
-CLAUDE.md was updated to describe the FUTURE logit-space formula (that calibrate_platt.py
-now produces) but with the CURRENT raw-space constants. This creates an H3 migration trap:
-applying the same A/B (1.4988, -0.8102) to the logit-space formula shifts win_prob by
--12.8pp at over_p=0.55 and +18.4pp at over_p=0.80.
-IMPACT: AI tools or engineers reading CLAUDE.md to implement H3 will paste logit-space A/B
-into a raw-space formula (or change the formula without updating A/B), corrupting all
-prop win_probs.
-FIX: Update CLAUDE.md Active Scalars entry to:
-`PLATT_A=1.4988, PLATT_B=-0.8102 — frozen until H3 gate. Formula: sigmoid(A * over_p + B)
-(raw-probability space — NOT logit-space). At H3, both formula AND coefficients change
-simultaneously from calibrate_platt.py output.`
-```
+**STATUS: FIXED** by 2026-05-25 CLAUDE.md update. Same fix as B-1 and I-2.
+CLAUDE.md Active Scalars entry now reads:
+"`PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate. Formula: `sigmoid(A * over_p + B)`
+(**raw-probability space — NOT logit-space**). At H3, BOTH formula AND coefficients change
+simultaneously from calibrate_platt.py output."
+Fresh-session verification confirmed: code and CLAUDE.md now agree on raw-probability space.
+**No further action needed.**
 
 ### L-2 (MEDIUM) — "Premium = Top 5 picks" — code cap is 3, not 5
 
@@ -78,22 +63,30 @@ Subscribers expecting 5 picks see only 3.
 FIX: Update CLAUDE.md Terms: "Premium | Top 3 picks per sport from the model each day."
 ```
 
-### L-3 (MEDIUM) — SGP sizing gate description is stale
+### L-3 (MEDIUM) — SGP sizing gate description is stale (M8 two-gate not documented)
 
 ```
 TRACK: L
 FILE: CLAUDE.md (SGP entry under Terms)
-LINE: engine/sgp_builder.py ~738–741
+LINE: engine/sgp_builder.py ~712–754
 SEVERITY: MEDIUM
 N: N/A
-ISSUE: CLAUDE.md says "Dynamic sizing: 0.25u default / 0.50u premium (avg_wp≥0.70 AND
-cohesion≥0.55 AND avg_edge≥0.035)." The avg_wp≥0.70 criterion was replaced in L8 (May 2026)
-by a Gaussian copula EV margin check: `if _copula_joint - parlay_implied >= 0.10`. The
-cohesion≥0.55 and avg_edge≥0.035 prerequisites remain correct, but avg_wp condition is gone.
-IMPACT: CLAUDE.md describes a non-existent gate criterion. Anyone implementing a size
-override based on this description would apply the wrong condition.
-FIX: Update CLAUDE.md SGP entry: "Dynamic sizing: 0.25u default / 0.50u premium (copula
-EV margin ≥ 0.10 AND cohesion ≥ 0.55 AND avg_edge ≥ 0.035)."
+ISSUE: CLAUDE.md says "Dynamic sizing: 0.25u default / 0.50u premium (copula EV margin ≥
+0.10 AND cohesion ≥ 0.55 AND avg_edge ≥ 0.035)." The "copula EV margin ≥ 0.10" phrase
+was the L8 description. The M8 update replaced it with a two-gate approach:
+  Gate 1: ANY positive EV vs vigged book parlay (_copula_joint > parlay_implied)
+  Gate 2: correlation signal ≥ 1.5pp above no-vig independence baseline
+           (_copula_joint - no_vig_independent >= 0.015)
+cohesion≥0.55 and avg_edge≥0.035 remain as prerequisites. The "≥10pp margin" threshold
+is also in the size_sgp() docstring (see G-8) and is wrong — Gate 1 checks any positive
+margin; binding constraint is Gate 2.
+IMPACT: CLAUDE.md and the function docstring both describe L8 logic. Anyone reasoning
+about premium sizing threshold applies the wrong criterion (10pp vs any positive EV).
+FIX: Update CLAUDE.md SGP entry:
+"Dynamic sizing: 0.25u default / 0.50u premium (Gate 1: copula_joint > parlay_implied;
+Gate 2: copula_joint − no_vig_independent ≥ 0.015; both gates plus cohesion ≥ 0.55
+AND avg_edge ≥ 0.035 required)."
+Also update size_sgp() docstring to match actual code (see G-8).
 ```
 
 ### L-4 (MEDIUM) — post_nrfi_bonus.py source file missing
@@ -194,14 +187,14 @@ implied (consistent with industry standard, both sides vigged — not vig-free).
 
 ## Summary of CLAUDE.md Corrections Needed
 
-| Priority | Item | Change |
-|----------|------|--------|
-| CRITICAL | Platt formula space | Change from logit-space to raw-probability space description |
-| MEDIUM | "Premium = Top 5 picks" | Correct to "Top 3 picks per sport" |
-| MEDIUM | SGP sizing gate | Replace avg_wp≥0.70 with copula EV margin ≥ 0.10 |
-| MEDIUM | post_nrfi_bonus.py Key File | Remove or restore from git history |
-| LOW | G12 label | Clarify G12 is pitcher-prop gate, not the daily cap constant |
-| LOW | SPORT_UNIT_CAP | Add WNBA=4.0u, MLB=8.0u, NFL=5.0u |
-| LOW | Gate counts | Update CLV=63, SGP=43, H3=50 |
-| LOW | CLV capture window | Update to T-45/T-10 |
-| LOW | CLV formula | Remove "vig-free" description |
+| Priority | Item | Status | Change |
+|----------|------|--------|--------|
+| CRITICAL | Platt formula space | **CLOSED** — FIXED 2026-05-25 | Changed to raw-probability space description |
+| MEDIUM | "Premium = Top 5 picks" | OPEN | Correct to "Top 3 picks per sport" |
+| MEDIUM | SGP sizing gate | OPEN | Replace "copula EV margin ≥ 0.10" with M8 two-gate description |
+| MEDIUM | post_nrfi_bonus.py Key File | OPEN | Remove or restore from git history |
+| LOW | G12 label | OPEN | Clarify G12 is pitcher-prop gate, not the daily cap constant |
+| LOW | SPORT_UNIT_CAP | OPEN | Add WNBA=4.0u, MLB=8.0u, NFL=5.0u |
+| LOW | Gate counts | OPEN | Update CLV=63, SGP=43, H3=50 (as of 2026-05-25) |
+| LOW | CLV capture window | OPEN | Update to T-45/T-10 |
+| LOW | CLV formula | OPEN | Remove "vig-free" description |

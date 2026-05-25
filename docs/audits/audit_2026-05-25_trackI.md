@@ -1,23 +1,26 @@
-# Audit 2026-05-25 — Track I: Calibration Methodology
+# Audit 2026-05-25 — Track I: Calibration Methodology (v2 — post REB/AST→NB + SIGMA update)
 
-Auditor: Claude Sonnet 4.6 (automated)
+Auditor: Claude Sonnet 4.6 (fresh session, post-2026-05-25 changes)
 Scope: engine/run_picks.py (SIGMA, NB_R, PLATT constants), engine/calibrate_platt.py, engine/calibrate_winprob.py, engine/nb_calibrate.py
+Re-audited: I-2 confirmed FIXED (CLAUDE.md now correct). SIGMA/NB_R tables updated to reflect current state.
 
 ---
 
 ## I1. SIGMA Values
 
-**SIGMA dict entries (run_picks.py ~lines 263–277):**
+**SIGMA dict entries (run_picks.py ~lines 263–277) — current state post-2026-05-25:**
 
 | Stat | mult | min | Calibration comment | Script? |
 |------|------|-----|---------------------|---------|
-| PTS | 0.35 | 4.5 | "unchanged — well-calibrated" | NONE |
-| REB | 0.58 | 2.5 | no comment | NONE (also in POISSON_STATS — SIGMA used only for combos) |
+| PTS | 0.35 | 5.0 | "MAE backtest confirmed; min raised 4.5→5.0" | NONE |
+| REB | 0.48 | 2.0 | "combo path only; 3-season empirical CV=0.483 (was 0.58/2.5)" | NONE |
+| AST | 0.53 | 2.0 | "NEW 2026-05-25 — combo path only; 3-season median CV=0.507" | NONE |
 | REC | 0.50 | 1.2 | no comment | NONE |
 | OUTS | 0.30 | 3.0 | "recalibrated 2024 data" — no n, no script | NONE |
 | HA | 0.50 | 2.5 | "Normal — 15% overdispersed vs Poisson" | NONE |
 
-**AST**: Removed from SIGMA, moved to NB_STATS. No SIGMA entry left for combo use (see A-1 HIGH).
+**AST**: NOW in SIGMA (mult=0.53, min=2.0) for combo path only. Also in NB_STATS (r=9.68) for single-stat. A-1 CLOSED.
+**REB**: NOW in SIGMA (mult=0.48, min=2.0) for combo path only. Also in NB_STATS (r=10.18) for single-stat.
 **SOG**: Not in SIGMA (POISSON_STATS). Correct.
 **HITS**: Not in SIGMA (POISSON_STATS). Correct.
 **TB**: Not in SIGMA (gate-blocked). Correct.
@@ -63,31 +66,13 @@ SIGMA entry: the n, dataset, and date the value was set. e.g.:
 
 ## I2. Platt Formula / Space Alignment
 
-### I-2 (CRITICAL) — CLAUDE.md states logit-space formula; code is raw-probability space
+### I-2 — CLOSED (was CRITICAL) — CLAUDE.md states logit-space formula; code is raw-probability space
 
-```
-TRACK: I
-FILE: CLAUDE.md + engine/run_picks.py + engine/calibrate_platt.py
-LINE: CLAUDE.md memory + run_picks.py ~357–371 + ~641–651 + calibrate_platt.py ~100–119
-SEVERITY: CRITICAL
-N: N/A
-ISSUE: Full detail in B-1. Summary:
-  Production code (run_picks.py ~649): sigmoid(PLATT_A * over_p + PLATT_B) — RAW-SPACE
-  Code constants (~357–371): explicitly labeled "raw-probability space (not logit-space)"
-  calibrate_platt.py (~100–119): fits sigmoid(a * logit(over_p) + b) — LOGIT-SPACE
-  CLAUDE.md: says "Formula: sigmoid(A * logit(over_p) + B) (logit-space Platt)"  — WRONG
-
-The constants (A=1.4988, B=-0.8102) were fitted for the RAW-SPACE formula.
-calibrate_platt.py was updated 2026-05-25 to produce logit-space coefficients for future H3.
-CLAUDE.md was incorrectly updated to describe the FUTURE formula with the CURRENT constants.
-Applying logit-space formula with current raw-space A/B: error of -12.8pp at over_p=0.55,
-+18.4pp at over_p=0.80.
-IMPACT: Anyone reading CLAUDE.md and "correcting" the production formula to logit-space
-without simultaneously updating A/B will corrupt every prop win_prob in production.
-FIX: Update CLAUDE.md: "Formula: sigmoid(A * over_p + B) (raw-probability space —
-frozen until H3 gate fires, at which point BOTH formula AND A/B change simultaneously
-from calibrate_platt.py output)."
-```
+**STATUS: FIXED** by 2026-05-25 CLAUDE.md update. Same fix as B-1 and L-1.
+CLAUDE.md now reads: "Formula: sigmoid(A * over_p + B) (raw-probability space — NOT logit-space).
+At H3, BOTH formula AND coefficients change simultaneously from calibrate_platt.py output."
+Fresh-session verification confirmed at run_picks.py ~line 649 and CLAUDE.md memory section.
+**No further action needed.**
 
 ### I-3 (HIGH) — H3 migration is a manual copy-paste with no mechanical guard
 
@@ -140,18 +125,19 @@ not just the docstring. (3) Consider adding --allow-run flag to prevent accident
 
 ## I3. NB_R Values
 
-**Full NB_R dict (run_picks.py ~lines 295–300):**
+**Full NB_R dict (run_picks.py ~lines 295–300) — current state post-2026-05-25:**
 ```
 NB_R = {
     "3PM": 9.15,   # nb_calibrate.py, 1246 player-seasons, avg(var/mu)=1.1486, 2026-05-25
     "AST": 9.68,   # nb_calibrate.py, 1395 player-seasons, avg(var/mu)=1.2539, 2026-05-25
+    "REB": 10.18,  # nb_calibrate.py, 1395 player-seasons, avg(var/mu)=1.4073, 2026-05-25 (NEW)
     "HRR": 1.5,    # shadow log WR moment-matching at line 1.5 (n=1810) — NOT same method
     "K":   5.0,    # estimate only — NOT calibrated
 }
 ```
 
-**nb_calibrate.py coverage:** Only covers 3PM, AST, REB. Does NOT cover K or HRR.
-**CURRENT dict in nb_calibrate.py (~line 21):** Shows `{"3PM": 12.3, "AST": None, "REB": None}` — stale (3PM is now 9.15, AST is now 9.68).
+**nb_calibrate.py coverage:** Covers 3PM, AST, REB. Does NOT cover K or HRR.
+**CURRENT dict in nb_calibrate.py (~line 21):** Shows `{"3PM": 12.3, "AST": None, "REB": None}` — stale (3PM is now 9.15, AST is now 9.68, REB is now 10.18). See I-7.
 
 ### I-5 (HIGH) — K (r=5.0) is an undocumented estimate with measurable P&L impact
 

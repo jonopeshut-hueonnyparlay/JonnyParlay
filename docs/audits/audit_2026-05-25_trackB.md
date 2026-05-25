@@ -1,25 +1,28 @@
-# Audit 2026-05-25 — Track B: Probability Pipeline
+# Audit 2026-05-25 — Track B: Probability Pipeline (v2 — post REB/AST→NB + SIGMA update)
 
-Auditor: Claude Sonnet 4.6 (automated)
+Auditor: Claude Sonnet 4.6 (fresh session, post-2026-05-25 changes)
 Scope: engine/run_picks.py — distribution routing, Platt scaling, confidence scalar, gate logic, edge calculation
+Re-audited after: REB→NB(r=10.18), AST→NB(r=9.68), SIGMA["AST"] added (combo path, mult=0.53/min=2.0),
+  SIGMA["REB"] updated (mult=0.48/min=2.0), SIGMA["PTS"] min raised 4.5→5.0.
 
 ---
 
 ## B1. Distribution Routing — Complete Map
 
-### Normal (SIGMA dict)
-- `PTS`: mult=0.35, min=4.5
-- `REB`: mult=0.58, min=2.5 *(also in POISSON_STATS — Poisson when line ≤ 8.5)*
+### Normal (SIGMA dict) — current state post-2026-05-25
+- `PTS`: mult=0.35, min=5.0 *(min raised from 4.5)*
+- `REB`: mult=0.48, min=2.0 *(combo path only; was 0.58/2.5; single-stat now NB)*
+- `AST`: mult=0.53, min=2.0 *(NEW 2026-05-25 — combo path only; was uncalibrated fallback)*
 - `REC`: mult=0.50, min=1.2 *(also in POISSON_STATS — Poisson when line ≤ 8.5)*
 - `OUTS`: mult=0.30, min=3.0
 - `HA`: mult=0.50, min=2.5
 - Combo stats (PRA, PR, PA, RA): correlated Normal via `_combo_mu_sigma()`
 
 ### Poisson (`POISSON_STATS`, line ≤ `POISSON_CUTOFF=8.5`)
-`REB`, `SOG`, `REC`, `HITS`
+`SOG`, `REC`, `HITS` *(REB removed 2026-05-25 — moved to NB)*
 
 ### Negative Binomial (`NB_STATS`)
-`3PM` (r=9.15), `AST` (r=9.68), `HRR` (r=1.5), `K` (r=5.0)
+`3PM` (r=9.15), `AST` (r=9.68), `REB` (r=10.18), `HRR` (r=1.5), `K` (r=5.0) *(AST and REB added 2026-05-25)*
 
 ### Special/disabled
 - `TB`: gate-blocked (`G_TB_DISABLED`). Market not fetched.
@@ -37,7 +40,7 @@ WNBA 3PM bypasses NB and uses `SIGMA_WNBA["3PM"] = {"mult":0.48,"min":0.70}` (No
 
 ## B2. Platt Scaling Pipeline
 
-### Formula (CRITICAL documentation mismatch — see finding B-1)
+### Formula — VERIFIED CORRECT post-2026-05-25 CLAUDE.md fix
 **Production code** (~line 649, `_platt_calibrate_prop()`):
 ```python
 raw = PLATT_A * over_p + PLATT_B   # RAW-PROBABILITY SPACE
@@ -46,7 +49,7 @@ return 1.0 / (1.0 + math.exp(-raw))
 ```
 Constants annotated at lines ~370–371: `"raw-probability space (not logit-space)"`.
 
-**CLAUDE.md** states formula is `sigmoid(A * logit(over_p) + B)` (logit-space). **This is wrong** — see finding B-1.
+**CLAUDE.md** now correctly states: "Formula: sigmoid(A * over_p + B) (raw-probability space — NOT logit-space)". Finding B-1 CLOSED.
 
 ### over_p_raw logging order
 `over_p_raw = over_p` saved at ~line 2257, **before** Platt at ~line 2266. Correct.
@@ -147,28 +150,13 @@ under_edge = (1.0 - model_prob) - nv_under
 
 ## Findings
 
-### B-1 (CRITICAL) — CLAUDE.md describes wrong Platt formula space
+### B-1 — CLOSED (was CRITICAL) — CLAUDE.md describes wrong Platt formula space
 
-```
-TRACK: B
-FILE: CLAUDE.md (memory section) + engine/run_picks.py
-LINE: ~357–371, ~641–649
-SEVERITY: CRITICAL
-N: N/A
-ISSUE: CLAUDE.md states "Formula: sigmoid(A * logit(over_p) + B) (logit-space Platt)".
-Production code at line ~649 uses raw-probability space: sigmoid(PLATT_A * over_p + PLATT_B).
-Code comments (lines 357, 370) explicitly label constants as "raw-probability space (not
-logit-space)". The A/B values (1.4988, -0.8102) were fitted for the raw-space formula.
-Applying the same A/B to the logit-space formula would shift output by -12.8pp at
-over_p=0.55 and +18.4pp at over_p=0.80. This is documented in the migration note at
-lines 360–366 as an active trap for the H3 migration.
-IMPACT: Anyone reading CLAUDE.md to implement the H3 migration who "corrects" the code to
-logit-space without simultaneously updating A/B will corrupt every prop win_prob in
-production. A single miscoordinated copy-paste breaks all picks.
-FIX: Update CLAUDE.md to: "Formula: sigmoid(A * over_p + B) (raw-probability space —
-frozen until H3 gate fires, at which point BOTH formula AND coefficients change
-simultaneously from calibrate_platt.py output)."
-```
+**STATUS: FIXED** by 2026-05-25 CLAUDE.md update. CLAUDE.md now reads:
+"Formula: sigmoid(A * over_p + B) (raw-probability space — NOT logit-space). At H3, BOTH
+formula AND coefficients change simultaneously from calibrate_platt.py output."
+Fresh-session verification confirmed: code at ~line 649 and CLAUDE.md now agree — both
+say raw-probability space. **No further action needed.**
 
 ### B-2 (MEDIUM) — TEAM_TOTAL over block applies to all sports, only NBA data
 
