@@ -13,10 +13,13 @@ We are monetizing soon. The model must be correct. Be thorough and unsparing.
 
 Read `CLAUDE.md` in full before starting — it contains the authoritative system spec.
 
+**Core principle: no band-aids, ever.**
+A gate or filter is never a substitute for fixing the model. If a stat/direction is losing because the model gives wrong probabilities, the fix is the model — not a block. Only block when the market is structurally unbeatable regardless of model accuracy, or when the stat itself is fundamentally broken (wrong distribution family that cannot be parameterized correctly). Every gate must be justified as a market/structural issue, not a calibration patch.
+
 **The three failure modes we most want to catch:**
 1. Math or logic that produces wrong probabilities silently
-2. Gates or rules built on insufficient data (n too small to trust)
-3. Changes that were implemented without adequate empirical validation
+2. Gates or rules that are band-aids over model errors rather than fixes to the model
+3. Changes implemented without adequate empirical validation (n too small to trust)
 
 ---
 
@@ -59,6 +62,8 @@ For each stat in `POISSON_STATS`, `NB_STATS`, `COMBO_STATS`, and everything usin
 For every gate in `check_game_gates()` and `check_prop_gates()`:
 - What is the gate testing?
 - What empirical evidence supports it? What was the n? Is n ≥ 30 for any stat-direction block?
+- **Band-aid test**: Is this gate compensating for a model that gives wrong probabilities? If so, it's a band-aid — flag it HIGH and identify the real fix. The fix should be in the distribution model or calibration, not in blocking the output.
+- **Market efficiency test**: Is this gate blocking something that is structurally unbeatable (i.e., would still lose even with a perfect model)? If so, it's justified.
 - Are any gates contradictory (gate A passes what gate B blocks)?
 - Are any gates redundant (one subsumes another)?
 - G8D specifically: is 3PM over ≤1.5 blocked? Check empirical data — 1.5-line 3PM over has -23.8pp gap (n=13). Is n=13 sufficient to block permanently?
