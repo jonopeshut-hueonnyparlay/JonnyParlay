@@ -1579,6 +1579,8 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
         + f"**This week:** {week_str}\n"
         + month_line
     ).rstrip()
+    if len(desc) > 4096:
+        desc = desc[:4090] + "\n…"
 
     content = ""  # Daily recap posts silently — no @everyone ping
 

@@ -266,8 +266,16 @@ def run(days, sport_filter, tier_filter, stat_filter=None, include_shadow=False)
 
     # ── Overall ───────────────────────────────────────────────────────────────
     s = analyze(picks)
+    singles = [p for p in picks if p.get("run_type") in ("primary", "bonus")]
+    parlays = [p for p in picks if p.get("run_type") in ("sgp", "longshot")]
+    ss = analyze(singles) if singles else None
+    sp = analyze(parlays) if parlays else None
     section("OVERALL")
-    print(f"  Record:   {fmt_record(s)}")
+    print(f"  Record:   {fmt_record(s)}  (all pick types)")
+    if ss:
+        print(f"  Singles:  {fmt_record(ss)}  (primary + bonus — use this for model assessment)")
+    if sp:
+        print(f"  Parlays:  {fmt_record(sp)}  (SGP + longshot — expected lower WR by structure)")
     pnl_sign = "+" if s["units_won"] >= 0 else ""
     print(f"  Units:    {pnl_sign}{s['units_won']:.2f}u  (risked {s['units_risked']:.2f}u)")
     if s["roi"] is not None:

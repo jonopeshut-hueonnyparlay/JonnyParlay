@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 # FileLock as the writers (audit H-8 / M-series).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pick_log_io import load_rows  # noqa: E402
+from http_utils import retry_after_secs  # noqa: E402
 
 try:
     import requests
@@ -604,11 +605,7 @@ def _webhook_post_with_file(url, payload, file_buf=None, filename="weekly.xlsx")
             else:
                 r = requests.post(url, json=payload, timeout=10)
             if r.status_code == 429:
-                try:
-                    retry_after = float(r.json().get("retry_after", 2.0))
-                except Exception:
-                    retry_after = 2.0
-                time.sleep(retry_after)
+                time.sleep(retry_after_secs(r))
                 continue
             if r.status_code in (200, 204):
                 return True

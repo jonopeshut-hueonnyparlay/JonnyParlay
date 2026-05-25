@@ -936,7 +936,7 @@ def build_sgp_embed(legs, parlay_odds, game, sgp_size=None, _copula_joint=None):
     }
 
 
-def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None):
+def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None, copula_joint=None):
     """Append an SGP to pick_log.csv as run_type='sgp'."""
     import csv, json, os
     from pathlib import Path
@@ -987,7 +987,7 @@ def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None):
         "line":            "",
         "direction":       "",
         "proj":            "",
-        "win_prob":        "",
+        "win_prob":        round(copula_joint, 4) if copula_joint is not None else "",
         "edge":            "",
         "odds":            _normalize_odds(parlay_odds) if parlay_odds else "",
         "book":            book,
@@ -1083,7 +1083,7 @@ def post_sgp(legs, parlay_odds, game, suppress_ping=False, today_str=None, save=
             except Exception:
                 pass
         if save and today_str:
-            _log_sgp(legs, parlay_odds, game, today_str, book=book, sgp_size=sgp_size)
+            _log_sgp(legs, parlay_odds, game, today_str, book=book, sgp_size=sgp_size, copula_joint=_cj)
     return ok
 
 

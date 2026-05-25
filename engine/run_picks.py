@@ -5035,6 +5035,13 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
 
     best = max(eligible, key=lambda p: p.get("pick_score", 0))
 
+    # M9: check 12u session cap before posting bonus — bonus size is not reserved by apply_caps
+    _units_so_far = _units_bet_today(today_str)
+    _bonus_est = best.get("size", 1.25)
+    if _units_so_far + _bonus_est > 12.0:
+        print(f"  [Discord] Bonus drop skipped — session cap: {_units_so_far:.2f}u logged + {_bonus_est:.2f}u bonus would exceed 12u.")
+        return
+
     # --- Re-size the bonus pick with VAKE variance + tier multipliers ---
     # The pick entered here with base sizing (from size_picks_base), which caps
     # at 1.25u for any edge ≥ 9% regardless of tier. A standalone bonus drop
@@ -5276,8 +5283,12 @@ def select_killshots(qualified, today_str, manual_players=None):
         except (TypeError, ValueError):
             score = 0.0
         player = p.get("player", "")
-        # Manual promote: bypass v2 filters, only require MANUAL_FLOOR + name match
+        # Manual promote: bypass tier/score v2 gate, but stat must still be in KILLSHOT_STAT_ALLOW
+        stat = p.get("stat", "")
         if _player_matches(player) and score >= KILLSHOT_MANUAL_FLOOR:
+            if stat not in KILLSHOT_STAT_ALLOW:
+                print(f"  [KILLSHOT] Manual override rejected: {player} {stat} not in KILLSHOT_STAT_ALLOW {KILLSHOT_STAT_ALLOW}")
+                continue
             candidates.append(p)
             continue
         # Auto-qualify: must pass full v2 gate
