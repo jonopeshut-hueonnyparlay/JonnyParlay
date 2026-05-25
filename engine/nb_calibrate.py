@@ -1,10 +1,26 @@
 """nb_calibrate.py -- compute within-player NB dispersion parameter r for each stat.
 
-Methodology: same as used for 3PM (NB_R["3PM"]=12.3 in run_picks.py).
+Methodology:
   r = avg_mu / (avg(var/mu) - 1)
 
 This is within-player conditional variance -- the right quantity for per-game
 probability modeling (we condition on a specific player's projection).
+
+Stats covered:
+  3PM, AST, REB  -- calibrated from projections.db (NBA game logs, 3 seasons)
+
+Stats NOT covered here (no game log data in projections.db):
+  K   -- pitcher strikeouts. Current r=5.0 is PROVISIONAL (undocumented estimate;
+         bimodal distribution: early hook vs deep start). To calibrate properly:
+         need MLB pitcher game logs with K per game. Query would be:
+           SELECT player_id, AVG(k), VAR(k) FROM mlb_game_stats GROUP BY player_id HAVING COUNT(*)>=20
+         Requires separate MLB stats DB (statsapi). See backlog.
+  HRR -- hits+runs+RBI. Current r=1.5 calibrated via single-point moment-matching
+         from shadow log: NB(r=1.5, mu=2.0) gives P(X>=2)=47.8%, matching empirical
+         48% WR (n=1810). Method differs from the var/mu approach used here.
+         Proper refit when re-enabled: within-player var/mu from MLB batter game logs,
+         same query pattern as above. Zero-inflation (~37% of games) may warrant
+         zero-inflated NB rather than standard NB.
 """
 import sqlite3
 

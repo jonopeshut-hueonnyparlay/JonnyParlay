@@ -302,8 +302,8 @@ NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
     "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
     "REB": 10.18,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
-    "HRR": 1.5,    # calibrated from shadow log empirical WR at line 1.5 (n=1810)
-    "K":   5.0,    # overdispersion estimate for pitcher K/start; K overs only at line >=6.0
+    "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) → P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
+    "K":   5.0,    # PROVISIONAL — undocumented estimate; bimodal (early hook vs deep start). Proper calibration needs MLB pitcher game logs (within-player var/mu). See nb_calibrate.py and backlog.
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
@@ -3585,6 +3585,10 @@ def build_safest6_parlay(qualified):
     combined probability estimate (which assumes independence across legs).
     If the top 6 by WP would pull 3+ from one game, the 3rd+ are skipped
     and replaced by the next-best picks from other games.
+
+    Independence assumption is valid for cross-game legs: positive cross-game
+    correlation (shared pace/scoring environment) would make true joint prob
+    >= naive product, so independence is conservative, not aggressive.
     """
     ranked = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
     game_counts: dict = {}
