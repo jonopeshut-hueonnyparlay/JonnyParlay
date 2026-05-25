@@ -1692,7 +1692,7 @@ class OddsFetcher:
             age_min = (time.time() - cache_file.stat().st_mtime) / 60
             if age_min < 15:
                 try:
-                    with open(cache_file, "r") as f:
+                    with open(cache_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     print(f"  ♻️  Using cached {sport} odds ({age_min:.0f} min old)")
                     return data
@@ -1708,7 +1708,7 @@ class OddsFetcher:
         # ET day boundary — must match _load_cache (audit H-1).
         cache_file = cache_dir / f"odds_{sport}_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')}.json"
         try:
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, default=str)
         except Exception:
             pass
@@ -5914,7 +5914,7 @@ def main():
         out_path.mkdir(parents=True, exist_ok=True)
         # ET date for dry-run filename (audit H-1).
         dp = out_path / f"odds_dry_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')}.json"
-        with open(dp, "w") as f:
+        with open(dp, "w", encoding="utf-8") as f:
             json.dump(odds_data, f, indent=2, default=str)
         print(f"\n  Dry run saved: {dp}")
         return
