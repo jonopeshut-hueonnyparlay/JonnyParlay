@@ -315,10 +315,14 @@ COMBO_COMPONENTS = {
     "PA":  ("PTS", "AST"),
     "RA":  ("REB", "AST"),
 }
-# Intra-player pairwise ρ — calibrated from 75,367 player-games (595 players,
+# Intra-player pairwise ρ — calibrated from 76,960 player-games (595 players,
 # n>=20, min>=5) across all seasons in projections.db. Weighted average of
 # within-player Pearson correlations; reflects total game-to-game covariance
 # including minute variance (correct, since SIGMA already captures total σ).
+# Re-verified 2026-05-25 after DB update: all three pairs stable to <0.001.
+# Normal approximation validity (min>=20 pop): PRA skew=0.74, PR skew=0.72,
+# PA skew=0.80, RA skew=0.94 — all ACCEPTABLE. RA is the most skewed (small
+# count stats) but error at typical prop lines is within model uncertainty.
 COMBO_RHO = {
     ("PTS", "REB"): 0.333,
     ("PTS", "AST"): 0.233,
@@ -336,7 +340,11 @@ SIGMA_WNBA = {
 }
 
 # WNBA combo correlations — calibrated from 9 players / 336 games (2024 season).
-# All pairs ~0.20 lower than NBA; near-zero correlation means combos are nearly additive.
+# WARNING: n=9 players is too small for reliable correlation estimation. SE ≈ 0.055
+# per pair, so the near-zero values (AST pairs) could be noise or real WNBA structure.
+# Near-zero correlation means combos are treated as nearly additive (independent).
+# Refit gate: 1000+ WNBA player-games (approx one full season of box scores).
+# Until then these values are directionally plausible but statistically uncertain.
 COMBO_RHO_WNBA = {
     ("PTS", "REB"): 0.13,
     ("PTS", "AST"): 0.04,
