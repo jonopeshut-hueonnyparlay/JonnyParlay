@@ -279,7 +279,7 @@ SIGMA = {
 
 # HA removed from Poisson — overdispersed at typical lines (std 2.70 vs Poisson-predicted 2.35)
 # K removed from Poisson — moved to NB_STATS (overdispersed; SaberSim conservative IP bias)
-POISSON_STATS = {"AST", "REB", "SOG", "REC", "HITS"}
+POISSON_STATS = {"REB", "SOG", "REC", "HITS"}  # AST moved to NB_STATS (overdispersed; avg var/mu=1.2539)
 POISSON_CUTOFF = 8.5
 
 # P16 — Negative binomial distribution for overdispersed count stats.
@@ -292,11 +292,12 @@ POISSON_CUTOFF = 8.5
 #   K:   r=5.0 — pitcher Ks overdispersed vs Poisson (bimodal: early hook vs deep start).
 #        SaberSim projects conservative median IP; market prices to mode IP → K unders structurally lose.
 # STL/BLK not in any TIERS tier — included for completeness, no production impact yet.
-NB_STATS = {"3PM", "HRR", "K"}
+NB_STATS = {"3PM", "HRR", "K", "AST"}
 NB_R = {
-    "3PM": 12.3,   # within-player conditional r; calibrated 2024-25 DB
+    "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
+    "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
     "HRR": 1.5,    # calibrated from shadow log empirical WR at line 1.5 (n=1810)
-    "K":   5.0,    # overdispersion estimate for pitcher K/start; K overs only at line ≥6.0
+    "K":   5.0,    # overdispersion estimate for pitcher K/start; K overs only at line >=6.0
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
@@ -994,7 +995,7 @@ def check_prop_gates(pick):
     # under probability). G13 (prob≥0.50) already handles true direction failures.
     # NB stats (3PM) are exempt for NBA/NHL — NB distribution handles these correctly.
     # WNBA 3PM uses Normal (underdispersed), so it gets G14 like other Normal stats.
-    if stat in SIGMA and stat not in POISSON_STATS:
+    if stat in SIGMA and stat not in POISSON_STATS and stat not in NB_STATS:
         _s = (SIGMA_WNBA.get(stat) if sport == "WNBA" else None) or SIGMA[stat]
         _sigma = max(proj * _s["mult"], _s["min"])
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
@@ -2290,6 +2291,9 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
             else:
                 conf = 1.0   # Full confidence (20+ games or GP not available)
             adj_edge = raw_edge * conf
+            # I6: apply same confidence scalar to win_prob (not just edge).
+            # Low-GP players have inflated model confidence — pull toward 50%.
+            adj_wp = 0.50 + (win_prob - 0.50) * conf
 
             # Get tier (sport-aware: NHL AST → T3, NBA/MLB TEAM_TOTAL → T1B)
             tier = get_tier(stat, direction, sport=_sport)
@@ -2310,7 +2314,7 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 "line": line,
                 "direction": direction,
                 "proj": proj,
-                "win_prob": win_prob,
+                "win_prob": adj_wp,
                 "over_p_raw": over_p_raw,  # v4: pre-Platt over_p for calibrate_platt.py
                 "raw_edge": raw_edge,
                 "adj_edge": adj_edge,
@@ -2714,6 +2718,9 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             ))
 
         for direction in ("over", "under"):
+            # TEAM_TOTAL over blocked: 45.5% WR (n=11), -11.0pp gap — systematic loser
+            if direction == "over":
+                continue
             wp = over_p if direction == "over" else under_p
             edge = over_edge if direction == "over" else under_edge
             odds = over_odds if direction == "over" else under_odds

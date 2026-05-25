@@ -1,14 +1,16 @@
 """calibrate_platt.py -- Fit Platt scaling parameters for prop win_prob.
 
 Reads settled primary/bonus picks from pick_log.csv, fits a logistic
-regression on the over_p basis, and prints the constants to paste into
-run_picks.py (PLATT_A, PLATT_B).
+regression on the logit(over_p) basis (standard Platt scaling), and prints
+the constants to paste into run_picks.py (PLATT_A, PLATT_B).
 
 Usage:
-    python engine/calibrate_platt.py [--log PATH] [--sport NBA|NHL|all]
+    python engine/calibrate_platt.py [--log PATH] [--sport NBA|NHL|all] [--force]
+
+    --force  Bypass the H3 data gate (use during development; n<100 is noisy)
 
 P9 Phase timeline:
-    Phase 1 (76-300 picks): Platt scaling (this script)
+    Phase 1 (49-300 picks): Platt scaling (this script)
     Phase 2 (300+ picks):   Isotonic regression (P19)
 
 Fitting basis:
@@ -17,7 +19,9 @@ Fitting basis:
     is recovered from the logged directional win_prob as a fallback:
         over bet  -> over_p = win_prob   (= already-calibrated — biased)
         under bet -> over_p = 1 - win_prob
-    Calibration: cal_over_p = sigmoid(a * over_p + b)
+    Calibration: cal_over_p = sigmoid(a * logit(over_p) + b)
+    This is standard Platt scaling in logit-space (superior tail compression
+    vs raw-probability-space — see PROBABILITY_PIPELINE_AUDIT_2026-05-24.md).
     under_p derived as 1 - cal_over_p (preserves complementarity).
     Loss: negative log-likelihood of outcomes given calibrated p_win.
 """
@@ -86,12 +90,25 @@ def recover_over_p(df: pd.DataFrame) -> np.ndarray:
 
 
 
+def _logit(p: np.ndarray) -> np.ndarray:
+    """Logit transform with clipping to avoid log(0)."""
+    p = np.clip(p, 1e-6, 1.0 - 1e-6)
+    return np.log(p / (1.0 - p))
+
+
 def _fit_nll_exact(over_p: np.ndarray, is_over: np.ndarray, y: np.ndarray) -> tuple[float, float]:
-    """Fit using exact direction flag (more accurate than over_p > 0.5 heuristic)."""
+    """Fit standard logit-space Platt: sigmoid(a * logit(over_p) + b).
+
+    Uses logit(over_p) as the feature — this is standard Platt scaling.
+    The logit transform compresses tails more aggressively than raw-probability
+    input, fixing the persistent 0.70-0.80 WP over-inflation.
+    """
+    logit_p = _logit(over_p)
+
     def nll(params: list[float]) -> float:
         a, b = params
-        logit = np.clip(a * over_p + b, -30.0, 30.0)
-        cal_over = sigmoid(logit)
+        linear = np.clip(a * logit_p + b, -30.0, 30.0)
+        cal_over = sigmoid(linear)
         p_win = np.where(is_over, cal_over, 1.0 - cal_over)
         return -np.mean(y * np.log(p_win + 1e-15) + (1 - y) * np.log(1 - p_win + 1e-15))
 
@@ -110,6 +127,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Fit Platt scaling for prop win_prob")
     parser.add_argument("--log",   default=str(DEFAULT_LOG), help="Path to pick_log.csv")
     parser.add_argument("--sport", default="all", help="all | NBA | NHL | MLB")
+    parser.add_argument("--force", action="store_true", help="Bypass H3 data gate (noisy but usable for development)")
+    parser.add_argument("--native-only", action="store_true", help="Use only rows with native over_p_raw (no legacy win_prob fallback)")
     args = parser.parse_args()
 
     log_path = Path(args.log)
@@ -126,14 +145,24 @@ def main() -> None:
         n_raw = int(pd.to_numeric(df["over_p_raw"], errors="coerce").notna().sum())
     else:
         n_raw = 0
-    if n_raw < 100:
-        print(f"H3 GATE: only {n_raw}/100 required over_p_raw rows — Platt refit blocked.")
-        print("         Keep logging picks; re-run once ≥100 native rows are settled.")
-        print(f"         (Total settled: {len(df)}, but {len(df)-n_raw} use legacy win_prob fallback.)")
-        sys.exit(0)
 
-    if len(df) < 50:  # L16: raised from 30 → 50; CV folds are too small below this
-        print(f"WARNING: only {len(df)} settled picks — Platt fit requires ≥50 for reliable CV.")
+    # --native-only: drop legacy rows to eliminate double-calibration bias
+    if getattr(args, "native_only", False) and "over_p_raw" in df.columns:
+        native_mask = pd.to_numeric(df["over_p_raw"], errors="coerce").notna()
+        df = df[native_mask].copy()
+        print(f"  --native-only: using {len(df)} rows with true over_p_raw (dropped {(~native_mask).sum()} legacy rows)")
+
+    if n_raw < 100 and not args.force:
+        print(f"H3 GATE: only {n_raw}/100 required over_p_raw rows — Platt refit blocked.")
+        print("         Use --force to bypass (noisy fit; re-run at 100+ rows for stable coefficients).")
+        print(f"         (Total settled: {len(df)}, but {n_raw} native rows)")
+        sys.exit(0)
+    if n_raw < 100 and args.force:
+        print(f"  NOTE: --force active. Fitting on {n_raw} native rows (gate is 100). Coefficients will be noisy.")
+        print(f"        Re-run without --force when n_raw >= 100 for a stable fit.")
+
+    if len(df) < 50 and not args.force:  # L16: raised from 30 → 50; CV folds are too small below this
+        print(f"WARNING: only {len(df)} settled picks -- Platt fit requires >=50 for reliable CV.")
         print("Continue anyway? [y/N] ", end="", flush=True)
         if input().strip().lower() != "y":
             sys.exit(0)
@@ -146,7 +175,8 @@ def main() -> None:
 
     # In-sample evaluation (biased — fit and eval on same data)
     raw_p_win = np.where(is_over, over_p, 1.0 - over_p)
-    logit_cal = np.clip(a * over_p + b, -30.0, 30.0)
+    logit_p = _logit(over_p)
+    logit_cal = np.clip(a * logit_p + b, -30.0, 30.0)
     cal_over = sigmoid(logit_cal)
     cal_p_win = np.where(is_over, cal_over, 1.0 - cal_over)
 
@@ -171,7 +201,7 @@ def main() -> None:
             continue
         a_cv, b_cv = _fit_nll_exact(over_p[train_idx], is_over[train_idx], y[train_idx])
         raw_val = np.where(is_over[val_idx], over_p[val_idx], 1.0 - over_p[val_idx])
-        logit_cv = np.clip(a_cv * over_p[val_idx] + b_cv, -30.0, 30.0)
+        logit_cv = np.clip(a_cv * _logit(over_p[val_idx]) + b_cv, -30.0, 30.0)
         cal_val = np.where(is_over[val_idx], sigmoid(logit_cv), 1.0 - sigmoid(logit_cv))
         oos_raw_scores.append(brier_score(raw_val, y[val_idx]))
         oos_cal_scores.append(brier_score(cal_val, y[val_idx]))
@@ -210,8 +240,9 @@ def main() -> None:
               f"cal={cal_p_win[mask].mean():.3f}")
     print()
     print("  -- Paste into run_picks.py ----------------------------------")
-    print(f"  PLATT_A = {a:.4f}   # slope")
-    print(f"  PLATT_B = {b:.4f}  # intercept")
+    print(f"  PLATT_A = {a:.4f}   # slope  (logit-space)")
+    print(f"  PLATT_B = {b:.4f}  # intercept  (logit-space)")
+    print(f"  # Formula: sigmoid(PLATT_A * logit(over_p) + PLATT_B)")
     print()
     # M16: hard exit when OOS Brier improvement is negative — do NOT paste bad constants
     if not (brier_oos_pct != brier_oos_pct):  # check not NaN
