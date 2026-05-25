@@ -28,6 +28,15 @@ Do not wait until all tracks are done. If the session crashes, completed tracks 
 
 **Calibration must be circular-free.** A constant cannot be fitted and validated on the same dataset.
 
+**Use web research to verify anything you are not 100% certain about.** Do not guess at mathematical formulas, industry conventions, or statistical thresholds. If you are uncertain, look it up. Specific cases where web research is required:
+- **Mathematical formulas**: negative binomial PMF/CDF, Gaussian copula joint probability, Platt scaling, Kelly criterion formula — verify against authoritative sources (Wikipedia, textbooks, scipy docs) before flagging an implementation as correct or incorrect.
+- **Industry standards**: vig removal methods (additive vs Pinnacle/multiplicative), CLV calculation conventions, sharp book definitions — verify what professional sharp operations actually use before calling something non-standard.
+- **Statistical thresholds**: skewness/kurtosis cutoffs for Normal approximation validity, sample size requirements for reliable correlation estimates, confidence interval formulas for proportions — verify against statistics references.
+- **Distribution properties**: NB vs Poisson decision criteria (overdispersion test), zero-inflated models, moment-matching methodology — verify before assessing whether our implementation is correct.
+- **API behavior**: NBA API endpoint behavior, Odds API field definitions, DraftKings prop naming conventions — verify before asserting a field means something specific.
+
+Do not use web research to substitute for reading the actual code. Use it to verify that what the code does is mathematically and statistically correct.
+
 ---
 
 ## TRACK A — Numerical Correctness (foundation)
