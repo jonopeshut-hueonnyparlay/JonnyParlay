@@ -433,4 +433,99 @@ WNBA is in shadow mode; combo picks are rare in practice.
 | H3 | High | **MONITORING** — thresholds set; re-evaluate each gate at n=30 |
 | H4 | High | **MAINTAINED** — n=11 at 45.45% WR; remove block at n=30 |
 | H5 | High | **DEFERRED** — refit WNBA COMBO ρ at n=500+ player-games |
-| M1–M6 | Medium | Open — see Medium section above |
+| M1–M6 | Medium | See resolutions below |
+
+---
+
+## MEDIUM FINDINGS — RESOLUTION (2026-05-26)
+
+### M1 — G7 absolute -150 threshold
+**STATUS: CLOSED — no change, manual awareness.**
+
+Today's Falter case (-160, 80.8% WP, 23.9% edge) is the canonical example. G7 is blunt by
+design: picks at -150+ odds in liquid markets are almost always model overclaiming edge.
+The Falter case is also a potential SaberSim projection error (bullpen game, IP overstated).
+No WP/edge bypass added — the gate should remain absolute. Flag for manual review when
+high-WP picks appear in the G7 top-filtered output.
+
+---
+
+### M2 — G7b threshold (9% edge at -140 to -149)
+**STATUS: MONITORING — weak data suggests threshold may be too low.**
+
+Data: n=32 picks at odds -140 to -149 (all passed G7b, meaning edge ≥ 9%). WR = 17/32 = 53.1%.
+Break-even at average odds of ~-143 is ~59%. These picks are losing at juice.
+
+The model is overclaiming edge by ~6pp in this juice zone. However n=32 is marginal — the 95% CI
+on 53.1% WR includes breakeven. No threshold change yet.
+
+**Monitoring checkpoint:** At n=50 G7b-zone picks, if WR < 56%, raise G7b threshold from 9% to 12%.
+If WR < 53% at n=50, consider extending G7 to -140 (kill the entire zone).
+
+---
+
+### M3 — G10 threshold (8% edge at under ≤2.5)
+**STATUS: MONITORING — mixed results, no change indicated.**
+
+Data: n=42 picks at under ≤2.5 (all passed G10, edge ≥ 8%). WR = 22/42 = 52.4%.
+
+Split by odds direction:
+- Negative-odds (mostly SOG 2.5 unders): ~62% WR — profitable at juice
+- Plus-odds (mostly 3PM 0.5/1.5 unders): ~43% WR — losing
+
+The 8% floor is working for negative-odds unders but not screening out the losing plus-odds
+3PM unders. The correct fix may not be raising G10's edge floor but rather reviewing whether
+plus-odds under ≤2.5 picks need a separate gate (e.g., block 3PM under ≤1.5 at plus odds,
+analogous to G8D on the over side).
+
+**Monitoring checkpoint:** At n=60 G10-zone picks, re-split by stat and odds direction.
+If 3PM under ≤1.5 at plus odds continues losing, add a stat-specific gate.
+
+---
+
+### M4 — G14 threshold (0.10σ)
+**STATUS: DEFERRED — need n=50+ G14-adjacent picks.**
+
+Cannot calibrate without data on picks projected very close to the line. Current threshold
+allows picks where proj clears line by only 0.10σ. Whether 0.25σ would materially improve
+win rates is unknown. Defer until pick log accumulates sufficient G14-adjacent cases.
+
+---
+
+### M5 — G4/G5 no empirical backing
+**STATUS: CLOSED — keep as-is.**
+
+G4 (line ≤2.5 + prob >75%) and G5 (plus odds + prob >65%) are sanity gates that rarely
+fire. Both are directionally correct. Neither has produced a false positive visible in output.
+No change until one of them blocks an obvious good pick.
+
+---
+
+### M6 — G1 may never fire
+**STATUS: CLOSED — documented as theoretical guard.**
+
+G1 fires when prob ≥ 0.70 AND odds > -200 AND edge < 0.05. For edge < 5% with WP ≥ 70%,
+the market implied prob must be ≥ 65% (odds ≈ -186). The window is -186 to -200 only.
+In practice this fires when a pick has 70%+ model WP but the market has already priced it
+near -190 and edge is thin. This is a valid guard for a real (if rare) scenario.
+No change — keep as theoretical protection.
+
+---
+
+## FINAL STATUS (COMPLETE)
+
+| ID | Severity | Resolution |
+|----|----------|------------|
+| C1 | Critical | **CLOSED** — deleted G13B (commit 89c9605) |
+| C2 | Critical | **CLOSED** — fixed _is_soft_o05 (commit 89c9605) |
+| H1 | High | **CLOSED** — multiplier confirmed accurate; monitor at n=30 post-gate |
+| H2 | High | **DEFERRED** — needs MLB pitcher game log infrastructure |
+| H3 | High | **MONITORING** — thresholds set; re-evaluate each gate at n=30 |
+| H4 | High | **MAINTAINED** — n=11 at 45.45% WR; remove block at n=30 |
+| H5 | High | **DEFERRED** — refit WNBA COMBO ρ at n=500+ player-games |
+| M1 | Medium | **CLOSED** — no change; manual awareness on G7 top-filtered output |
+| M2 | Medium | **MONITORING** — 53.1% WR at n=32 below juice breakeven; checkpoint at n=50 |
+| M3 | Medium | **MONITORING** — 52.4% WR; split negative/plus-odds at n=60; watch 3PM unders |
+| M4 | Medium | **DEFERRED** — need n=50+ G14-adjacent picks |
+| M5 | Medium | **CLOSED** — G4/G5 kept as-is |
+| M6 | Medium | **CLOSED** — G1 documented as theoretical guard |
