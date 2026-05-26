@@ -328,3 +328,109 @@ The following gates have clear rationale, correct logic, and no implementation i
 
 Both C-level issues are 1–3 line changes each. No behavior change on live picks (HRR/TB
 are fully disabled; the fixes are cleanup only). Recommend doing these together in one commit.
+
+**STATUS: CLOSED 2026-05-26** — committed in 89c9605.
+
+---
+
+## HIGH FINDINGS — RESOLUTION (2026-05-26)
+
+Data pulled from pick_log.csv: 185 graded picks (primary/bonus only, excluding sgp/longshot/daily_lay).
+
+### H1 — PICK_SCORE_TIER_MULT confirmed accurate
+**STATUS: CLOSED — no code change.**
+
+| Tier | n | Win Rate | Avg Edge |
+|------|---|----------|----------|
+| T1   | 58 | 46.55% | 13.1% |
+| T1B  | 30 | 53.33% | 11.1% |
+| T2   | 60 | 61.67% | 11.3% |
+| T3   | 32 | 53.12% | 14.6% |
+
+T1 is still at 46.55% — essentially identical to the 45.1% the 0.90× was calibrated on.
+The multiplier is NOT stale. T2 genuinely outperforms T1 by 15pp.
+
+T1 breakdown:
+- AST: 42.86% WR (n=14)
+- SOG: 47.62% WR (n=42)
+- HRR: 50.00% WR (n=2 — irrelevant, fully disabled)
+
+Both AST and SOG are below juice break-even (~52.4% at -110). Note: most of this data
+is pre-G8B/G8C (gates added 2026-05-23). Post-gate T1 WR will need re-evaluation at n=30+
+post-gate picks.
+
+**Monitoring checkpoint:** When n=30 T1 picks post-2026-05-23, re-pull WR. If T1 ≥ 55%,
+raise PICK_SCORE_TIER_MULT["T1"] to 0.95. If T1 < 50%, consider removing T1 reserved slots.
+
+---
+
+### H2 — K NB r=5.0: calibration requires MLB pitcher game logs
+**STATUS: DEFERRED — data infrastructure gap.**
+
+No MLB pitcher game logs exist in `projections.db` (NBA-only). No graded K picks in
+`pick_log.csv` or `pick_log_mlb.csv` (0 K rows in both). `nb_calibrate.py` does not support
+MLB stats and explicitly documents K as a backlog item.
+
+Limited practical impact: K unders banned (G_K_NO_UNDERS), K overs require line ≥6.0
+(G_K_MIN_LINE). The provisional r=5.0 only affects K overs at ≥6.0 lines.
+
+**Gate:** Build MLB pitcher game log fetcher (statsapi endpoint exists via mlb_starter_fetcher.py
+infrastructure). Adapt nb_calibrate.py for MLB. Defer until dedicated MLB data sprint.
+
+---
+
+### H3 — Small-sample gates: monitoring thresholds set
+**STATUS: MONITORING — no code change.**
+
+Cannot pull WRs on blocked picks (they don't appear in pick_log). Gates are verified
+directionally correct from the data that did come through (T1 AST underperformance confirms
+G8B is appropriate). Post-gate pick data will accumulate going forward.
+
+Recalibration thresholds:
+| Gate | Condition blocked | Recalibrate when |
+|------|-------------------|------------------|
+| G8B | AST over ≤4.5 (NBA) | n=30 post-gate AST picks in any direction |
+| G8C | SOG under ≤3.5 | n=30 post-gate SOG picks |
+| G8D | 3PM over ≤1.5 | n=30 post-gate 3PM picks |
+| G13 | Sub-50% WP any stat | n=30 sub-50% WP picks (requires shadow run or --no-cap) |
+
+Note: verifying these gates properly requires either a shadow run with gates disabled,
+or reviewing the "top filtered picks" output accumulated across many sessions.
+
+---
+
+### H4 — NBA TEAM_TOTAL over block: maintain
+**STATUS: MAINTAINED — not at n=30 threshold.**
+
+Current data: 11 TEAM_TOTAL over picks, 5W/6L = 45.45% WR. Confirmed n=11 as of 2026-05-26.
+Below break-even. Block is statistically appropriate even if the sample is small.
+TEAM_TOTAL unders: 2/2 (100%, n=2 — too small to act on).
+
+**Gate for removal:** n=30 TEAM_TOTAL over picks. Run `analyze_picks.py --stat TEAM_TOTAL`
+to monitor. If WR ≥ 55% at n=30, remove the over block from run_picks.py.
+
+---
+
+### H5 — WNBA COMBO ρ: deferred
+**STATUS: DEFERRED — insufficient data.**
+
+n=9 players / 336 games. SE ≈ 0.055 per pair. Near-zero values on AST pairs could be real
+WNBA structure or noise. No action until WNBA shadow reaches n=500+ player-games.
+WNBA is in shadow mode; combo picks are rare in practice.
+
+**Gate:** Refit COMBO_RHO_WNBA when WNBA shadow DB reaches 500+ player-games.
+
+---
+
+## FINAL STATUS
+
+| ID | Severity | Resolution |
+|----|----------|------------|
+| C1 | Critical | **CLOSED** — deleted G13B (commit 89c9605) |
+| C2 | Critical | **CLOSED** — fixed _is_soft_o05 (commit 89c9605) |
+| H1 | High | **CLOSED** — multiplier confirmed accurate; monitor at n=30 post-gate |
+| H2 | High | **DEFERRED** — needs MLB pitcher game log infrastructure |
+| H3 | High | **MONITORING** — thresholds set; re-evaluate each gate at n=30 |
+| H4 | High | **MAINTAINED** — n=11 at 45.45% WR; remove block at n=30 |
+| H5 | High | **DEFERRED** — refit WNBA COMBO ρ at n=500+ player-games |
+| M1–M6 | Medium | Open — see Medium section above |
