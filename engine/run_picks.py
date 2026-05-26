@@ -990,15 +990,6 @@ def check_prop_gates(pick):
     if prob < 0.50:
         return False, "G13"
 
-    # G13B: HRR line-specific WP floors. NB(r=1.5) still over-states P(X≥1) (~72% vs 57.4% actual).
-    # Line 0.5: WP≥0.58 (empirical 57.4% WR, promising but NB inflated to ~72%).
-    # Line 1.5: WP≥0.65 (empirical 48% WR — dead without a strong NB model conviction).
-    if stat == "HRR":
-        if line <= 0.5 and prob < 0.58:
-            return False, "G13B"
-        if line > 0.5 and prob < 0.65:
-            return False, "G13B"
-
     # G_HRR_DISABLED: HRR fully killed — 57.4% empirical WR at line=0.5 is break-even at juice.
     # Model over-projects HRR; NB(r=1.5) inflates probabilities vs observed outcomes.
     if stat == "HRR":
@@ -1049,8 +1040,8 @@ def check_prop_gates(pick):
     if prob >= 0.70 and odds > -200 and edge < 0.05:
         return False, "G1"
 
-    # G2: model error — but O0.5 HRR/TB/HITS are soft markets with legitimately large edges
-    _is_soft_o05 = (stat in ("HRR", "TB", "HITS") and line <= 0.5 and direction == "over")
+    # G2: model error — but HITS O0.5 is a soft market with legitimately large edges
+    _is_soft_o05 = (stat == "HITS" and line <= 0.5 and direction == "over")
     g2_threshold = 0.28 if _is_soft_o05 else 0.20
     if edge >= g2_threshold:
         return False, "G2"
