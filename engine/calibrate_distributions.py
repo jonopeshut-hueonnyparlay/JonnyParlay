@@ -37,6 +37,8 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from paths import DATA_DIR
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from io_utils import atomic_write_json  # noqa: E402
 
 try:
     from engine_logger import get_logger
@@ -307,7 +309,7 @@ _CURRENT_PARAMS: dict[tuple[str, str], str] = {
     ("NBA", "stl"):   "Poisson (assumed)",
     ("NBA", "blk"):   "Poisson (assumed)",
     ("NBA", "tov"):   "Poisson (assumed)",
-    ("MLB_P", "k"):   "NB r=5.0 PROVISIONAL",
+    ("MLB_P", "k"):   "Poisson (confirmed 2026-05-26 var/mu=1.031)",
 }
 
 
@@ -374,8 +376,7 @@ def print_report(results: list[dict]) -> None:
 
 
 def save_json(results: list[dict], path: Path) -> None:
-    with open(path, "w") as f:
-        json.dump(results, f, indent=2)
+    atomic_write_json(path, results)
     print(f"\nResults saved to {path}")
 
 
@@ -405,7 +406,7 @@ def print_changes(results: list[dict]) -> None:
         ("NBA", "reb"):  10.18,
         ("NBA", "ast"):   9.68,
         ("NBA", "fg3m"):  9.15,
-        ("MLB_P", "k"):   5.0,   # provisional
+        # MLB_P k removed — confirmed Poisson 2026-05-26
     }
     # Currently deployed Normal params
     deployed_normal = {
