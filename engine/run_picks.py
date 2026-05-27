@@ -273,7 +273,7 @@ PROP_MARKETS = {
     ],
     "NHL": [
         "player_shots_on_goal", "player_assists",
-        "player_goals", "player_points", "player_blocked_shots", "goalie_saves",
+        "player_goals", "player_points", "player_blocked_shots",
     ],
     "MLB": [
         "pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed",
@@ -1256,7 +1256,7 @@ def apply_r12_cooldown(picks, cooldown_players):
 MAX_PREMIUM_PICKS = 3  # per-sport cap (multi-sport days: MLB+WNBA+NHL+NBA)
 MIN_PICK_SCORE    = 25  # Minimum pick_score to appear on premium card — kills coin-flip filler
 MIN_OVER_SCORE    = 40  # Higher score floor for over picks — overs 5-13 (27.8% WR) vs 18 at sub-40 avg
-MIN_WIN_PROB      = 0.55  # WP 0.50-0.60 bucket: 39.3% actual vs 55% model (n=61, gap -15.7pp, 2026-05-23)
+MIN_WIN_PROB      = 0.50  # floor removed 2026-05-27 — probability calibration improved
 
 def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     """
