@@ -6163,6 +6163,14 @@ def main():
 
     # ── Split shadow sports out BEFORE context layer (don't burn API calls on shadow picks) ──
     shadow_picks  = [p for p in qualified if p.get("sport") in SHADOW_SPORTS]
+    # Rescue shadow-sport picks that failed only the sport-specific edge gate (e.g. G_WNBA_EDGE).
+    # These passed all structural gates — the edge-floor is the only blocker, and it's intentionally
+    # higher for shadow sports to compensate for wider vig / early-season uncertainty. We still want
+    # them logged so the shadow sample builds toward the go-live gate.
+    _SHADOW_SPORT_EDGE_GATES = {"G_WNBA_EDGE", "G_WNBA_OPEN"}
+    shadow_picks += [p for p in failed
+                     if p.get("sport") in SHADOW_SPORTS
+                     and p.get("gate_result") in _SHADOW_SPORT_EDGE_GATES]
     qualified     = [p for p in qualified if p.get("sport") not in SHADOW_SPORTS]
 
     today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
