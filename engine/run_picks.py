@@ -274,13 +274,11 @@ PROP_MARKETS = {
     "NHL": [
         "player_shots_on_goal", "player_assists",
         "player_goals", "player_points", "player_blocked_shots", "goalie_saves",
-        "goalie_goals_against",
     ],
     "MLB": [
         "pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed",
         "batter_hits", "batter_hits_runs_rbis",
         "batter_rbis", "batter_runs_scored", "pitcher_earned_runs",
-        "pitcher_walks", "pitcher_pitches_thrown",
     ],
 }
 
