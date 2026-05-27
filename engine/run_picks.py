@@ -237,11 +237,13 @@ PROP_MARKETS = {
     "NHL": [
         "player_shots_on_goal", "player_assists",
         "player_goals", "player_points", "player_blocked_shots", "goalie_saves",
+        "goalie_goals_against",
     ],
     "MLB": [
         "pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed",
         "batter_hits", "batter_hits_runs_rbis",
         "batter_rbis", "batter_runs_scored", "pitcher_earned_runs",
+        "pitcher_walks", "pitcher_pitches_thrown",
     ],
 }
 
@@ -258,11 +260,14 @@ MARKET_TO_STAT = {
     "player_goals": "GOALS",
     "player_blocked_shots": "NHLBLK",
     "goalie_saves": "SV",
+    "goalie_goals_against": "GA",
     # player_points for NHL → NHLPTS (G+A) via MARKET_TO_STAT_OVERRIDE below
     # MLB pitcher
     "pitcher_strikeouts": "K", "pitcher_outs": "OUTS",
     "pitcher_hits_allowed": "HA",
     "pitcher_earned_runs": "ER",
+    "pitcher_walks": "BB",
+    "pitcher_pitches_thrown": "PC",
     # MLB batter
     "batter_hits": "HITS", "batter_total_bases": "TB",
     "batter_hits_runs_rbis": "HRR",
@@ -299,6 +304,7 @@ SIGMA = {
     # "TB" not here — G_TB_DISABLED (structural kill A2 2026-05-22).
     # "HITS" not here — POISSON_STATS takes priority.
     "OUTS": {"mult": 0.311, "min": 1.0},  # Pitcher outs — recalibrated 2026-05-26: within-player CV=0.311, min 3.0→1.0 (floor was too aggressive)
+    "PC":   {"mult": 0.375, "min": 6.0},  # Pitcher pitch count — calibrated 2026-05-26: within-player CV=0.375 (69k pitcher game-logs); high-count continuous stat; min=6.0
     # NHL goalie — calibrated 2026-05-26 from 15k goalie game-logs (2023-2026), within-player CV=0.253.
     # High-count stat (mean=26.6); Normal is correct (continuous-ish, high-volume).
     "SV":   {"mult": 0.253, "min": 3.5},
@@ -308,7 +314,9 @@ SIGMA = {
 # K moved FROM NB_STATS to Poisson — within-player var/mu=1.031 across 69k pitcher game-logs; Poisson confirmed
 # GOALS, NHLPTS, NHLBLK: NHL skater stats — perfect Poisson (var/mu=0.989, 0.983, 1.081 from 141k skater games)
 # RUNS: MLB batter runs — Poisson (var/mu=0.969 from 169k batter games)
-POISSON_STATS = {"SOG", "REC", "HITS", "K", "GOALS", "NHLPTS", "NHLBLK", "RUNS"}  # AST/REB moved to NB_STATS
+# GA: NHL goalie goals against — Poisson (within-player var/mu=0.830 from 15k goalie game-logs; sub-Poisson is fine)
+# BB: MLB pitcher walks — Poisson (within-player var/mu=0.992 from 69k pitcher game-logs; Poisson confirmed)
+POISSON_STATS = {"SOG", "REC", "HITS", "K", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB"}  # AST/REB moved to NB_STATS
 POISSON_CUTOFF = 8.5
 
 # P16 — Negative binomial distribution for overdispersed count stats.
@@ -397,7 +405,7 @@ WNBA_EDGE_FLOOR = 0.035                 # compensates for wider WNBA vig (~-115/
 
 # MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
 # G11/G11b: max 1 prop per player within each correlated group
-PITCHER_STATS = {"K", "OUTS", "HA", "ER"}            # All functions of IP — r ≈ 0.70+ between K/OUTS; ER added 2026-05-26
+PITCHER_STATS = {"K", "OUTS", "HA", "ER", "BB", "PC"}  # All functions of IP — r ≈ 0.70+ between K/OUTS; ER/BB/PC added 2026-05-26
 BATTER_CORR_STATS = {"HITS", "TB", "HRR"}           # HITS is component of TB and HRR — r ≈ 0.70+
 MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 
@@ -452,7 +460,7 @@ TIERS = {
     "T1":  {"stats": {"AST", "SOG", "REC", "K", "HRR"}, "min_edge": 0.03},
     "T1B": {"stats": {"REB", "HITS", "HA"},              "min_edge": 0.03},  # unders 3.5+ only / low volume
     "T2":  {"stats": {"PTS", "PRA", "PR", "PA", "RA", "YARDS", "TB", "OUTS",
-                      "NHLBLK", "SV", "RBI", "RUNS", "ER"},               "min_edge": 0.05},
+                      "NHLBLK", "SV", "RBI", "RUNS", "ER", "GA", "BB", "PC"}, "min_edge": 0.05},
     "T3":  {"stats": {"TDS", "GOALS", "NHLPTS", "3PM", "ML_DOG", "NRFI", "YRFI"}, "min_edge": 0.06},
     # T4 (GOLF_WIN) removed — see archived_golf_code.py
 }
@@ -1614,10 +1622,12 @@ def parse_csv(filepath):
                 p["injury_trigger"] = clean.get("injury_trigger", "").lower() in ("true", "1", "yes")
             elif sport == "NHL":
                 if p["pos"].upper() == "G":
-                    # Goalie — parse saves and include; skip all skater stats
+                    # Goalie — parse saves/GA and include; skip all skater stats
                     sv = float(clean.get("SV", clean.get("sv", 0)) or 0)
-                    if sv > 0:
+                    ga = float(clean.get("GA", clean.get("ga", 0)) or 0)
+                    if sv > 0 or ga > 0:
                         p["SV"] = sv
+                        p["GA"] = ga
                         p["name_key"] = name_key(p["name"])
                         players.append(p)
                     continue
@@ -1651,6 +1661,7 @@ def parse_csv(filepath):
                     p["ER"] = er        # Earned runs — internal use only (game-line projection math)
                     p["IP"] = ip
                     p["BB"] = bb
+                    p["PC"] = float(clean.get("Pitches", clean.get("P", clean.get("PC", 0))) or 0)
                     p["HR"] = hr        # R4: HR allowed — required for FIP calculation
                 else:
                     p["HITS"] = h
