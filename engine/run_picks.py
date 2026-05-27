@@ -83,6 +83,7 @@ from paths import (  # noqa: E402
     PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
     PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
+    PICK_LOG_SHADOW_STATS_PATH as _PICK_LOG_SHADOW_STATS_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
     LOG_FILE_PATH as _LOG_FILE_PATH_P,
     project_path as _project_path,
@@ -211,10 +212,10 @@ BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636
 SHADOW_SPORTS = {"WNBA"}
 
 # Shadow stats — new markets with zero live track record. Picks are scored,
-# sized, and logged to pick_log.csv (so grade_picks/analyze_picks accumulate
-# accuracy data) but are NEVER included in the Discord card or bonus drops.
+# sized, and logged to pick_log_shadow_stats.csv (NOT main pick_log.csv) but
+# are NEVER included in the Discord card or bonus drops.
 # Go-live gate: remove a stat once it has n>=30 logged picks at >=55% WR.
-# Check: python engine/analyze_picks.py --stat <STAT>
+# Check pick_log_shadow_stats.csv manually or via analyze_picks.py --shadow-stats
 SHADOW_STATS = {
     # NHL skater — added 2026-05-26, no live history
     "GOALS", "NHLPTS", "NHLBLK",
@@ -6182,7 +6183,10 @@ def main():
     qualified         = [p for p in qualified if p.get("stat") not in SHADOW_STATS]
     if shadow_stat_picks:
         _shadow_stats_seen = ", ".join(sorted({p["stat"] for p in shadow_stat_picks}))
-        print(f"\n  [Shadow] {len(shadow_stat_picks)} pick(s) in SHADOW_STATS (logged, not posted): {_shadow_stats_seen}")
+        print(f"\n  [Shadow] {len(shadow_stat_picks)} pick(s) in SHADOW_STATS (logged to pick_log_shadow_stats.csv, not posted): {_shadow_stats_seen}")
+        if not args.no_save:
+            log_picks(shadow_stat_picks, args.mode,
+                      log_path_override=Path(str(_PICK_LOG_SHADOW_STATS_PATH_P)))
 
     # Candidate logging: write full pool (all gate-passing picks) to pick_log_candidates.csv
     # for formula backtesting. Runs after sizing so size is populated; before caps so pool is complete.
@@ -6286,10 +6290,10 @@ def main():
             # premium_picks= is still set so card_slot 1-5 columns are correct for the
             # actual top-5; extra picks log with blank card_slot (run_type=primary, no slot).
             # dedup key prevents double-logging if qualified overlaps premium.
-            log_picks(qualified + killshots + shadow_stat_picks, args.mode, premium_picks=premium)
+            log_picks(qualified + killshots, args.mode, premium_picks=premium)
             print(f"  [--no-cap] Logged {len(qualified)} qualified picks (vs top-5 only in normal mode).")
         else:
-            log_picks(premium + killshots + shadow_stat_picks, args.mode, premium_picks=premium)
+            log_picks(premium + killshots, args.mode, premium_picks=premium)
     elif not args.no_save and killshots:
         # Card already posted but new KILLSHOTs may have emerged (e.g. updated CSVs).
         # Log them separately — dedup key (date+player+stat+line+direction) prevents

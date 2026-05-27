@@ -103,6 +103,7 @@ PICK_LOG_MANUAL_PATH: Path = DATA_DIR / "pick_log_manual.csv"
 PICK_LOG_MLB_PATH: Path = DATA_DIR / "pick_log_mlb.csv"
 PICK_LOG_WNBA_PATH: Path = DATA_DIR / "pick_log_wnba.csv"
 PICK_LOG_CUSTOM_PATH: Path = DATA_DIR / "pick_log_custom.csv"
+PICK_LOG_SHADOW_STATS_PATH: Path = DATA_DIR / "pick_log_shadow_stats.csv"
 DISCORD_GUARD_FILE: Path = DATA_DIR / "discord_posted.json"
 LOG_FILE_PATH: Path = DATA_DIR / "jonnyparlay.log"
 CLV_DAEMON_LOG: Path = DATA_DIR / "clv_daemon.log"
@@ -117,6 +118,7 @@ __all__ = [
     "PICK_LOG_MLB_PATH",
     "PICK_LOG_WNBA_PATH",
     "PICK_LOG_CUSTOM_PATH",
+    "PICK_LOG_SHADOW_STATS_PATH",
     "DISCORD_GUARD_FILE",
     "LOG_FILE_PATH",
     "CLV_DAEMON_LOG",
