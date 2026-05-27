@@ -234,13 +234,18 @@ PROP_MARKETS = {
         "player_points_rebounds_assists", "player_points_rebounds",
         "player_points_assists", "player_rebounds_assists",
     ],
-    "NHL": ["player_shots_on_goal", "player_assists"],
-    "MLB": ["pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed",
-            "batter_hits",
-            "batter_hits_runs_rbis"],
+    "NHL": [
+        "player_shots_on_goal", "player_assists",
+        "player_goals", "player_points", "player_blocked_shots", "goalie_saves",
+    ],
+    "MLB": [
+        "pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed",
+        "batter_hits", "batter_hits_runs_rbis",
+        "batter_rbis", "batter_runs_scored", "pitcher_earned_runs",
+    ],
 }
 
-# Maps API market key → our stat label
+# Maps API market key → our stat label (sport-agnostic)
 MARKET_TO_STAT = {
     "player_assists": "AST", "player_rebounds": "REB",
     "player_points": "PTS", "player_threes": "3PM",
@@ -249,11 +254,27 @@ MARKET_TO_STAT = {
     "player_points_assists": "PA",
     "player_rebounds_assists": "RA",
     "player_shots_on_goal": "SOG",
-    # MLB
+    # NHL skater
+    "player_goals": "GOALS",
+    "player_blocked_shots": "NHLBLK",
+    "goalie_saves": "SV",
+    # player_points for NHL → NHLPTS (G+A) via MARKET_TO_STAT_OVERRIDE below
+    # MLB pitcher
     "pitcher_strikeouts": "K", "pitcher_outs": "OUTS",
     "pitcher_hits_allowed": "HA",
+    "pitcher_earned_runs": "ER",
+    # MLB batter
     "batter_hits": "HITS", "batter_total_bases": "TB",
     "batter_hits_runs_rbis": "HRR",
+    "batter_rbis": "RBI",
+    "batter_runs_scored": "RUNS",
+}
+
+# Sport-specific market key overrides — applied after MARKET_TO_STAT when sport is known.
+# Handles market keys shared between sports that map to different stat labels.
+# player_points: NBA/WNBA → PTS (points scored); NHL → NHLPTS (goals + assists)
+MARKET_TO_STAT_OVERRIDE = {
+    "NHL": {"player_points": "NHLPTS"},
 }
 
 # ============================================================
@@ -278,11 +299,16 @@ SIGMA = {
     # "TB" not here — G_TB_DISABLED (structural kill A2 2026-05-22).
     # "HITS" not here — POISSON_STATS takes priority.
     "OUTS": {"mult": 0.311, "min": 1.0},  # Pitcher outs — recalibrated 2026-05-26: within-player CV=0.311, min 3.0→1.0 (floor was too aggressive)
+    # NHL goalie — calibrated 2026-05-26 from 15k goalie game-logs (2023-2026), within-player CV=0.253.
+    # High-count stat (mean=26.6); Normal is correct (continuous-ish, high-volume).
+    "SV":   {"mult": 0.253, "min": 3.5},
 }
 
 # HA removed from Poisson — overdispersed at typical lines; moved to NB_STATS (within-player var/mu=1.204, r=13.41)
 # K moved FROM NB_STATS to Poisson — within-player var/mu=1.031 across 69k pitcher game-logs; Poisson confirmed
-POISSON_STATS = {"SOG", "REC", "HITS", "K"}  # AST moved to NB_STATS (avg var/mu=1.2539); REB moved to NB_STATS (avg var/mu=1.4073)
+# GOALS, NHLPTS, NHLBLK: NHL skater stats — perfect Poisson (var/mu=0.989, 0.983, 1.081 from 141k skater games)
+# RUNS: MLB batter runs — Poisson (var/mu=0.969 from 169k batter games)
+POISSON_STATS = {"SOG", "REC", "HITS", "K", "GOALS", "NHLPTS", "NHLBLK", "RUNS"}  # AST/REB moved to NB_STATS
 POISSON_CUTOFF = 8.5
 
 # P16 — Negative binomial distribution for overdispersed count stats.
@@ -298,14 +324,20 @@ POISSON_CUTOFF = 8.5
 #        Was incorrectly using Normal (SIGMA); NB is correct — overdispersed at typical HA lines.
 #   K:   MOVED TO POISSON_STATS — within-player var/mu=1.031 (69k game-logs); Poisson confirmed.
 #        Bimodal "early hook vs deep start" was population-level thinking, not within-player.
+#   RBI: r=0.87 — calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535.
+#        Low r means heavy zero-inflation (batters go 0-RBI in ~74% of games) with long right tail.
+#   ER:  r=2.62 — calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700.
+#        Overdispersed relative to Poisson; bullpen usage and run-support create heavy tails.
 # STL/BLK not in any TIERS tier — included for completeness, no production impact yet.
-NB_STATS = {"3PM", "HRR", "AST", "REB", "HA"}
+NB_STATS = {"3PM", "HRR", "AST", "REB", "HA", "RBI", "ER"}
 NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
     "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
     "REB": 10.18,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
     "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) -> P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
     "HA":  13.41,  # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.204. Was incorrectly Normal; NB is correct family.
+    "RBI": 0.87,   # calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535. r<1 is valid NB; reflects heavy zero-inflation (~74% of games are 0 RBI).
+    "ER":  2.62,   # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700. Bullpen + run-support variance creates heavy tails vs Poisson.
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
@@ -365,7 +397,7 @@ WNBA_EDGE_FLOOR = 0.035                 # compensates for wider WNBA vig (~-115/
 
 # MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
 # G11/G11b: max 1 prop per player within each correlated group
-PITCHER_STATS = {"K", "OUTS", "HA"}                 # All functions of IP — r ≈ 0.70+ between K/OUTS
+PITCHER_STATS = {"K", "OUTS", "HA", "ER"}            # All functions of IP — r ≈ 0.70+ between K/OUTS; ER added 2026-05-26
 BATTER_CORR_STATS = {"HITS", "TB", "HRR"}           # HITS is component of TB and HRR — r ≈ 0.70+
 MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 
@@ -419,8 +451,9 @@ TIERS = {
     # through get_tier(); their tier is set directly at pick creation (sport-aware).
     "T1":  {"stats": {"AST", "SOG", "REC", "K", "HRR"}, "min_edge": 0.03},
     "T1B": {"stats": {"REB", "HITS", "HA"},              "min_edge": 0.03},  # unders 3.5+ only / low volume
-    "T2":  {"stats": {"PTS", "PRA", "PR", "PA", "RA", "YARDS", "TB", "OUTS"}, "min_edge": 0.05},
-    "T3":  {"stats": {"TDS", "GOALS", "3PM", "ML_DOG", "NRFI", "YRFI"}, "min_edge": 0.06},
+    "T2":  {"stats": {"PTS", "PRA", "PR", "PA", "RA", "YARDS", "TB", "OUTS",
+                      "NHLBLK", "SV", "RBI", "RUNS", "ER"},               "min_edge": 0.05},
+    "T3":  {"stats": {"TDS", "GOALS", "NHLPTS", "3PM", "ML_DOG", "NRFI", "YRFI"}, "min_edge": 0.06},
     # T4 (GOLF_WIN) removed — see archived_golf_code.py
 }
 
@@ -1580,11 +1613,20 @@ def parse_csv(filepath):
                 p["cold_start_subtype"] = clean.get("cold_start_subtype") or None
                 p["injury_trigger"] = clean.get("injury_trigger", "").lower() in ("true", "1", "yes")
             elif sport == "NHL":
-                # Filter goalies
                 if p["pos"].upper() == "G":
+                    # Goalie — parse saves and include; skip all skater stats
+                    sv = float(clean.get("SV", clean.get("sv", 0)) or 0)
+                    if sv > 0:
+                        p["SV"] = sv
+                        p["name_key"] = name_key(p["name"])
+                        players.append(p)
                     continue
+                # Skater
                 p["SOG"] = float(clean.get("SOG", clean.get("sog", 0)) or 0)
                 p["AST"] = float(clean.get("A", clean.get("a", clean.get("AST", 0))) or 0)
+                p["GOALS"]  = float(clean.get("G",   clean.get("g",   0)) or 0)
+                p["NHLPTS"] = p["GOALS"] + p["AST"]   # G+A points — Poisson, var/mu=0.983
+                p["NHLBLK"] = float(clean.get("BLK", clean.get("blk", 0)) or 0)
             elif sport == "MLB":
                 is_pitcher = p["pos"].upper() == "P"
                 # Raw stats from SaberSim
@@ -1617,11 +1659,12 @@ def parse_csv(filepath):
                     p["TB_2B"] = doubles
                     p["TB_3B"] = triples
                     p["TB_HR"] = hr
-                    p["HRR"] = h + r + rbi  # Hits + Runs + RBIs
-                    p["R"] = r
-                    p["RBI"] = rbi
-                    p["HR"] = hr
-                    p["PA"] = pa
+                    p["HRR"]  = h + r + rbi  # Hits + Runs + RBIs
+                    p["RUNS"] = r            # Batter runs scored (batter_runs_scored market)
+                    p["R"]    = r            # Keep internal alias
+                    p["RBI"]  = rbi
+                    p["HR"]   = hr
+                    p["PA"]   = pa
 
             p["name_key"] = name_key(p["name"])
             players.append(p)
@@ -1903,7 +1946,8 @@ def extract_player_props(odds_data, sport):
         if market_key == "team_totals":
             continue  # handled separately
 
-        stat = MARKET_TO_STAT.get(market_key, "")
+        # Sport-aware override first (e.g. player_points: NBA→PTS, NHL→NHLPTS)
+        stat = MARKET_TO_STAT_OVERRIDE.get(sport, {}).get(market_key) or MARKET_TO_STAT.get(market_key, "")
         if not stat:
             continue
 
