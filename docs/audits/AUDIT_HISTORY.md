@@ -5,6 +5,43 @@ All audits below are fully closed — no open items.
 
 ---
 
+## Audit 2026-05-27 — run_picks / grade_picks / capture_clv / support files (2C/11H/10M)
+
+Full docs: `docs/audits/audit_2026-05-27_run_picks_p1.md`, `audit_2026-05-27_run_picks_p2.md`, `audit_2026-05-27_grade_clv.md`, `audit_2026-05-27_support.md`
+
+**CRITICAL (2) — all closed:**
+- grade_picks.py `_mark_posted` fallback: key set before `_save_guard()` — commit `edb4ca2`
+- run_picks.py `evaluate_game_lines`: `log.warning` → `logger.warning` — commit `edb4ca2`
+
+**HIGH (11) — all closed:**
+- run_picks.py: WNBA gate/dampener `datetime.now()` missing ZoneInfo (×2) — commit `827e984`
+- run_picks.py: `log_candidates` naive datetime — commit `827e984`
+- run_picks.py: R4/R11 shadow kills missing `pick_score` (set to None sentinel) — commit `827e984`
+- run_picks.py: `_save_cache` silent except — commit `827e984`
+- grade_picks.py: `pick_log_shadow_stats.csv` never graded — commit `827e984`
+- grade_picks.py: NHL goalie stats (SV/GA) never fetched — commit `827e984`
+- grade_picks.py: `_read_rows_locked` timeout fallback raises instead of lock-free read — commit `827e984`
+- grade_picks.py: `pick_label` uses `.split()[-1]` on game-line picks — commit `827e984`
+- capture_clv.py: `DATA_DIR`/`PICK_LOG` now from `paths.py` — commit `827e984`
+- capture_clv.py: `calc_clv` TypeError on None implied_prob — commit `827e984`
+- calibrate_distributions.py: K still listed as NB; `save_json()` not atomic — commit `eba1a2d`
+
+**MEDIUM (10) — all closed:**
+- run_picks.py: `extract_team_totals` Over/Under team-name guard — commit `52ca7fc`
+- run_picks.py: TOTALS projection match uses `find_team_proj()` — commit `52ca7fc`
+- grade_picks.py: 3× silent except → `logger.warning` (ESPN/MLB per-game) — commit `52ca7fc`
+- grade_picks.py: historical bypass UTC → ET — commit `52ca7fc`
+- capture_clv.py: ghost-game check excludes terminal results — commit `52ca7fc`
+- weekly_recap.py: guard NameError on `force=True` path — commit `52ca7fc`
+- analyze_picks.py: `--shadow` adds WNBA log — commit `52ca7fc`
+- analyze_picks.py: `_PROP_STATS` adds 11 new stats — commit `52ca7fc`
+- clv_report.py: sgp/longshot explicitly excluded from CLV — commit `52ca7fc`
+- calibrate_distributions.py: K entry removed from `deployed_nb_r` — commit `eba1a2d`
+
+**Deferred (~25L, several M):** cosmetic/dead-code items; open questions documented in audit files.
+
+---
+
 ## Audit 2026-05-06 — Projection Deep-Dive (0C/5H/8M/5L)
 
 Full doc: `docs/audits/AUDIT_2026-05-06_projection_deep_dive.md`
