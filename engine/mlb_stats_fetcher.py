@@ -539,7 +539,7 @@ def print_status() -> None:
             print("\n  Games by season:")
             for r in rows:
                 print(f"    {r['season']} {r['game_type']}:  {r['n']:>4} games"
-                      f"  ({r['first']} → {r['last']})")
+                      f"  ({r['first']} -> {r['last']})")
 
         logs = conn.execute("""
             SELECT season, game_type, status, games_fetched, pulled_at
