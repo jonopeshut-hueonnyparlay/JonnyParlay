@@ -3195,11 +3195,10 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
                 pass
 
     def _team_runs(team_name):
-        """Look up projected runs for a team using same partial-match logic as pitcher lookup."""
-        u = team_name.upper()
-        for tk, rv in team_saber_runs.items():
-            if tk in u or u in tk or any(w in tk for w in u.split()[-1:]):
-                return rv
+        """Look up projected runs for a team by resolving full API name to abbreviation."""
+        abbr = resolve_team_abbrev(team_name)
+        if abbr and abbr in team_saber_runs:
+            return team_saber_runs[abbr]
         logging.warning(f"NRFI _team_runs: no match for '{team_name}' — using league avg {_LEAGUE_AVG_RUNS}")
         return _LEAGUE_AVG_RUNS
 
@@ -3249,15 +3248,13 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
         game = gl.get("game", f"{away} @ {home}")
         event_id = gl.get("event_id", "")
 
-        # Find pitcher for each side
-        home_pitcher = None
-        away_pitcher = None
-
-        for tk in pitcher_map:
-            if tk in home.upper() or home.upper() in tk or any(w in tk for w in home.upper().split()[-1:]):
-                home_pitcher = pitcher_map[tk]
-            if tk in away.upper() or away.upper() in tk or any(w in tk for w in away.upper().split()[-1:]):
-                away_pitcher = pitcher_map[tk]
+        # Find pitcher for each side — resolve full API team name to abbreviation first
+        # so pitcher_map (keyed by SaberSim CSV abbrevs e.g. "NYY") matches correctly.
+        # The old substring approach silently failed for teams like NYY, LAD, STL.
+        home_abbr = resolve_team_abbrev(home)
+        away_abbr = resolve_team_abbrev(away)
+        home_pitcher = pitcher_map.get(home_abbr) if home_abbr else None
+        away_pitcher = pitcher_map.get(away_abbr) if away_abbr else None
 
         if not home_pitcher or not away_pitcher:
             continue
