@@ -1851,6 +1851,7 @@ def _mark_posted(guard, event_key):
     if _HAS_SHARED_GUARD:
         _shared_mark_posted(event_key)
     else:
+        guard[event_key] = True  # add key before saving
         _save_guard(guard)  # fallback: save the locally-mutated dict
     guard[event_key] = True  # keep local view consistent
 

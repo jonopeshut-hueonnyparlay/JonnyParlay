@@ -2475,7 +2475,7 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
     picks = []
     sigmas = GAME_SIGMA.get(sport)
     if sigmas is None:
-        log.warning("evaluate_game_lines: no GAME_SIGMA entry for sport %r — skipping game lines", sport)
+        logger.warning("evaluate_game_lines: no GAME_SIGMA entry for sport %r — skipping game lines", sport)
         return []
 
     # Build team projection map
