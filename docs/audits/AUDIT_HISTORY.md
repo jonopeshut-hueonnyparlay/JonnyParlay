@@ -110,6 +110,71 @@ All CRIT+HIGH closed Apr 28–29. All MED+LOW closed Apr 29–30.
 
 ---
 
+## Audit 2026-05-26 — Gate / Rule / Filter Audit (2C/5H/6M)
+
+Full doc: `docs/audits/gate_audit_2026-05-26.md`
+All items closed. Commit: `89c9605`.
+
+**Critical:**
+- C1: G13B dead code ahead of G_HRR_DISABLED — deleted G13B block.
+- C2: `_is_soft_o05` referenced dead stats HRR/TB — changed to HITS-only.
+
+**High:**
+- H1: PICK_SCORE_TIER_MULT T1=0.90× may be stale — monitoring at n=30 T1 picks post-gate.
+- H2: OUTS sigma min=3.0 too high vs typical 3–6 outs — recalibrated from 69k games to mult=0.311/min=1.0.
+- H3: NB r for HA (pitcher hits allowed) was 12.0 (estimate) vs empirical 13.41 — updated; also moved HA from SIGMA to NB_STATS.
+- H4: SV sigma uncalibrated — fitted from 15k goalie games: mult=0.253/min=3.5.
+- H5: HIGH_VAR flag fires on 0-3PM games diluting bimodal signal — raised min_games threshold 5→8.
+
+**Medium:**
+- M1–M6: Gate recalibration checkpoints, TEAM_TOTAL cross-sport block scope, SIGMA drift, G8 directional gate coverage, K distribution confirmation, Platt refit gate tracking.
+
+---
+
+## Session 2026-05-27 — New Markets + Shadow System + NRFI Fix
+
+Commits: `d198f15`, `db8ba0a`, `a3516b2`, `14e28b8`, `ba329fa`, `658f753`.
+
+**New markets added:**
+- NHL: GOALS (Poisson), NHLPTS (Poisson), NHLBLK (Poisson), SV (Normal σ mult=0.253/min=3.5), GA (Poisson)
+- MLB: RBI (NB r=0.87), RUNS (Poisson), ER (NB r=2.62), BB (Poisson), PC (Normal σ mult=0.375/min=6.0)
+- Re-enabled: TB (NB r=1.3 fallback; calc_tb_prob Poisson convolution is the rebuild), HRR (NB r=1.5), NRFI/YRFI (pitcher matching fixed)
+
+**SHADOW_STATS system:**
+- New `SHADOW_STATS` set gates all unvalidated markets — picks logged to `pick_log_shadow_stats.csv`, not posted publicly. Split from `qualified` pool AFTER `size_picks_base` but BEFORE `apply_caps`.
+- New `SHADOW_GATE_CODES` set extracts direction/line-specific kills from `failed` pool for shadow logging (covers G8B/C/D, G_K_NO_UNDERS, G_K_MIN_LINE, G_TT_OVER_NBA, R4_REB_OVER, R4_REB_U25, R11_AST_U25).
+- `apply_hard_rules` given `shadow_dest` param — R4/R11 kills routed to shadow instead of dropped.
+- `get_tier` changed: REB over returns "T2" (was None/banned) so pick reaches `apply_hard_rules` for shadow routing.
+- `paths.py` — added `PICK_LOG_SHADOW_STATS_PATH`.
+
+**NRFI pitcher matching fix:**
+- `pitcher_map` is keyed by SaberSim CSV abbreviations (NYY, LAD) but `game_lines` use full API names (New York Yankees). Old substring matching silently failed for ~15+ teams, producing biased 28.9% WR on 211 picks vs 70% base rate.
+- Fixed `evaluate_nrfi` and `_team_runs` to use `resolve_team_abbrev()` before dict lookup.
+
+**Go-live gate:** each stat in SHADOW_STATS needs n≥30 logged picks at ≥55% WR before promotion to live posting.
+
+---
+
+## Audit 2026-05-25 — Full System (12 Tracks, 2C/10H/23M)
+
+Full docs: `docs/audits/audit_2026-05-25_track*.md`, `docs/audits/audit_2026-05-25_SUMMARY.md`.
+All CRITICAL + HIGH + MEDIUM closed. ~25 LOW deferred.
+
+**Critical:**
+- C1: Platt formula space wrong in CLAUDE.md — corrected to raw-probability space (not logit). CLOSED 2026-05-25.
+- C2: Mean CLV = −0.758%, beat rate 20.8% (n=53) — primary model calibration concern.
+
+**Key highs closed:**
+- H1 (G-3+G-4): sgp_builder NB_R["3PM"]=2.1 (should be 9.15) + AST Poisson (should be NB r=9.68) — synced 2026-05-25.
+- H4: K distribution r=5.0 estimate — recalibrated from 69k games. var/mu=1.031 → Poisson confirmed; moved K from NB_STATS to POISSON_STATS.
+- H5: HRR r=1.5 uses inferior moment-matching → shadowed pending proper calibration.
+- H10: No calibrate_sigma.py — created calibrate_distributions.py covering all stats + sports.
+
+**Other closures (same session):**
+- AST → NB(r=9.68), 3PM r refit to 9.15, SIGMA["AST"] for combo path, pick_score adj_wp fix, TEAM_TOTAL over block (NBA), I6 wp fix. See CLAUDE.md Closed Audits table.
+
+---
+
 ## Custom Projection Engine — Development Log
 
 **Build order (Apr–May 2026):**

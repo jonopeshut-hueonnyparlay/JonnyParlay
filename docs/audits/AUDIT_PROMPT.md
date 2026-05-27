@@ -18,16 +18,16 @@ Perform a full line-by-line audit of the JonnyParlay sports betting engine. This
 - **Source of truth:** `engine/` directory. Root-level copies are synced from there (`cp engine/X.py X.py`).
 - **Memory:** `CLAUDE.md` — read this FIRST. It has the schema, tier rules, file map, glossary, and current operational state.
 - **Daily flow:**
-  1. `run_picks.py nba.csv` — generates picks, posts Discord card, logs to `data/pick_log.csv`
-  2. CLV daemon (`capture_clv.py`) — runs on Windows Task Scheduler daily at 10am, captures closing odds 2-3 min before gametime
-  3. `grade_picks.py` — grades the log after games finish, posts recap + results graphic
-  4. `weekly_recap.py` — Sunday weekly P&L
-  5. `morning_preview.py` — daily card teaser
+  1. `run_picks.py nba.csv` (or `mlb.csv`, `nhl.csv`) — generates picks, posts Discord card, logs to `data/pick_log.csv`. Shadow markets logged to `data/pick_log_shadow_stats.csv` (not posted).
+  2. CLV daemon (`capture_clv.py`) — runs on Windows Task Scheduler daily at 10am, captures closing odds T-45 to T+3 min.
+  3. `grade_picks.py` — grades the log after games finish, posts recap + results graphic.
+  4. `weekly_recap.py` — Sunday weekly P&L.
+  5. `morning_preview.py` — **REMOVED**. Do not reference.
 
 ## Files to audit (priority order)
 
 ### Core engine (highest priority, largest surface area)
-1. **`engine/run_picks.py`** — ~4700 lines. The whole pick generation pipeline. VAKE sizing, tier assignment, Discord posting, pick logging, context scanner, correlation caps, directional balance, etc.
+1. **`engine/run_picks.py`** — ~5k+ lines. The whole pick generation pipeline. VAKE sizing, tier assignment, Discord posting, pick logging, shadow stats routing, correlation caps, directional balance, multi-sport support (NBA/NHL/MLB live, WNBA shadow), NRFI/YRFI, SGP, longshot, daily lay. **Context sanity system was fully deleted 2026-05-23 — the `context_verdict` column remains in pick_log.csv but the code is gone. No `--context` flag.**
 2. **`engine/grade_picks.py`** — ~1600 lines. Grading logic for props, game lines, daily lay parlays, MLB F5/NRFI, Discord recap posting, monthly summaries.
 3. **`engine/capture_clv.py`** — ~843 lines. CLV daemon. Polls Odds API every 2 min, matches picks to closing odds, writes back `closing_odds` + `clv`. Has single-instance guard + ghost-game checkpoint integrity.
 
@@ -36,9 +36,9 @@ Perform a full line-by-line audit of the JonnyParlay sports betting engine. This
 5. `engine/results_graphic.py`
 6. `engine/analyze_picks.py`
 7. `engine/weekly_recap.py`
-8. `engine/morning_preview.py`
-9. `post_nrfi_bonus.py`
-10. `test_context.py`
+8. `engine/calibrate_distributions.py` — within-player distribution calibration for all stats/sports. Outputs NB r, Normal CV, Poisson confirmation.
+9. `engine/sgp_builder.py` — Same-Game Parlay builder.
+10. `post_nrfi_bonus.py` — source file missing (only .pyc remains). Note in audit.
 
 ### Operational glue
 11. `start_clv_daemon.bat` — Windows batch launcher
@@ -120,21 +120,34 @@ CLAUDE.md lists:
 **Verify:** no stale paths (e.g., `mbp/` is retired), consistent book name normalization, API key not leaked to logs, book display names consistent across engine/grader/reporter.
 
 ### 8. Tier / run_type / stat value consistency
-CLAUDE.md schema says:
-- `run_type`: `primary | bonus | manual | daily_lay`
-- `tier`: `T1 | T1B | T2 | T3 | KILLSHOT | DAILY_LAY`
-- `stat`: `SOG | PTS | REB | AST | 3PM | SPREAD | ML_FAV | ML_DOG | TOTAL | TEAM_TOTAL | F5_ML | F5_SPREAD | F5_TOTAL | PARLAY`
+Current schema (v4, 29 columns):
+- `run_type`: `primary | bonus | manual | daily_lay | sgp | longshot`
+- `tier`: `T1 | T1B | T2 | T3 | KILLSHOT | DAILY_LAY | SGP | LONGSHOT | MANUAL`
+- `stat` (live props): `SOG | PTS | REB | AST | 3PM | SPREAD | ML_FAV | ML_DOG | TOTAL | TEAM_TOTAL | F5_ML | F5_SPREAD | F5_TOTAL | PARLAY | NRFI | YRFI | GOALS | NHLPTS | NHLBLK | SV | K | OUTS | HA | HITS | RBI | RUNS | ER | HRR | TB`
+- `stat` (shadow-only, not posted): `GA | BB | PC` (MLB) + those in SHADOW_STATS set
 
-**Look for:** any tier/stat/run_type assignment that uses a different string. Case mismatches. Missing values.
+**Distribution families in run_picks.py:**
+- `POISSON_STATS = {"SOG", "REC", "HITS", "K", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB"}`
+- `NB_STATS = {"3PM", "HRR", "AST", "REB", "HA", "RBI", "ER", "TB"}` with NB_R dict
+- `SIGMA` (Normal): `{"PTS": {mult:0.35, min:5.0}, "REB": {mult:0.48, min:2.0}, "AST": {mult:0.53, min:2.0}, "OUTS": {mult:0.311, min:1.0}, "SV": {mult:0.253, min:3.5}, "PC": {mult:0.375, min:6.0}}`
 
-### 9. Shadow-sport isolation
-MLB is in `SHADOW_SPORTS` — picks go to `pick_log_mlb.csv`, NOT posted to Discord, NOT captured by CLV daemon (unless `ENABLE_SHADOW_CLV=True`).
+**Look for:** any tier/stat/run_type assignment that uses a different string. Case mismatches. Missing values. Any stat that generates picks but is missing from all three distribution family sets (POISSON_STATS / NB_STATS / SIGMA).
+
+### 9. Shadow-sport and shadow-stat isolation
+- `SHADOW_SPORTS = {"WNBA"}` — WNBA picks go to `pick_log_wnba.csv`, not posted to Discord.
+- **MLB is LIVE** (since 2026-05-20). NHL is LIVE. NBA is LIVE. Posts to main `pick_log.csv`.
+- `SHADOW_STATS` — a set of unvalidated stat codes. Picks for these stats are logged to `data/pick_log_shadow_stats.csv`, NOT posted to Discord, NOT captured by CLV daemon.
+  - Current members: `GOALS, NHLPTS, NHLBLK, SV, GA, ER, BB, PC, RBI, RUNS, TB, HRR, NRFI, YRFI`
+- `SHADOW_GATE_CODES` — gate codes for direction/line-specific kills that get shadow-logged: `G8B, G8C, G8D, G_K_NO_UNDERS, G_K_MIN_LINE, G_TT_OVER_NBA, R4_REB_OVER, R4_REB_U25, R11_AST_U25`
 
 **Verify:**
-- No MLB picks leak into Discord recap, weekly recap, results graphic
-- No MLB picks leak into the main `pick_log.csv`
-- CLV daemon truly skips shadow logs by default
-- Analyzer includes shadow only with `--shadow` flag
+- SHADOW_STATS picks are split from `qualified` AFTER `size_picks_base` but BEFORE `apply_caps` — they must NOT consume the live session's 12u cap budget.
+- Shadow picks logged to `pick_log_shadow_stats.csv` only, never `pick_log.csv`.
+- SHADOW_GATE_CODES picks extracted from `failed` pool after gate checks, sized, then logged to shadow only.
+- `apply_hard_rules` shadow_dest param: R4/R11 kills route to shadow, not dropped silently.
+- CLV daemon does not capture `pick_log_shadow_stats.csv` rows.
+- `analyze_picks.py` does not include shadow stats log by default.
+- Go-live gate: remove stat from SHADOW_STATS when n≥30 logged picks at ≥55% WR.
 
 ### 10. Discord posting guards
 `discord_posted.json` prevents double-posting. Keys like `daily_lay:2026-04-19`, `card_announcement:2026-04-19`, etc.
@@ -145,13 +158,13 @@ MLB is in `SHADOW_SPORTS` — picks go to `pick_log_mlb.csv`, NOT posted to Disc
 - `--repost` flag bypasses the guard correctly
 - Guard keys are unique and correctly formatted
 
-### 11. Context sanity system (disabled by default)
-`--context` flag enables a Haiku-based pre-game scanner. The code is in `run_picks.py` but disabled on normal runs.
+### 11. Context sanity system — FULLY DELETED (2026-05-23)
+All context system code was removed from `run_picks.py`. There is no `--context` flag. The `context_verdict` column in `pick_log.csv` remains (existing rows carry "disabled" value) but is never written by new runs.
 
 **Verify:**
-- Disabled-by-default doesn't leak context fields to the pick log
-- When enabled, it cuts `conflicts` picks and annotates `supports`
-- Error in the Anthropic API call doesn't block pick generation
+- No context system code remains in `run_picks.py` or any other engine file.
+- `context_verdict`, `context_reason`, `context_score` columns are written as blank strings for all new picks.
+- No Anthropic API calls triggered during normal runs.
 
 ### 12. Dead code / obsolete paths
 Recent refactors may have left unreachable branches. Look for:
@@ -175,15 +188,17 @@ Plus the backup: `data/pick_log.backup-pre-manual-split.csv` (verify it's actual
 
 ### A. Schema integrity — run on every row
 
-**Field count:** every non-header row must have exactly 27 comma-separated fields. Run:
+Current schema: **v4, 29 columns.** Authoritative source: `engine/pick_log_schema.py`.
+
+**Field count:** every non-header row must have exactly 29 comma-separated fields. Run:
 ```bash
-awk -F',' 'NR>1 && NF!=27 { print NR": "NF" fields | "$0 }' data/pick_log.csv
+awk -F',' 'NR>1 && NF!=29 { print NR": "NF" fields | "$0 }' data/pick_log.csv
 ```
-(Any output = bug. We found one on 2026-04-19 due to a concurrent-write race, since patched with filelock.)
+(Any output = bug.)
 
 **Header match:** the first line must exactly equal:
 ```
-date,run_time,run_type,sport,player,team,stat,line,direction,proj,win_prob,edge,odds,book,tier,pick_score,size,game,mode,result,closing_odds,clv,card_slot,is_home,context_verdict,context_reason,context_score
+date,run_time,run_type,sport,player,team,stat,line,direction,proj,win_prob,edge,odds,book,tier,pick_score,size,game,mode,result,closing_odds,clv,card_slot,is_home,context_verdict,context_reason,context_score,legs,over_p_raw
 ```
 
 **Field-level type checks (per-row):**
@@ -191,9 +206,9 @@ date,run_time,run_type,sport,player,team,stat,line,direction,proj,win_prob,edge,
 |-------|------|
 | `date` | YYYY-MM-DD |
 | `run_time` | HH:MM (24h) or blank for legacy rows |
-| `run_type` | one of: `primary`, `bonus`, `manual`, `daily_lay` |
+| `run_type` | one of: `primary`, `bonus`, `manual`, `daily_lay`, `sgp`, `longshot` |
 | `sport` | `NBA`, `NHL`, `NFL`, `MLB`, `NCAAB`, `NCAAF`, `TENNIS`, `GOLF`, or blank (daily_lay only) |
-| `stat` | one of the documented stat codes (SOG, PTS, REB, AST, 3PM, SPREAD, ML_FAV, ML_DOG, TOTAL, TEAM_TOTAL, F5_ML, F5_SPREAD, F5_TOTAL, PARLAY, plus NRFI/YRFI/TDS/GOALS/HA/HITS/K/OUTS/TB/HRR for shadow or specialty) |
+| `stat` | one of the documented stat codes. Live: SOG, PTS, REB, AST, 3PM, SPREAD, ML_FAV, ML_DOG, TOTAL, TEAM_TOTAL, F5_ML, F5_SPREAD, F5_TOTAL, PARLAY, K, OUTS, HA, HITS, HRR, TB. Shadow-only: GOALS, NHLPTS, NHLBLK, SV, GA, RBI, RUNS, ER, BB, PC, NRFI, YRFI. |
 | `line` | float or blank (PARLAY/ML rows) |
 | `direction` | `over`, `under`, `cover`, or blank |
 | `proj` | float or blank |
@@ -201,7 +216,7 @@ date,run_time,run_type,sport,player,team,stat,line,direction,proj,win_prob,edge,
 | `edge` | float (can be negative) or blank |
 | `odds` | integer (American odds) or blank — sanity range: -10000 to +10000 |
 | `book` | one of the 18 CO_LEGAL_BOOKS display names |
-| `tier` | `T1`, `T1B`, `T2`, `T3`, `KILLSHOT`, `DAILY_LAY` |
+| `tier` | `T1`, `T1B`, `T2`, `T3`, `KILLSHOT`, `DAILY_LAY`, `SGP`, `LONGSHOT`, `MANUAL` |
 | `pick_score` | float or blank (blank for bonus/daily_lay) |
 | `size` | float 0.25–5.0 |
 | `game` | non-empty string (for game context) |
@@ -211,9 +226,11 @@ date,run_time,run_type,sport,player,team,stat,line,direction,proj,win_prob,edge,
 | `clv` | float or blank |
 | `card_slot` | 1-5 or blank |
 | `is_home` | `True`, `False`, or blank |
-| `context_verdict` | `supports`, `neutral`, `conflicts`, `skipped`, or blank |
-| `context_reason` | string or blank |
-| `context_score` | int or blank |
+| `context_verdict` | blank (new runs) or `disabled` (legacy rows — context system deleted 2026-05-23) |
+| `context_reason` | blank |
+| `context_score` | blank |
+| `legs` | blank for primary/bonus/manual; valid JSON array string for sgp/longshot/daily_lay |
+| `over_p_raw` | float 0–1 for prop picks; blank for game-lines and legacy rows |
 
 Flag every row that violates any of these.
 
@@ -267,10 +284,13 @@ Every row's `book` field must match one of the 18 CO_LEGAL_BOOKS **display names
 
 ### H. Cross-log integrity
 
-- Any row in `pick_log.csv` with `sport == MLB`? → BUG (should be in `pick_log_mlb.csv`, since MLB is still shadow)
+- Any row in `pick_log.csv` with `sport == WNBA`? → BUG (should be in `pick_log_wnba.csv`)
+- Any row in `pick_log.csv` with `stat` in SHADOW_STATS? → BUG (should be in `pick_log_shadow_stats.csv`)
 - Any row in `pick_log_manual.csv` with `run_type != manual`? → BUG
-- Any row in `pick_log_mlb.csv` with `sport != MLB`? → BUG
+- Any row in `pick_log_mlb.csv` with `sport != MLB`? → BUG (this is the historical pre-go-live MLB shadow log)
+- Any row in `pick_log_wnba.csv` with `sport != WNBA`? → BUG
 - Any row appearing in both `pick_log.csv` and `pick_log_manual.csv`? → BUG (double-log)
+- `pick_log_shadow_stats.csv` rows should NOT appear in any other log.
 
 ### I. Timeline / monotonicity
 
@@ -309,13 +329,16 @@ Cross-check the `discord_posted.json` guard keys against the log:
 
 Use these as "gold standard" shapes when you find anything that looks different:
 
-**pick_log.csv row (27 fields):**
+**pick_log.csv row (29 fields — schema v4):**
 ```
 date, run_time, run_type, sport, player, team, stat, line, direction,
 proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode,
 result, closing_odds, clv, card_slot, is_home, context_verdict,
-context_reason, context_score
+context_reason, context_score, legs, over_p_raw
 ```
+- `legs`: JSON array for sgp/longshot/daily_lay legs; blank for primary/bonus/manual.
+- `over_p_raw`: pre-Platt over-probability for prop picks (populating ≥300 rows unblocks H3 Platt refit). Blank for non-props and legacy rows.
+- `context_verdict`: always blank for new runs (context system deleted 2026-05-23). Legacy rows have "disabled".
 
 **File lock pattern (from `capture_clv.py` / `grade_picks.py`):**
 ```python
@@ -389,12 +412,15 @@ In addition to the categories above, check these:
 
 ### 17. Every constant — is the value still correct?
 CLAUDE.md documents values like:
-- `MIN_DAILY_LAY_PROB = 0.33`
-- `MIN_DAILY_LAY_MARGIN = 4.0`
+- `MIN_DAILY_LAY_PROB = 0.47`
+- Daily lay max combined odds: `+100`
+- Per-leg daily lay gates: `edge≥0.025`, `cover_prob≥0.58`
 - Bonus: min score 65, min win prob 0.65, max 5/day
-- KILLSHOT: score ≥ 90, weekly cap 3
-- Premium: 5 picks (do NOT change)
-- Capture window: T-30 to T+3 min
+- KILLSHOT: score ≥ 65, win_prob ≥ 0.65, stat ∈ {PTS, AST, SOG}, weekly cap 2
+- Premium: 3 picks per sport (MAX_PREMIUM_PICKS = 3)
+- Capture window: T-45 to T+3 min
+- Daily total unit cap: 12u. Sport caps: NBA=8u, MLB=8u, NHL=5u, NFL=5u, WNBA=4u.
+- `STAT_CAP = {"SOG": 6, ...}` (default cap = 2)
 
 **Verify every one of these constants in the code matches CLAUDE.md.** If CLAUDE.md and code disagree, one is wrong — flag which.
 
@@ -457,7 +483,7 @@ The engine runs in America/New_York time (see `ZoneInfo` usage).
 - Any local-only changes in `engine/` that aren't in root (or vice versa)?
 
 ### 25. Line count reconciliation
-CLAUDE.md says `run_picks.py` is ~4700 lines. Actual count?
+CLAUDE.md says `run_picks.py` is ~5k+ lines. Actual count?
 Any file ballooning over 1000 lines without clear module structure → refactor candidate, flag.
 
 ### 26. Error messages to the user
@@ -771,16 +797,16 @@ Two new webhook env vars added:
 - Both used with `or DISCORD_BONUS_WEBHOOK` fallback in their respective post functions.
 - Neither leaked to logs or Discord embeds.
 
-### 67. KILLSHOT v2 rule changes (Apr 21 2026)
+### 67. KILLSHOT v2 rule changes (Apr 21 2026, updated May 2026)
 
-KILLSHOT gate was updated. Verify code matches exactly:
+KILLSHOT gate — verify code matches exactly:
 - `tier == "T1"` strict (not T1B, T2, etc.)
-- `pick_score >= 90`
+- `pick_score >= 65` (was 90 in original v2 — lowered after calibration)
 - `win_prob >= 0.65`
 - `odds in [-200, +110]` (inclusive)
-- `stat in {"PTS", "REB", "AST", "SOG", "3PM"}`
-- Sizing: 3u default, 4u iff `win_prob >= 0.70 AND edge >= 0.06` (no 5u — v1 allowed 5u, v2 removed it)
-- Weekly cap: **2** (was 3 in v1 — verify cap in code matches 2)
+- `stat in {"PTS", "AST", "SOG"}` — 3PM dropped (T3 stat, can't pass T1 gate); REB dropped
+- Sizing: 3u default, 4u iff `win_prob >= 0.70 AND edge >= 0.06` (no 5u)
+- Weekly cap: **2**
 - Manual override `--killshot NAME` bypasses gate, requires `score >= 75`, still counts toward cap
 - Posts to `#killshot` channel with `@everyone`
 
@@ -796,14 +822,51 @@ The following files must be identical between `engine/` and root:
 
 Run `diff engine/X.py X.py` for each — any diff = bug (the session had multiple instances of root not being synced after edits).
 
-### 69. pick_log data integrity — v3 post-migration
+### 69. pick_log data integrity — v4 (29 columns)
 
-The logs were migrated from v2 (27 cols) to v3 (28 cols) mid-session. Verify:
-- All rows in `pick_log.csv` have exactly 28 fields.
-- All rows in `pick_log_manual.csv` have exactly 28 fields.
-- Migrated rows have `legs=""` (blank, not "legs", not missing).
-- No row has `legs` containing malformed JSON (for sgp/longshot rows added after migration).
-- Sidecar files (`pick_log.csv.schema`, `pick_log_manual.csv.schema`) reflect `SCHEMA_VERSION=3`.
+Current schema is v4 with 29 columns. Log files:
+- `data/pick_log.csv` — main (all live sports: NBA, NHL, MLB, SGP, longshot, daily_lay)
+- `data/pick_log_manual.csv` — manual picks only
+- `data/pick_log_wnba.csv` — WNBA shadow (shadow sport)
+- `data/pick_log_shadow_stats.csv` — shadow-stat picks for unvalidated markets (never posted)
+
+Verify:
+- All rows in `pick_log.csv` and `pick_log_manual.csv` have exactly 29 fields.
+- `legs` is blank for primary/bonus/manual; valid JSON array for sgp/longshot/daily_lay.
+- `over_p_raw` is a float 0–1 for prop picks; blank for game-line picks and legacy rows.
+- Sidecar files (`pick_log.csv.schema`) reflect `SCHEMA_VERSION=4`.
+- `pick_log_shadow_stats.csv` — same 29-column schema; no picks in here should appear in `pick_log.csv`.
+- `pick_log_wnba.csv` — all rows have `sport=WNBA`. No WNBA rows in main `pick_log.csv`.
+
+**Cross-log checks:**
+- No MLB row in pick_log.csv with `date < 2026-05-20` (MLB was shadow until then — those rows belong in pick_log_mlb.csv).
+- No WNBA rows in main pick_log.csv at all.
+- No shadow-stat picks (stats in SHADOW_STATS) in main pick_log.csv at all.
+
+### 70. SHADOW_STATS / SHADOW_GATE_CODES system (added 2026-05-27)
+
+New system routes unvalidated markets to `pick_log_shadow_stats.csv` instead of dropping them.
+
+**Verify the shadow split architecture:**
+- `shadow_stat_picks` split from `qualified` AFTER `size_picks_base` but BEFORE `apply_caps`. These picks are already sized.
+- `_gate_shadow_picks` extracted from `failed` pool: `[p for p in failed if p.get("gate_result") in SHADOW_GATE_CODES]`. These are unsized — must be passed through `size_picks_base` before logging.
+- `_hard_rules_shadow` from `apply_hard_rules(shadow_dest=...)`: R4_REB_OVER, R4_REB_U25, R11_AST_U25. Also unsized before logging.
+- All three merged: `all_shadow_picks = shadow_stat_picks + size_picks_base(_gate_shadow_picks + _hard_rules_shadow)`
+- Shadow picks logged via `log_picks(..., log_path_override=PICK_LOG_SHADOW_STATS_PATH)`.
+- Shadow picks consume NONE of the 12u daily cap.
+- `get_tier` returns `"T2"` for REB over (not None) so the pick is built and reaches `apply_hard_rules`. Verify this.
+- TEAM_TOTAL over NBA: pick dict is built first with `gate_result = "G_TT_OVER_NBA"`, then appended to `picks`. Verify it reaches `failed` correctly.
+
+### 71. NRFI / evaluate_nrfi — pitcher matching (fixed 2026-05-27)
+
+The pitcher matching bug was: `pitcher_map` keyed by SaberSim abbreviations (NYY, BOS), `game_lines` carried full API names (New York Yankees). Old substring loop silently failed for ~15+ teams.
+
+**Verify the fix:**
+- `evaluate_nrfi` now calls `resolve_team_abbrev(home)` and `resolve_team_abbrev(away)` to get abbreviations, then does `pitcher_map.get(abbr)`.
+- `_team_runs` now calls `resolve_team_abbrev(team_name)` then `team_saber_runs.get(abbr)`.
+- No old substring matching loop (`for tk in pitcher_map: if tk in home.upper()...`) remains.
+- Both NRFI and YRFI are in SHADOW_STATS — picks go to shadow log only, not posted.
+- `generate_nrfi_picks` does not have `return []` (G_NRFI_DISABLED was removed).
 
 ---
 
@@ -823,21 +886,24 @@ If you're unsure whether something is a bug or intended behavior, **flag it as a
 
 1. Read `CLAUDE.md` in full — it's the north star.
 2. Run `wc -l engine/*.py` to size up the surface area.
-3. Start with `run_picks.py` since it's the largest and highest-blast-radius.
+3. Start with `run_picks.py` since it's the largest and highest-blast-radius. Pay extra attention to: SHADOW_STATS split architecture (section 70), NRFI pitcher matching fix (section 71), distribution families (section 8), and apply_hard_rules shadow_dest param.
 4. Then `grade_picks.py`.
 5. Then `capture_clv.py`.
-6. Then `engine/sgp_builder.py` (new this session — high priority).
-7. Then `engine/pick_log_schema.py`.
+6. Then `engine/sgp_builder.py`.
+7. Then `engine/pick_log_schema.py` — must reflect schema v4 (29 cols, `legs`, `over_p_raw`).
 8. Then `engine/secrets_config.py`.
-9. Then the support scripts.
+9. Then the support scripts (`calibrate_distributions.py`, `analyze_picks.py`, `clv_report.py`).
 10. Run all file-sync diffs (section 68).
-11. Run all pick_log integrity checks (sections 5, 62, 69).
-12. Finish with a top-level "cross-file issues" section.
+11. Run all pick_log integrity checks (sections 5, A, 69, 70, 71).
+12. Check the new shadow log `data/pick_log_shadow_stats.csv` is not being written to by any path other than the shadow logging block.
+13. Finish with a top-level "cross-file issues" section.
 
 Use parallel subagents where it helps — Explore / general-purpose agents can each take one file and report back. But YOU should synthesize the final report.
 
 Ship the audit report as a markdown file at `/sessions/<session>/mnt/JonnyParlay/AUDIT_REPORT.md`.
 
 ---
+
+*Updated 2026-05-27 — major refresh: schema v4 (29 cols), context system deleted, morning_preview.py removed, multi-sport live (NHL/MLB), SHADOW_STATS/SHADOW_GATE_CODES system (sections 70–71), NRFI pitcher matching fix (section 71), updated distribution families (section 8), updated KILLSHOT rules (section 67), updated constant values (section 17), updated file list and cross-log checks.*
 
 *Updated Apr 24 2026 — added sections 61–69 covering SGP builder, longshot parlay, gameline run_type, pick_log v3 schema migration, KILLSHOT v2 rules, new webhook secrets, and file sync audit. Original audit closed Apr 21 2026 with 78/78 items resolved.*
