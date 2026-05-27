@@ -1021,6 +1021,7 @@ def run(run_date: str):
             p.get("game", "") for p in all_today_picks
             if not p.get("closing_odds", "").strip()
             and p.get("stat", "") not in SKIP_STATS
+            and p.get("result", "") not in {"W", "L", "P", "VOID"}
         }
         ghost_games = captured_games & needs_clv_games
         if ghost_games:

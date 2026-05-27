@@ -2169,6 +2169,8 @@ def extract_team_totals(odds_data, sport):
 
                     if not team or odds == 0 or point is None or is_decimal_leak(odds):
                         continue
+                    if team in ("Over", "Under"):
+                        continue  # description absent — name fallback gives direction, not team
 
                     direction = "over" if name == "Over" else "under"
                     pk = (team, point)
@@ -2506,16 +2508,10 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
         away_name = gl["away"].upper()
 
         proj = None
-        # Try to find saber_total from players on either team in this game
-        for tk, tv in team_proj.items():
-            if tv["saber_total"] > 0:
-                # Check if this team key matches home or away
-                if (tk in home_name or home_name in tk or
-                    tk in away_name or away_name in tk or
-                    any(w in tk for w in home_name.split()[-1:]) or
-                    any(w in tk for w in away_name.split()[-1:])):
-                    proj = tv["saber_total"]
-                    break
+        # Use resolve_team_abbrev-based lookup (same as find_team_proj) to
+        # avoid substring collision bugs (e.g. "LAD" not in "LOS ANGELES DODGERS")
+        proj = find_team_proj(gl["home"], team_proj, field="saber_total") or \
+               find_team_proj(gl["away"], team_proj, field="saber_total")
         if proj is None or proj <= 0:
             continue
 

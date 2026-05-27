@@ -662,7 +662,7 @@ def post_weekly_recap(week_picks, mon_str, sun_str, all_rows, suppress_ping=Fals
         w, l, _, pl, roi = daily_stats(week_picks)
         pl_str = f"+{pl:.2f}u" if pl >= 0 else f"{pl:.2f}u"
         print(f"  [Discord] ✅ Weekly recap posted — {w}W-{l}L |{pl_str} |week of {_fmt_week_label(mon_str, sun_str)}")
-        if not _HAS_SHARED_GUARD:
+        if not _HAS_SHARED_GUARD and 'guard' in locals():
             _save_guard(guard)  # fallback: persist the pre-claimed guard
         return True
 

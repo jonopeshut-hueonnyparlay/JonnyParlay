@@ -311,7 +311,8 @@ def _parse_espn_boxscore(base_url, date_str, sport_label):
                             if entry:
                                 player_stats[name.lower()] = entry
                 time.sleep(0.2)
-            except Exception:
+            except Exception as e:
+                logger.warning("ESPN boxscore failed for event %s: %s", event_id, e)
                 continue
 
         _add_combo_stats(player_stats)
@@ -492,7 +493,8 @@ def fetch_mlb_boxscores(date_str):
                             if entry:
                                 player_stats[name.lower()] = entry
                     time.sleep(0.3)
-                except Exception:
+                except Exception as e:
+                    logger.warning("MLB boxscore failed for game %s: %s", game_pk, e)
                     continue
 
         return player_stats
@@ -575,7 +577,8 @@ def fetch_mlb_linescores(date_str):
                     game_key = f"{away} @ {home}".lower()
                     linescores[game_key] = innings
                     time.sleep(0.2)
-                except Exception:
+                except Exception as e:
+                    logger.warning("MLB linescore failed for game %s: %s", game_pk, e)
                     continue
 
         return linescores
@@ -2110,7 +2113,7 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
         # alone determine the result. Applies to MLB and any sport the API drops.
         if isinstance(_raw_scores, dict) and not _raw_scores:
             try:
-                if datetime.strptime(date_str, "%Y-%m-%d").date() < datetime.now(timezone.utc).date():
+                if datetime.strptime(date_str, "%Y-%m-%d").date() < datetime.now(ZoneInfo("America/New_York")).date():
                     _raw_scores = None
             except Exception:
                 pass

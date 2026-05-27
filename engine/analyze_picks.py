@@ -33,6 +33,7 @@ from paths import (  # noqa: E402
     PICK_LOG_PATH as _PICK_LOG_PATH_P,
     PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
     DATA_DIR as _DATA_DIR,
     data_path as _data_path,
 )
@@ -40,6 +41,7 @@ from paths import (  # noqa: E402
 PICK_LOG_PATH        = str(_PICK_LOG_PATH_P)
 PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
 PICK_LOG_MLB_PATH    = str(_PICK_LOG_MLB_PATH_P)
+PICK_LOG_WNBA_PATH   = str(_PICK_LOG_WNBA_PATH_P)
 PICK_LOG_CUSTOM_PATH = str(_DATA_DIR / "pick_log_custom.csv")  # M7: custom shadow log
 OUTPUT_FOLDER        = str(_data_path("picks"))
 
@@ -357,6 +359,7 @@ def main():
     extra = [PICK_LOG_MANUAL_PATH]
     if args.shadow:
         extra.append(PICK_LOG_MLB_PATH)
+        extra.append(PICK_LOG_WNBA_PATH)
         # M7: also include custom projection shadow log when it exists
         if Path(PICK_LOG_CUSTOM_PATH).exists():
             extra.append(PICK_LOG_CUSTOM_PATH)
@@ -413,7 +416,8 @@ def main():
 
     # Stat × Direction crosstab (props only — skip parlays/game lines)
     _PROP_STATS = {"PTS","REB","AST","3PM","SOG","REC","K","HITS","HA","HRR","TB","OUTS",
-                   "PRA","PR","PA","RA","STL","BLK"}
+                   "PRA","PR","PA","RA","STL","BLK",
+                   "SV","GA","BB","PC","RBI","RUNS","GOALS","NHLPTS","NHLBLK","NRFI","YRFI"}
     prop_picks = [p for p in picks if p.get("stat","") in _PROP_STATS
                   and p.get("direction","") in ("over","under")]
     if prop_picks:

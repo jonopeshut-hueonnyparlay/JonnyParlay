@@ -152,7 +152,7 @@ def load_all_picks(days, sport_filter, tier_filter, stat_filter=None, include_sh
         sports=[sport_filter] if sport_filter else None,
         tiers=[tier_filter] if tier_filter else None,
         since=cutoff,
-        exclude_run_types=["daily_lay"],
+        exclude_run_types=["daily_lay", "sgp", "longshot"],
         exclude_stats=["PARLAY"],
         graded_only=True,
     )
