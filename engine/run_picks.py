@@ -271,39 +271,41 @@ SIGMA = {
     "REC": {"mult": 0.50, "min": 1.2},
     "PTS": {"mult": 0.35, "min": 5.0},  # mult confirmed by MAE backtest (σ≈6.74 at proj=20 → CV=0.337); min raised 4.5→5.0 (MAE by role: spot=5.15, rotation=5.98)
     # "3PM" not here — NB_STATS/NB_R (Negative Binomial, r=9.15). Do NOT add.
-    # MLB — RECALIBRATED to match real-world variance (2024 season data)
-    # "K" not here — NB_STATS (Negative Binomial, r=5.0).
+    # MLB — calibrated 2026-05-26 from 69k pitcher / 169k batter game logs (2023-2026).
+    # "K" not here — POISSON_STATS (within-player var/mu=1.031; Poisson confirmed).
+    # "HA" not here — NB_STATS (NB r=13.41; within-player var/mu=1.204, overdispersed).
     # "HRR" not here — NB_STATS (Negative Binomial, r=1.5).
     # "TB" not here — G_TB_DISABLED (structural kill A2 2026-05-22).
     # "HITS" not here — POISSON_STATS takes priority.
-    "OUTS": {"mult": 0.30, "min": 3.0},   # Pitcher outs — σ ≈ 4.5-5.0 outs/start (recalibrated 2024 data)
-    "HA":   {"mult": 0.50, "min": 2.5},   # Pitcher hits allowed — Normal (15% overdispersed vs Poisson)
+    "OUTS": {"mult": 0.311, "min": 1.0},  # Pitcher outs — recalibrated 2026-05-26: within-player CV=0.311, min 3.0→1.0 (floor was too aggressive)
 }
 
-# HA removed from Poisson — overdispersed at typical lines (std 2.70 vs Poisson-predicted 2.35)
-# K removed from Poisson — moved to NB_STATS (overdispersed; SaberSim conservative IP bias)
-POISSON_STATS = {"SOG", "REC", "HITS"}  # AST moved to NB_STATS (avg var/mu=1.2539); REB moved to NB_STATS (avg var/mu=1.4073)
+# HA removed from Poisson — overdispersed at typical lines; moved to NB_STATS (within-player var/mu=1.204, r=13.41)
+# K moved FROM NB_STATS to Poisson — within-player var/mu=1.031 across 69k pitcher game-logs; Poisson confirmed
+POISSON_STATS = {"SOG", "REC", "HITS", "K"}  # AST moved to NB_STATS (avg var/mu=1.2539); REB moved to NB_STATS (avg var/mu=1.4073)
 POISSON_CUTOFF = 8.5
 
 # P16 — Negative binomial distribution for overdispersed count stats.
 # NB(mu, r): var = mu + mu²/r.  r calibrated from within-player conditional variance
 # (avg_var / avg_mu per player across 2024-25 DB), NOT population-level cross-player variance.
-# All values via: r = avg_mu / (avg(var/mu) - 1). Source: engine/nb_calibrate.py.
-#   3PM: avg(var/mu)=1.1486 across n=1246 player-seasons → r=9.15 (was 12.3 — too tight)
-#   AST: avg(var/mu)=1.2539 across n=1395 player-seasons → r=9.68; Poisson was wrong (var>mu)
-#   REB: avg(var/mu)=1.4073 across n=1395 player-seasons → r=10.18; Poisson was wrong (var>mu)
-#   HRR: r=1.5 calibrated from shadow log: NB(r=1.5, μ=2.0) gives P(X≥2)=47.8% matching empirical 48% WR.
+# All values via: r = SUM(n*mu^2) / SUM(n*max(var-mu, 0.001)). Source: engine/calibrate_distributions.py.
+#   3PM: avg(var/mu)=1.1486 across n=1246 player-seasons -> r=9.15 (was 12.3 — too tight)
+#   AST: avg(var/mu)=1.2539 across n=1395 player-seasons -> r=9.68; Poisson was wrong (var>mu)
+#   REB: avg(var/mu)=1.4073 across n=1395 player-seasons -> r=10.18; Poisson was wrong (var>mu)
+#   HRR: r=1.5 calibrated from shadow log: NB(r=1.5, mu=2.0) gives P(X>=2)=47.8% matching empirical 48% WR.
 #        Normal was giving 63% for same projection — structural zero-inflation (batter 0-H/R/RBI ~37% of games).
-#   K:   r=5.0 — pitcher Ks overdispersed vs Poisson (bimodal: early hook vs deep start).
-#        SaberSim projects conservative median IP; market prices to mode IP → K unders structurally lose.
+#   HA:  r=13.41 — calibrated 2026-05-26 from 69k pitcher game-logs (2023-2026); within-player var/mu=1.204.
+#        Was incorrectly using Normal (SIGMA); NB is correct — overdispersed at typical HA lines.
+#   K:   MOVED TO POISSON_STATS — within-player var/mu=1.031 (69k game-logs); Poisson confirmed.
+#        Bimodal "early hook vs deep start" was population-level thinking, not within-player.
 # STL/BLK not in any TIERS tier — included for completeness, no production impact yet.
-NB_STATS = {"3PM", "HRR", "K", "AST", "REB"}
+NB_STATS = {"3PM", "HRR", "AST", "REB", "HA"}
 NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
     "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
     "REB": 10.18,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
-    "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) → P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
-    "K":   5.0,    # PROVISIONAL — undocumented estimate; bimodal (early hook vs deep start). Proper calibration needs MLB pitcher game logs (within-player var/mu). See nb_calibrate.py and backlog.
+    "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) -> P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
+    "HA":  13.41,  # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.204. Was incorrectly Normal; NB is correct family.
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
