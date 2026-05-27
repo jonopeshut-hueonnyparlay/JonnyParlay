@@ -67,6 +67,10 @@ from pick_log_io import read_rows_locked_if_exists  # noqa: E402
 # the sidecar after a successful write so readers can fail-fast on future
 # schema drift without having to sniff the CSV header.
 from pick_log_schema import write_schema_sidecar as _write_schema_sidecar  # noqa: E402
+from paths import (  # noqa: E402
+    DATA_DIR as _PATHS_DATA_DIR,
+    PICK_LOG_PATH as _PATHS_PICK_LOG_PATH,
+)
 
 # Shared HTTP helpers (audit M-16). Canonical User-Agent on every outbound
 # Odds API request so server-side logs can distinguish us from generic
@@ -189,8 +193,8 @@ MAX_DAEMON_UPTIME_SECS = 18 * 60 * 60
 
 SCRIPT_DIR     = Path(__file__).resolve().parent
 ROOT_DIR       = SCRIPT_DIR.parent
-DATA_DIR       = ROOT_DIR / "data"
-PICK_LOG       = DATA_DIR / "pick_log.csv"
+DATA_DIR       = _PATHS_DATA_DIR        # honours JONNYPARLAY_ROOT env var
+PICK_LOG       = _PATHS_PICK_LOG_PATH   # honours JONNYPARLAY_PICK_LOG env var
 CHECKPOINT_PATH  = DATA_DIR / "clv_checkpoint.json"
 # Daemon lockfile path is overridable via env var so tests can run with a
 # sandboxed lockfile without colliding with a real host-side daemon.
@@ -867,11 +871,14 @@ def get_closing_odds_for_pick(pick: dict, outcomes_by_market: dict,
     return best, best_book
 
 
-def calc_clv(your_odds: float, closing_odds: float) -> float:
+def calc_clv(your_odds: float, closing_odds: float):
     """CLV = closing_implied - your_implied. Positive = beat the close.
     Both sides use raw vigged implied (no vig removal). Direction is preserved;
-    magnitude is slightly compressed vs vig-free CLV. Standard industry practice."""
-    return implied_prob(closing_odds) - implied_prob(your_odds)
+    magnitude is slightly compressed vs vig-free CLV. Standard industry practice.
+    Returns None if either implied_prob call returns None (zero/invalid odds)."""
+    a = implied_prob(closing_odds)
+    b = implied_prob(your_odds)
+    return (a - b) if (a is not None and b is not None) else None
 
 
 # ── Graceful shutdown (audit H-10) ─────────────────────────────────────────────

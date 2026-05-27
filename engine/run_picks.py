@@ -1026,7 +1026,7 @@ def check_prop_gates(pick):
 
     # WNBA structural gates — applied after sport is known
     if sport == "WNBA":
-        today_date = datetime.now().date()
+        today_date = datetime.now(ZoneInfo("America/New_York")).date()
         season_day = (today_date - WNBA_SEASON_START).days + 1  # day 1 = opening day
 
         # G_WNBA_OPEN: no picks in first N days — opening-day extreme variance from
@@ -1195,18 +1195,21 @@ def apply_hard_rules(picks, shadow_dest=None):
         if p["stat"] == "REB" and p["direction"] == "over":
             if shadow_dest is not None:
                 p["gate_result"] = "R4_REB_OVER"
+                p.setdefault("pick_score", None)
                 shadow_dest.append(p)
             continue
         # R4: U2.5 REB — volatile at low lines; routed to shadow
         if p["stat"] == "REB" and p["direction"] == "under" and p["line"] <= 2.5:
             if shadow_dest is not None:
                 p["gate_result"] = "R4_REB_U25"
+                p.setdefault("pick_score", None)
                 shadow_dest.append(p)
             continue
         # R11: U2.5 AST — sub-elite lines; routed to shadow
         if p["stat"] == "AST" and p["direction"] == "under" and p["line"] <= 2.5:
             if shadow_dest is not None:
                 p["gate_result"] = "R11_AST_U25"
+                p.setdefault("pick_score", None)
                 shadow_dest.append(p)
             continue
         filtered.append(p)
@@ -1803,8 +1806,8 @@ class OddsFetcher:
         try:
             with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, default=str)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Cache save failed: %s", e)
 
     def fetch_all(self, sports, fetch_alt_spreads=False, game_lines_only=False, no_cache=False, force=False):
         """Fetch all odds. Batches markets per event. Caches for 15 min."""
@@ -2454,7 +2457,7 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
             # dampened confidence during weeks 1-3 of the season.
             _score_edge = adj_edge
             if pick.get("sport") == "WNBA":
-                _today = datetime.now().date()
+                _today = datetime.now(ZoneInfo("America/New_York")).date()
                 _sday = (_today - WNBA_SEASON_START).days + 1
                 for _dcap, _mult in WNBA_EARLY_SEASON_EDGE_MULT:
                     if 0 < _sday <= _dcap:
@@ -3972,7 +3975,7 @@ def log_candidates(candidates, mode, today_str):
         "game", "mode", "candidate_rank", "score_old_6040", "score_5050",
         "cold_start_subtype", "injury_trigger",
     ]
-    now = __import__("datetime").datetime.now()
+    now = datetime.now(ZoneInfo("America/New_York"))
     run_time = now.strftime("%H:%M")
     write_header = not path.exists() or path.stat().st_size == 0
 
@@ -4166,7 +4169,7 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
                         _normalize_odds(p.get("odds", "")),
                         _norm_book(p.get("book", "")),
                         p.get("tier", ""),
-                        f"{p.get('pick_score', 0):.1f}",
+                        f"{(p.get('pick_score') or 0):.1f}",
                         # M-10: canonical 2-decimal size ("0.50" not "0.5").
                         _normalize_size(p.get("size", 0)),
                         p.get("game", ""),

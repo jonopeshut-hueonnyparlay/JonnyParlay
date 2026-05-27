@@ -66,15 +66,17 @@ from paths import (  # noqa: E402
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
     PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
     PICK_LOG_CUSTOM_PATH as _PICK_LOG_CUSTOM_PATH_P,
+    PICK_LOG_SHADOW_STATS_PATH as _PICK_LOG_SHADOW_STATS_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
     LOG_FILE_PATH as _LOG_FILE_PATH_P,
 )
-PICK_LOG_PATH        = str(_PICK_LOG_PATH_P)
-PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
-PICK_LOG_MLB_PATH    = str(_PICK_LOG_MLB_PATH_P)
-PICK_LOG_WNBA_PATH   = str(_PICK_LOG_WNBA_PATH_P)
-PICK_LOG_CUSTOM_PATH = str(_PICK_LOG_CUSTOM_PATH_P)
-DISCORD_GUARD_FILE   = str(_DISCORD_GUARD_FILE_P)
+PICK_LOG_PATH              = str(_PICK_LOG_PATH_P)
+PICK_LOG_MANUAL_PATH       = str(_PICK_LOG_MANUAL_PATH_P)
+PICK_LOG_MLB_PATH          = str(_PICK_LOG_MLB_PATH_P)
+PICK_LOG_WNBA_PATH         = str(_PICK_LOG_WNBA_PATH_P)
+PICK_LOG_CUSTOM_PATH       = str(_PICK_LOG_CUSTOM_PATH_P)
+PICK_LOG_SHADOW_STATS_PATH = str(_PICK_LOG_SHADOW_STATS_PATH_P)
+DISCORD_GUARD_FILE         = str(_DISCORD_GUARD_FILE_P)
 LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
 
 # All log paths — main log first, then shadow sport logs.
@@ -411,6 +413,16 @@ def fetch_nhl_boxscores(date_str):
                             player_stats[name.lower()] = {
                                 "SOG": player.get("sog", 0),
                                 "AST": player.get("assists", 0),
+                            }
+                    for goalie in team_data.get("goalies", []):
+                        raw_name = goalie.get("name", "")
+                        if isinstance(raw_name, dict):
+                            raw_name = raw_name.get("default", "")
+                        name = str(raw_name).strip()
+                        if name:
+                            player_stats[name.lower()] = {
+                                "SV": goalie.get("saveShotsAgainst", 0),
+                                "GA": goalie.get("goalsAgainst", 0),
                             }
                 time.sleep(0.3)
             except Exception as e:
@@ -1618,13 +1630,8 @@ def build_monthly_embed(year, month, all_rows):
     best  = max(pick_pls, key=lambda x: x[1], default=None)
     worst = min(pick_pls, key=lambda x: x[1], default=None)
 
-    def pick_label(p, ppl):
-        last = p.get("player", "").split()[-1]
-        dir_ = p.get("direction", "").upper()
-        stat = p.get("stat", "")
-        line = p.get("line", "")
-        ppl_str = f"+{ppl:.2f}u" if ppl >= 0 else f"{ppl:.2f}u"
-        return f"{last} {dir_} {line} {stat} | {ppl_str}"
+    def pick_label(p, _ppl):
+        return _recap_pick_line(p)
 
     win_pct = f"{round(w / (w + l) * 100)}%" if (w + l) > 0 else "—"
     # Tier breakdown intentionally omitted from public embed (internal only — use analyze_picks.py).
@@ -1710,11 +1717,10 @@ def _read_rows_locked(log_path, lock_timeout=30):
         with FileLock(lock_path, timeout=lock_timeout):
             return _do_read()
     except FileLockTimeout:
-        logger.error(
+        raise RuntimeError(
             f"[grade_picks] Could not acquire read lock on {lock_path} within "
-            f"{lock_timeout}s — reading anyway (RISK OF STALE/PARTIAL DATA)"
+            f"{lock_timeout}s — aborting to avoid stale/partial data"
         )
-        return _do_read()
 
 
 def _atomic_write_rows(log_path, fieldnames, rows, lock_timeout=30):
@@ -2247,7 +2253,8 @@ Examples:
 
     # ── Grade shadow sport logs silently (no Discord post) ────
     if not args.repost and use_default_paths:
-        for shadow_path in (PICK_LOG_MLB_PATH, PICK_LOG_WNBA_PATH, PICK_LOG_CUSTOM_PATH):
+        for shadow_path in (PICK_LOG_MLB_PATH, PICK_LOG_WNBA_PATH, PICK_LOG_CUSTOM_PATH,
+                            PICK_LOG_SHADOW_STATS_PATH):
             _grade_one_log(shadow_path, args, is_shadow=True)
 
 
