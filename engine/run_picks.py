@@ -225,6 +225,26 @@ SHADOW_STATS = {
     "ER", "BB", "PC",
     # MLB batter — added 2026-05-26, no live history
     "RBI", "RUNS",
+    # Previously killed markets — rebuilt/re-enabled for shadow data accumulation
+    "TB",    # G_TB_DISABLED removed; calc_tb_prob (Poisson convolution) was already the rebuild; NB r=1.3 fallback added
+    "HRR",   # G_HRR_DISABLED removed; NB r=1.5 already correct; was killed for 57.4% WR at line=0.5
+    "NRFI",  # G_NRFI_DISABLED removed; was 28.9% WR on 211 shadow picks; re-shadowing for fresh data
+    "YRFI",  # same generate_nrfi_picks path as NRFI; shadow alongside it
+}
+
+# Gate codes that should route to the shadow log instead of the failed/dropped pool.
+# These are direction- or line-specific kills where the stat itself is still bettable on
+# the other side or at higher lines. Picks hitting these gates go to pick_log_shadow_stats.csv.
+SHADOW_GATE_CODES = {
+    "G8B",           # AST over ≤4.5 (0-5 NBA record; ≥5.5 is live)
+    "G8C",           # SOG under ≤3.5 (42-52% WR; >3.5 is live)
+    "G8D",           # 3PM over ≤1.5 (50% actual vs 70% model; >1.5 is live)
+    "G_K_NO_UNDERS", # K under (structural ace-start bias; K over is live)
+    "G_K_MIN_LINE",  # K over <6.0 (unpredictable at low lines; ≥6.0 is live)
+    "G_TT_OVER_NBA", # TEAM_TOTAL over NBA (45.5% WR n=11; under is live; NBA-only block)
+    "R4_REB_OVER",   # REB over (structural over-projection; under is live)
+    "R4_REB_U25",    # REB under ≤2.5 (volatile at low lines; >2.5 under is live)
+    "R11_AST_U25",   # AST under ≤2.5 (sub-elite lines; >2.5 under is live)
 }
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
@@ -354,7 +374,7 @@ POISSON_CUTOFF = 8.5
 #   ER:  r=2.62 — calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700.
 #        Overdispersed relative to Poisson; bullpen usage and run-support create heavy tails.
 # STL/BLK not in any TIERS tier — included for completeness, no production impact yet.
-NB_STATS = {"3PM", "HRR", "AST", "REB", "HA", "RBI", "ER"}
+NB_STATS = {"3PM", "HRR", "AST", "REB", "HA", "RBI", "ER", "TB"}
 NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
     "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
@@ -363,6 +383,7 @@ NB_R = {
     "HA":  13.41,  # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.204. Was incorrectly Normal; NB is correct family.
     "RBI": 0.87,   # calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535. r<1 is valid NB; reflects heavy zero-inflation (~74% of games are 0 RBI).
     "ER":  2.62,   # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700. Bullpen + run-support variance creates heavy tails vs Poisson.
+    "TB":  1.3,    # calibrated 2026-05-26: 169k batter game-logs, within-player var/mu=2.117. Fallback only — calc_tb_prob() uses component Poisson convolution (1B/2B/3B/HR) when TB_1B available, which is more accurate.
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
@@ -930,7 +951,7 @@ def get_tier(stat, direction="over", sport="NBA"):
     """
     if stat == "REB":
         if direction == "over":
-            return None  # BANNED
+            return "T2"  # routed to shadow via apply_hard_rules R4_REB_OVER (was None/banned)
         return "T1B"
     if stat in TIERS["T1B"]["stats"] and direction == "under":
         return "T1B"
@@ -1050,14 +1071,8 @@ def check_prop_gates(pick):
     if prob < 0.50:
         return False, "G13"
 
-    # G_HRR_DISABLED: HRR fully killed — 57.4% empirical WR at line=0.5 is break-even at juice.
-    # Model over-projects HRR; NB(r=1.5) inflates probabilities vs observed outcomes.
-    if stat == "HRR":
-        return False, "G_HRR_DISABLED"
-
-    # G_TB_DISABLED: TB killed — Normal dist wrong for discrete stat; rebuild with ZI-Poisson/NB.
-    if stat == "TB":
-        return False, "G_TB_DISABLED"
+    # G_HRR_DISABLED removed 2026-05-27 — NB r=1.5 is the correct distribution; routing to SHADOW_STATS for fresh data accumulation.
+    # G_TB_DISABLED removed 2026-05-27 — calc_tb_prob (Poisson convolution) was already the rebuild; routing to SHADOW_STATS.
 
     # G14: projection clearance gate — ensures model has directional conviction.
     # Normal/SIGMA stats (PTS, OUTS, HA, TB): proj must clear line by ≥0.10σ.
@@ -1168,18 +1183,31 @@ def check_game_gates(pick):
 #  RULES ENGINE (R1-R12)
 # ============================================================
 
-def apply_hard_rules(picks):
-    """Apply R4 (REB bans), R11 (U2.5 AST ban) before anything else."""
+def apply_hard_rules(picks, shadow_dest=None):
+    """Apply R4 (REB bans), R11 (U2.5 AST ban) before anything else.
+
+    shadow_dest: if provided, killed picks are appended here (for shadow logging)
+    instead of being silently dropped.
+    """
     filtered = []
     for p in picks:
-        # R4: REB Overs banned entirely
+        # R4: REB Overs — structural over-projection; routed to shadow
         if p["stat"] == "REB" and p["direction"] == "over":
+            if shadow_dest is not None:
+                p["gate_result"] = "R4_REB_OVER"
+                shadow_dest.append(p)
             continue
-        # R4: U2.5 REB banned
+        # R4: U2.5 REB — volatile at low lines; routed to shadow
         if p["stat"] == "REB" and p["direction"] == "under" and p["line"] <= 2.5:
+            if shadow_dest is not None:
+                p["gate_result"] = "R4_REB_U25"
+                shadow_dest.append(p)
             continue
-        # R11: U2.5 AST fully banned
+        # R11: U2.5 AST — sub-elite lines; routed to shadow
         if p["stat"] == "AST" and p["direction"] == "under" and p["line"] <= 2.5:
+            if shadow_dest is not None:
+                p["gate_result"] = "R11_AST_U25"
+                shadow_dest.append(p)
             continue
         filtered.append(p)
     return filtered
@@ -2794,10 +2822,6 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             ))
 
         for direction in ("over", "under"):
-            # TEAM_TOTAL over blocked for NBA only: 45.5% WR (n=11), -11.0pp gap — provisional (n<30, revisit at n=30)
-            # Evidence is NBA-only; no data for NHL/MLB TEAM_TOTAL overs.
-            if direction == "over" and sport == "NBA":
-                continue
             wp = over_p if direction == "over" else under_p
             edge = over_edge if direction == "over" else under_edge
             odds = over_odds if direction == "over" else under_odds
@@ -2820,6 +2844,15 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
                 "sigma": sigma, "missing_side": False,
                 "is_home": tt_is_home,  # BUG G fix: used by grade_picks for correct team score
             }
+
+            # TEAM_TOTAL over blocked for NBA only: 45.5% WR (n=11) — shadow instead of kill (2026-05-27).
+            # Pick dict built first so it can be logged to pick_log_shadow_stats.csv.
+            if direction == "over" and sport == "NBA":
+                pick["gate_result"] = "G_TT_OVER_NBA"
+                pick["pick_score"] = pick_score(wp, edge, mode, tier=tt_tier)
+                pick["size"] = 0
+                picks.append(pick)
+                continue
 
             passed, gate = check_game_gates(pick)
             pick["gate_result"] = "PASS" if passed else gate
@@ -3123,7 +3156,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
     Base rate: ~70% NRFI league-wide (~16.3% scoring prob per team per 1st inning)
     Adjust per team based on pitcher ER rate + opposing team quality.
     """
-    return []  # G_NRFI_DISABLED: 28.9% WR on 211 shadow picks; model uncalibrated.
+    # G_NRFI_DISABLED removed 2026-05-27 — re-enabled for shadow data accumulation; NRFI+YRFI in SHADOW_STATS.
     if sport != "MLB":
         return []
 
@@ -6103,8 +6136,9 @@ def main():
                      if not any(ex in p.get("game", "").lower() for ex in exclude_teams)]
         print(f"\n  Excluded {before - len(all_picks)} picks from {len(exclude_teams)} teams")
 
-    # Hard rules (R4, R11)
-    all_picks = apply_hard_rules(all_picks)
+    # Hard rules (R4, R11) — shadow_dest collects R4/R11 kills for shadow logging
+    _hard_rules_shadow: list = []
+    all_picks = apply_hard_rules(all_picks, shadow_dest=_hard_rules_shadow)
 
     # R12 cooldown
     all_picks = apply_r12_cooldown(all_picks, cooldown)
@@ -6112,6 +6146,10 @@ def main():
     # Split qualified vs failed
     qualified = [p for p in all_picks if p.get("gate_result") == "PASS" and p.get("pick_score") is not None]
     failed = [p for p in all_picks if p.get("gate_result") != "PASS" or p.get("pick_score") is None]
+
+    # Extract direction/line-specific gate kills that should shadow-log instead of just fail.
+    # These picks are already in `failed` (built and sized=0 by evaluate_props/evaluate_game_lines).
+    _gate_shadow_picks = [p for p in failed if p.get("gate_result") in SHADOW_GATE_CODES]
 
     # Deduplicate
     qualified = deduplicate(qualified)
@@ -6181,11 +6219,22 @@ def main():
     # posted to Discord. Remove a stat from SHADOW_STATS at n>=30, WR>=55%.
     shadow_stat_picks = [p for p in qualified if p.get("stat") in SHADOW_STATS]
     qualified         = [p for p in qualified if p.get("stat") not in SHADOW_STATS]
-    if shadow_stat_picks:
-        _shadow_stats_seen = ", ".join(sorted({p["stat"] for p in shadow_stat_picks}))
-        print(f"\n  [Shadow] {len(shadow_stat_picks)} pick(s) in SHADOW_STATS (logged to pick_log_shadow_stats.csv, not posted): {_shadow_stats_seen}")
+    # Merge all shadow sources:
+    #   shadow_stat_picks   — full-stat kills re-enabled (TB, HRR, NRFI, YRFI, new markets)
+    #   _gate_shadow_picks  — direction/line-specific kills (G8B/C/D, K gates, TT over, etc.)
+    #   _hard_rules_shadow  — R4/R11 kills (REB over, REB U≤2.5, AST U≤2.5)
+    # shadow_stat_picks already sized (came through size_picks_base on qualified).
+    # The others have size=0 and need sizing before logging.
+    _unsized_shadow = _gate_shadow_picks + _hard_rules_shadow
+    if _unsized_shadow:
+        _unsized_shadow = size_picks_base(_unsized_shadow)
+    all_shadow_picks = shadow_stat_picks + _unsized_shadow
+
+    if all_shadow_picks:
+        _shadow_stats_seen = ", ".join(sorted({p["stat"] for p in all_shadow_picks}))
+        print(f"\n  [Shadow] {len(all_shadow_picks)} pick(s) logged to pick_log_shadow_stats.csv (not posted): {_shadow_stats_seen}")
         if not args.no_save:
-            log_picks(shadow_stat_picks, args.mode,
+            log_picks(all_shadow_picks, args.mode,
                       log_path_override=Path(str(_PICK_LOG_SHADOW_STATS_PATH_P)))
 
     # Candidate logging: write full pool (all gate-passing picks) to pick_log_candidates.csv
