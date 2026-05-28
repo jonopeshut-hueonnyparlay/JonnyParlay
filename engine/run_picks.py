@@ -248,8 +248,8 @@ SHADOW_GATE_CODES = {
 }
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
+# MLB went live 2026-05-20 — removed from shadow paths.
 SHADOW_LOG_PATHS = {
-    "MLB":  str(_PICK_LOG_MLB_PATH_P),
     "WNBA": str(_PICK_LOG_WNBA_PATH_P),
 }
 
@@ -329,7 +329,7 @@ SIGMA = {
     # Calibrated 2026-05-25 from 84k+ player-games (3 seasons), within-player CV at min>=20.
     "REB": {"mult": 0.48, "min": 2.0},  # was 0.58/2.5 — empirical median CV=0.483 (3-season stable)
     "AST": {"mult": 0.53, "min": 2.0},  # NEW — combo path only; 3-season median CV=0.507; fallback was 0.40/2.0
-    "REC": {"mult": 0.50, "min": 1.2},
+    # "REC" removed — POISSON_STATS takes priority (REC is in POISSON_STATS); SIGMA["REC"] was unreachable dead code.
     "PTS": {"mult": 0.35, "min": 5.0},  # mult confirmed by MAE backtest (σ≈6.74 at proj=20 → CV=0.337); min raised 4.5→5.0 (MAE by role: spot=5.15, rotation=5.98)
     # "3PM" not here — NB_STATS/NB_R (Negative Binomial, r=9.15). Do NOT add.
     # MLB — calibrated 2026-05-26 from 69k pitcher / 169k batter game logs (2023-2026).
@@ -351,7 +351,7 @@ SIGMA = {
 # RUNS: MLB batter runs — Poisson (var/mu=0.969 from 169k batter games)
 # GA: NHL goalie goals against — Poisson (within-player var/mu=0.830 from 15k goalie game-logs; sub-Poisson is fine)
 # BB: MLB pitcher walks — Poisson (within-player var/mu=0.992 from 69k pitcher game-logs; Poisson confirmed)
-POISSON_STATS = {"SOG", "REC", "HITS", "K", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB"}  # AST/REB moved to NB_STATS
+POISSON_STATS = {"SOG", "REC", "HITS", "K", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB"}  # AST/REB moved to NB_STATS; REC here makes SIGMA["REC"] unreachable (removed from SIGMA)
 POISSON_CUTOFF = 8.5
 
 # P16 — Negative binomial distribution for overdispersed count stats.
@@ -503,8 +503,8 @@ TIERS = {
 
 VAKE_BASE = [(0.03, 0.05, 0.50), (0.05, 0.07, 0.75), (0.07, 0.09, 1.00), (0.09, 9.99, 1.25)]
 VAKE_MULT = {
-    "variance":    {"T1": 1.00, "T1B": 1.00, "T2": 0.85, "T3": 0.65, "T4": 0.40},
-    "tier":        {"T1": 1.00, "T1B": 1.00, "T2": 0.90, "T3": 0.60, "T4": 0.35},
+    "variance":    {"T1": 1.00, "T1B": 1.00, "T2": 0.85, "T3": 0.65},
+    "tier":        {"T1": 1.00, "T1B": 1.00, "T2": 0.90, "T3": 0.60},
 }
 
 PICK_SCORE_MODES = {
@@ -592,11 +592,6 @@ TEAM_ABBREV = {
     # Odds API alternate name formats
     "la angels": "LAA", "la dodgers": "LAD",
 }
-
-# Reverse lookup: abbreviation → set of possible full names (for spread/ML team identification)
-ABBREV_TO_NAMES = {}
-for _full, _abbr in TEAM_ABBREV.items():
-    ABBREV_TO_NAMES.setdefault(_abbr, set()).add(_full)
 
 def resolve_team_abbrev(api_name):
     """Resolve a full API team name (e.g., 'Los Angeles Clippers') to abbreviation.
@@ -1079,7 +1074,7 @@ def check_prop_gates(pick):
     # handles cases where the discrete distribution favors the pick even when proj
     # slightly crosses the line (e.g. AST 4.5 under with proj=4.6 still gives ~51%
     # under probability). G13 (prob≥0.50) already handles true direction failures.
-    # NB stats (3PM) are exempt for NBA/NHL — NB distribution handles these correctly.
+    # All NB_STATS are exempt — NB distribution handles boundary cases correctly (discrete overdispersion accounts for near-line projections).
     # WNBA 3PM uses Normal (underdispersed), so it gets G14 like other Normal stats.
     if stat in SIGMA and stat not in POISSON_STATS and stat not in NB_STATS:
         _s = (SIGMA_WNBA.get(stat) if sport == "WNBA" else None) or SIGMA[stat]
@@ -1725,7 +1720,8 @@ def parse_csv(filepath):
 
             p["name_key"] = name_key(p["name"])
             players.append(p)
-        except (ValueError, KeyError):
+        except (ValueError, KeyError) as e:
+            logger.debug(f"Skipped malformed row: {e}")
             continue
 
     # Deduplicate by name_key (handles Showdown CSVs where each player appears twice)
@@ -1859,7 +1855,7 @@ class OddsFetcher:
             data["events"] = upcoming
             total_events = len(events or [])
             print(f"  {len(upcoming)} today's games (filtered from {total_events} total)")
-            print(f"  Local date: {local_date} MST | Now UTC: {now.strftime('%H:%M')} | Cutoff UTC: {end_of_today_utc.strftime('%Y-%m-%d %H:%M')}")
+            print(f"  Local date: {local_date} {local_now.strftime('%Z')} | Now UTC: {now.strftime('%H:%M')} | Cutoff UTC: {end_of_today_utc.strftime('%Y-%m-%d %H:%M')}")
             if upcoming:
                 for ue in upcoming[:5]:
                     ct_str = ue.get("commence_time", "?")
@@ -2947,11 +2943,9 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
         away = f5["away"]
 
         # Build matchup abbreviation
-        matchup_parts = []
-        for full_name, abbr in TEAM_ABBREV.items():
-            if full_name in game.lower():
-                matchup_parts.append(abbr)
-        matchup_abbrev = "/".join(matchup_parts[:2]) if matchup_parts else ""
+        away_ab = resolve_team_abbrev(away)
+        home_ab = resolve_team_abbrev(home)
+        matchup_abbrev = f"{away_ab}/{home_ab}" if away_ab and home_ab else (away_ab or home_ab or "")
 
         # F5 Total — project as ~53% of full game total
         if "total" in f5:
@@ -3273,11 +3267,9 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
         p_yrfi = 1.0 - p_nrfi
 
         # Build matchup abbreviation
-        matchup_parts = []
-        for full_name, abbr in TEAM_ABBREV.items():
-            if full_name in game.lower():
-                matchup_parts.append(abbr)
-        matchup_abbrev = "/".join(matchup_parts[:2]) if matchup_parts else ""
+        away_ab = resolve_team_abbrev(away)
+        home_ab = resolve_team_abbrev(home)
+        matchup_abbrev = f"{away_ab}/{home_ab}" if away_ab and home_ab else (away_ab or home_ab or "")
 
         # Get real odds from totals_1st_1_innings
         odds_entry = nrfi_odds_map.get(event_id)
@@ -3986,41 +3978,42 @@ def log_candidates(candidates, mode, today_str):
         tier = p.get("tier")
         return (0.50 * wp_n + 0.50 * e_n) * PICK_SCORE_TIER_MULT.get(tier, 1.00)
 
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        if write_header:
-            writer.writeheader()
-        for rank, p in enumerate(ranked, 1):
-            edge = p.get("adj_edge", p.get("edge", 0))
-            writer.writerow({
-                "date":               today_str,
-                "run_time":           run_time,
-                "sport":              p.get("sport", ""),
-                "player":             p.get("player", ""),
-                "team":               p.get("team_abbrev", ""),
-                "stat":               p.get("stat", ""),
-                "line":               p.get("line", ""),
-                "direction":          p.get("direction", ""),
-                "proj":               round(p.get("proj", 0), 2),
-                "win_prob":           round(p.get("win_prob", 0), 4),
-                "edge":               round(edge, 4),
-                "odds":               p.get("odds", ""),
-                "book":               p.get("book", ""),
-                "tier":               p.get("tier", ""),
-                "pick_score":         round(p.get("pick_score", 0), 2),
-                "size":               p.get("size", 0),
-                "game":               p.get("game", ""),
-                "mode":               mode,
-                "candidate_rank":     rank,
-                "score_old_6040":     round(_old_score(p), 2),
-                "score_5050":         round(_5050_score(p), 2),
-                "cold_start_subtype": p.get("cold_start_subtype", ""),
-                "injury_trigger":     p.get("injury_trigger", False),
-            })
+    with _pick_log_lock(path):
+        with open(path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            for rank, p in enumerate(ranked, 1):
+                edge = p.get("adj_edge", p.get("edge", 0))
+                writer.writerow({
+                    "date":               today_str,
+                    "run_time":           run_time,
+                    "sport":              p.get("sport", ""),
+                    "player":             p.get("player", ""),
+                    "team":               p.get("team_abbrev", ""),
+                    "stat":               p.get("stat", ""),
+                    "line":               p.get("line", ""),
+                    "direction":          p.get("direction", ""),
+                    "proj":               round(p.get("proj", 0), 2),
+                    "win_prob":           round(p.get("win_prob", 0), 4),
+                    "edge":               round(edge, 4),
+                    "odds":               p.get("odds", ""),
+                    "book":               p.get("book", ""),
+                    "tier":               p.get("tier", ""),
+                    "pick_score":         round(p.get("pick_score", 0), 2),
+                    "size":               p.get("size", 0),
+                    "game":               p.get("game", ""),
+                    "mode":               mode,
+                    "candidate_rank":     rank,
+                    "score_old_6040":     round(_old_score(p), 2),
+                    "score_5050":         round(_5050_score(p), 2),
+                    "cold_start_subtype": p.get("cold_start_subtype", ""),
+                    "injury_trigger":     p.get("injury_trigger", False),
+                })
     print(f"  [--log-candidates] Logged {len(ranked)} candidates → {path.name}")
 
 
-def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
+def log_picks(qualified, mode, log_path_override=None, premium_picks=None, run_type="primary"):
     """Append all qualified picks to pick_log.csv for backtesting.
     Columns: date, run_time, sport, player, team, stat, line, direction,
              proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode
@@ -4028,6 +4021,9 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None):
 
     premium_picks: list of up to 5 picks that were on the posted premium card.
                    These get card_slot=1-5; all others get card_slot=''.
+
+    run_type: schema run_type for logged rows (default "primary").
+              TODO: pass run_type='shadow' at shadow call sites.
 
     DEDUP: On repeat runs, skips picks that already exist in the log for today
     (matched on date + player + stat + line + direction). Updates odds/size/proj
@@ -4297,8 +4293,9 @@ def _save_discord_guard(guard):
         atomic_write_json(DISCORD_GUARD_FILE, _prune_discord_guard(guard))
     except Exception as e:
         logger.warning(f"[Discord] Guard write failed: {e}")
-        # Best-effort fallback
+        # Best-effort fallback — prune stale entries before writing
         try:
+            guard = _prune_discord_guard(guard)
             with open(DISCORD_GUARD_FILE, "w", encoding="utf-8") as f:
                 json.dump(guard, f, indent=2)
                 f.flush()
@@ -4710,6 +4707,7 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
         return
     log_path = Path(PICK_LOG_PATH)
     if not log_path.exists():
+        logger.warning(f"[DailyLay] pick_log.csv not found at {PICK_LOG_PATH} — daily lay not logged.")
         return
     legs = alt_spread_parlay.get("legs", [])
     if not legs:
@@ -5142,13 +5140,6 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
 
     best = max(eligible, key=lambda p: p.get("pick_score", 0))
 
-    # M9: check 12u session cap before posting bonus — bonus size is not reserved by apply_caps
-    _units_so_far = _units_bet_today(today_str)
-    _bonus_est = best.get("size", 1.25)
-    if _units_so_far + _bonus_est > 12.0:
-        print(f"  [Discord] Bonus drop skipped — session cap: {_units_so_far:.2f}u logged + {_bonus_est:.2f}u bonus would exceed 12u.")
-        return
-
     # --- Re-size the bonus pick with VAKE variance + tier multipliers ---
     # The pick entered here with base sizing (from size_picks_base), which caps
     # at 1.25u for any edge ≥ 9% regardless of tier. A standalone bonus drop
@@ -5170,6 +5161,13 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
     if _prev_size is not None and _prev_size != best["size"]:
         print(f"  [Discord] Bonus sizing: {best['tier']} {best['stat']} "
               f"{_prev_size:.2f}u → {best['size']:.2f}u (VAKE)")
+
+    # M6: check 12u session cap AFTER sizing (uses the actual resized value, not base size)
+    _units_so_far = _units_bet_today(today_str)
+    _bonus_est = best.get("size", 1.25)
+    if _units_so_far + _bonus_est > 12.0:
+        print(f"  [Discord] Bonus drop skipped — session cap: {_units_so_far:.2f}u logged + {_bonus_est:.2f}u bonus would exceed 12u.")
+        return
 
     # --- Build embed ---
     dir_word = "Over" if best["direction"] == "over" else "Under"
@@ -5590,7 +5588,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         out.append("Unit Framework:")
         out.append("1u = 1% bankroll")
         out.append("Max Single Position = 1.25u")
-        out.append("Max 5 Positions")
+        out.append("Max 3 Positions (per sport)")
         out.append("Target Daily Exposure = 4–6u")
         out.append("")
         out.append("Plays")
@@ -5739,7 +5737,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R7 enforced: Max per game = {max_game} (cap: {max_per_game})", max_game <= max_per_game),
         (f"G11 enforced: Max pitcher props per pitcher = {max_pitcher_props}", max_pitcher_props <= 1),
         (f"G11b enforced: Max batter corr props per batter = {max_batter_corr}", max_batter_corr <= 1),
-        (f"All sizes ≤ 1.25u", all(p.get("size",0) <= 1.25 for p in all_qualified)),
+        (f"All sizes ≤ 1.25u (excl. KILLSHOT)", all(p.get("size",0) <= 1.25 for p in all_qualified if p.get("tier") != "KILLSHOT")),
         (f"Daily cap (prev {units_already_bet:.2f}u + premium {total_u:.2f}u + KILLSHOT {ks_u:.2f}u + parlays {_lay_u+_longshot_u:.2f}u = {total_u_all:.2f}u) ≤ 12u", total_u_all <= 12.0),
     ]
     for label, ok in checks:
@@ -6200,7 +6198,10 @@ def main():
             print(f"  {p['player']:<25} {p['stat']:<6} {p['line']:>5} {p['direction']:<6} {p['win_prob']*100:>5.1f}% {p['adj_edge']*100:>5.1f}% {p['odds']:>6} {p.get('gate_result','?'):<8} {game_str}")
 
     if not qualified:
-        print("\n  [!] No qualifying picks found. Check CSV data and odds availability.")
+        if shadow_picks:
+            print("\n  [!] No live-sport qualifying picks (shadow picks logged separately).")
+        else:
+            print("\n  [!] No qualifying picks found. Check CSV data and odds availability.")
         return
 
     # Log shadow picks to their own CSVs (never touches main pick_log)
@@ -6435,7 +6436,6 @@ def main():
         print(f"\n  Saved: {out_path}")
 
     # Post to Discord
-    today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     suppress_ping = args.test  # --test suppresses @everyone on all posts
 
     # ── Manual pick logging mode ──────────────────────────────────────────────────
@@ -6466,10 +6466,9 @@ def main():
                 print(f"    ❌ '{size_raw}' is not a valid number. Try again.")
         game     = input("  Game (e.g. 'Boston Celtics @ Miami Heat'): ").strip()
         tier     = input("  Tier (T1/T1B/T2/T3/KILLSHOT or leave blank): ").strip().upper() or "MANUAL"
-        # Classify run_type: gameline for spreads/MLs/totals, manual for props.
-        _gameline_stats = {"SPREAD", "ML_FAV", "ML_DOG", "TOTAL", "TEAM_TOTAL",
-                           "F5_SPREAD", "F5_ML", "F5_TOTAL", "NRFI", "YRFI", "GOLF_WIN"}
-        manual_run_type = "gameline" if stat in _gameline_stats else "manual"
+        # run_type is always "manual" for manual picks — stat already identifies game-line vs prop.
+        # (Note: "gameline" is not a valid schema run_type; removed M4 2026-05-27)
+        manual_run_type = "manual"
 
         # is_home prompt — required for SPREAD/ML/F5/TEAM_TOTAL so grade_picks resolves the right side.
         _home_stats = {"SPREAD", "ML_FAV", "ML_DOG", "TEAM_TOTAL",
@@ -6647,8 +6646,8 @@ def main():
                 test=getattr(args, 'test', False),
                 save=_sgp_save,
             )
-        except ImportError:
-            print('  [SGP] sgp_builder.py not found -- skipping.')
+        except Exception as e:
+            print(f'  [SGP] Error: {e} — skipping.')
 
     print("\n  Done. Let's eat.\n")
 

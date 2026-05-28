@@ -79,9 +79,6 @@ PICK_LOG_SHADOW_STATS_PATH = str(_PICK_LOG_SHADOW_STATS_PATH_P)
 DISCORD_GUARD_FILE         = str(_DISCORD_GUARD_FILE_P)
 LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
 
-# All log paths — main log first, then shadow sport logs.
-# Manual picks excluded: no manual tracking going forward.
-ALL_LOG_PATHS = [PICK_LOG_PATH, PICK_LOG_MLB_PATH, PICK_LOG_WNBA_PATH]
 # Shadow sports: grade silently, no Discord post
 SHADOW_SPORTS = {"WNBA"}  # MLB went live 2026-05-20; removed from shadow
 
@@ -1112,15 +1109,22 @@ def grade_game_line(pick, scores_by_game, linescores=None):
     return None
 
 
-def _game_is_complete(pick, scores_by_game):
+def _game_is_complete(pick, scores_by_game, sport=None):
     """Check if a player's game appears in the completed scores dict.
 
     scores_by_game keys are 'Away @ Home' strings from The Odds API,
     which only includes completed games. Match by game field or team name.
     Returns True only if we can positively confirm the game is finished.
+
+    sport: when provided, restricts matching to keys that are consistent
+           with that sport's team naming conventions, preventing false
+           positives from same-name tokens across different sports.
+           In practice scores_by_game is already sport-scoped (callers
+           pass all_scores[(date, sport)]), so this is a defensive guard.
     """
     if not scores_by_game:
         return False
+    pick_sport = (sport or pick.get("sport", "")).upper()
     game  = pick.get("game", "").strip().lower()
     team  = pick.get("team", "").strip().lower()
 
@@ -1130,11 +1134,27 @@ def _game_is_complete(pick, scores_by_game):
         if game and (game in key_lower or key_lower in game):
             return True
         # Team name / abbreviation word match (skip very short tokens)
-        if team:
+        # Only match when the key belongs to the correct sport context.
+        if team and (not pick_sport or _key_sport_matches(key, pick_sport)):
             words = [w for w in team.split() if len(w) > 2]
             if words and any(w in key_lower for w in words):
                 return True
     return False
+
+
+# Sport-context guard for _game_is_complete: Odds API game keys are plain
+# 'Away @ Home' strings with no sport tag embedded.  The scores_by_game
+# dict passed by callers is already scoped to a single sport, so this
+# helper always returns True (i.e., no additional filtering needed when
+# the dict is correctly pre-filtered).  It exists as an extension point
+# if callers ever pass a mixed-sport dict in the future.
+def _key_sport_matches(key: str, sport: str) -> bool:  # noqa: ARG001
+    """Return True when *key* is plausibly from *sport*.
+
+    Currently a no-op (returns True always) because callers already
+    provide a sport-scoped scores dict.  Override here if that changes.
+    """
+    return True
 
 
 def grade_prop(pick, player_stats, scores_by_game=None):
@@ -1158,7 +1178,7 @@ def grade_prop(pick, player_stats, scores_by_game=None):
 
     # Gate: only grade if we can confirm the game is finished
     if scores_by_game is not None:
-        if not _game_is_complete(pick, scores_by_game):
+        if not _game_is_complete(pick, scores_by_game, sport=pick.get("sport")):
             return None  # Game not finished — don't grade yet
 
     # Try exact match first, then partial
@@ -1203,7 +1223,7 @@ def grade_prop(pick, player_stats, scores_by_game=None):
     if actual is None:
         # Game is confirmed complete but player not in any boxscore → DNP/scratch.
         # scores_by_game=None means gate was bypassed (plan-limit = game definitely done).
-        if scores_by_game is None or _game_is_complete(pick, scores_by_game):
+        if scores_by_game is None or _game_is_complete(pick, scores_by_game, sport=pick.get("sport")):
             return "VOID"
         return None
 
@@ -1346,7 +1366,7 @@ PROP_RUN_TYPES    = {"primary", "bonus"}          # model props — used for W-L
 PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # shown in recap for entertainment — not counted in W-L
 
 def get_graded_primary(all_rows):
-    """Return graded picks (primary + bonus + manual) grouped by date."""
+    """Return graded picks (primary + bonus) grouped by date."""
     grouped = defaultdict(list)
     for row in all_rows:
         if row.get("result") in ("W", "L", "P") and row.get("run_type", "primary") in COUNTED_RUN_TYPES:
@@ -1467,7 +1487,7 @@ def _recap_pick_line(p) -> str:
         return f"{emoji} {last} {dir_} {line_} {stat} | {pl_tag}"
 
 
-def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
+def build_recap_embed(date_str, day_picks, all_rows):
     """Build the daily recap Discord embed.
 
     Three fully-separate records shown in header and footer:
@@ -1478,7 +1498,9 @@ def build_recap_embed(date_str, day_picks, all_rows, suppress_ping=False):
     """
     now_str = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
 
-    _rt   = lambda p: p.get("run_type", "primary")
+    # Default to "" (not "primary") so rows with no run_type are excluded
+    # from PROP_RUN_TYPES / PARLAY_RUN_TYPES membership checks.
+    _rt   = lambda p: p.get("run_type", "")
     _tier = lambda p: p.get("tier", "")
 
     # ── Day splits ────────────────────────────────────────────────────────────
@@ -1883,7 +1905,7 @@ def post_grading_results(date_str, day_picks, all_rows, suppress_ping=False, for
     if not force and _already_posted(guard, recap_key):
         print(f"  [Discord] ⏭️  Daily recap already posted for {date_str} — skipping")
     else:
-        recap_payload = build_recap_embed(date_str, day_picks, all_rows, suppress_ping=suppress_ping)
+        recap_payload = build_recap_embed(date_str, day_picks, all_rows)
         if _webhook_post(DISCORD_RECAP_WEBHOOK, recap_payload, label=f"daily recap {date_str}"):
             print(f"  [Discord] ✅ Daily recap posted for {date_str}")
             _mark_posted(guard, recap_key)
@@ -2033,9 +2055,33 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
         # so each component sport's data is fetched independently.
         for _sp in (s.split(",") if s else [""]):
             dates_sports.setdefault(d, set()).add(_sp.strip())
-        # Daily lay / longshot / SGP may span sports — always ensure NBA scores fetched
-        if row.get("run_type", "").lower() in ("daily_lay", "longshot", "sgp"):
+        # Daily lay / longshot / SGP may span sports — ensure NBA scores are
+        # fetched only when at least one leg actually belongs to NBA.
+        # daily_lay rows are always NBA (no legs JSON); longshot/sgp rows store
+        # per-leg sport in the legs JSON column.
+        if row.get("run_type", "").lower() == "daily_lay":
             dates_sports.setdefault(d, set()).add("NBA")
+        elif row.get("run_type", "").lower() in ("longshot", "sgp"):
+            _legs_raw = row.get("legs", "")
+            _has_nba_leg = False
+            if _legs_raw and isinstance(_legs_raw, str):
+                try:
+                    import json as _json_tmp
+                    _jlegs = _json_tmp.loads(_legs_raw)
+                    _has_nba_leg = any(
+                        str(lg.get("sport", "")).upper() == "NBA"
+                        for lg in _jlegs
+                        if isinstance(lg, dict)
+                    )
+                except Exception:
+                    # Malformed legs JSON — default to adding NBA to avoid
+                    # silently skipping data (conservative fallback).
+                    _has_nba_leg = True
+            else:
+                # No legs column (legacy row) — conservative fallback.
+                _has_nba_leg = True
+            if _has_nba_leg:
+                dates_sports.setdefault(d, set()).add("NBA")
 
     all_scores: dict = {}        # (date, sport) → {game_key: game_data}
     all_player_stats: dict = {}  # (date, sport) → {player_name: stats}

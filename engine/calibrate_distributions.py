@@ -13,7 +13,7 @@ Thresholds for distribution classification:
   var/mu > 1.20  → NB (overdispersed count)
   0.80 ≤ var/mu ≤ 1.20  → Poisson acceptable
   var/mu < 0.80  → underdispersed (bounded count; report only, no NB)
-  mu ≥ 5 OR continuous flag  → Normal sigma instead of Poisson/NB
+  mu ≥ 8.0 OR continuous flag  → Normal sigma instead of Poisson/NB
 
 Usage:
     python engine/calibrate_distributions.py                  # all tables
@@ -302,14 +302,20 @@ def run_calibration(sports_filter: list[str] | None = None,
 # ---------------------------------------------------------------------------
 _CURRENT_PARAMS: dict[tuple[str, str], str] = {
     # (sport_prefix, stat): current deployed description
-    ("NBA", "pts"):   "Normal mult=0.35 min=5.0",
-    ("NBA", "reb"):   "NB r=10.18",
-    ("NBA", "ast"):   "NB r=9.68",
-    ("NBA", "fg3m"):  "NB r=9.15",
-    ("NBA", "stl"):   "Poisson (assumed)",
-    ("NBA", "blk"):   "Poisson (assumed)",
-    ("NBA", "tov"):   "Poisson (assumed)",
-    ("MLB_P", "k"):   "Poisson (confirmed 2026-05-26 var/mu=1.031)",
+    ("NBA",   "pts"):  "Normal mult=0.35 min=5.0",
+    ("NBA",   "reb"):  "NB r=10.18",
+    ("NBA",   "ast"):  "NB r=9.68",
+    ("NBA",   "fg3m"): "NB r=9.15",
+    ("NBA",   "stl"):  "Poisson (assumed)",
+    ("NBA",   "blk"):  "Poisson (assumed)",
+    ("NBA",   "tov"):  "Poisson (assumed)",
+    ("MLB_P", "k"):    "Poisson (confirmed 2026-05-26 var/mu=1.031)",
+    ("MLB_P", "ha"):   "NB r=13.41",
+    ("MLB_B", "rbi"):  "NB r=0.87",
+    ("MLB_P", "er"):   "NB r=2.62",
+    ("MLB_B", "hrr"):  "NB r=1.5 (shadow)",
+    ("MLB_P", "outs"): "Normal mult=0.311 min=1.0",
+    ("NHL_G", "sv"):   "Normal mult=0.253 min=3.5",
 }
 
 

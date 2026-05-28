@@ -77,6 +77,11 @@ from paths import (  # noqa: E402
 # python-requests traffic.
 from http_utils import default_headers  # noqa: E402
 
+# Canonical player-name folding (audit H-3). Strips accents so "Dončić" (log)
+# matches "Doncic" (Odds API description). Must use the same helper as
+# grade_picks.py to guarantee name identity across the pipeline.
+from name_utils import fold_name as _fold_name  # noqa: E402
+
 # Shared atomic-JSON writer (architectural note #2). Dedupes the tmp+fsync+
 # replace dance that used to live inline at every guard-file / checkpoint
 # save site.
@@ -261,12 +266,11 @@ def implied_prob(american_odds: int | float) -> float | None:
     C6: returns None for odds=0, NaN, inf, or any non-numeric value so
     callers can skip the row instead of writing corrupted CLV strings.
     """
-    import math as _math
     try:
         o = float(american_odds)
     except (TypeError, ValueError):
         return None
-    if not o or not _math.isfinite(o):
+    if not o or not math.isfinite(o):
         return None
     if o < 0:
         return abs(o) / (abs(o) + 100)
@@ -293,11 +297,14 @@ def best_price(outcomes: list[dict], direction: str, line: float | None = None) 
         if o_price is None:
             continue
 
-        # Match direction
+        # Match direction. The `o_name in dir_lower` sub-expression could produce
+        # false positives for very short outcome names (e.g. a 1- or 2-char name
+        # matching inside a team abbreviation). Guard with len(o_name) >= 3 so
+        # only meaningful tokens participate in the reverse-substring check.
         dir_lower = direction.lower()
         name_match = (
             dir_lower in o_name
-            or o_name in dir_lower
+            or (len(o_name) >= 3 and o_name in dir_lower)
             or (dir_lower == "over" and "over" in o_name)
             or (dir_lower == "under" and "under" in o_name)
         )
@@ -450,7 +457,7 @@ def _odds_api_get(url: str, params: dict, label: str) -> dict | list | None:
             if remaining == 0:
                 _mark_quota_exhausted()
         except (ValueError, TypeError):
-            pass  # header missing / malformed — ignore
+            logger.debug("Quota header malformed: %r", r.headers.get("x-requests-remaining"))
 
         if r.status_code == 429:
             # Honour Retry-After if the server sent one, else exponential backoff.
@@ -569,11 +576,13 @@ def load_picks(log_path: Path, run_date: str) -> list[dict]:
 def picks_needing_clv(picks: list[dict]) -> list[dict]:
     """Filter to picks that haven't had closing odds captured yet and aren't graded."""
     _terminal = {"W", "L", "P", "VOID"}
+    _skip_run_types = {"sgp", "longshot"}
     return [
         p for p in picks
         if not p.get("closing_odds", "").strip()
         and p.get("stat", "") not in SKIP_STATS
         and p.get("result", "") not in _terminal
+        and p.get("run_type", "") not in _skip_run_types
     ]
 
 
@@ -603,7 +612,14 @@ def _do_write_closing_odds(log_path: Path, updates: dict[tuple, dict]) -> int:
             row.get("direction", "").strip().lower(),
         )
         if key in updates and not row.get("closing_odds", "").strip():
-            row["closing_odds"] = str(updates[key]["closing_odds"])
+            _co = updates[key]["closing_odds"]
+            # Normalize closing_odds to integer string ("-110" not "-110.0") so
+            # the CSV column is consistent regardless of whether the Odds API
+            # returned an int or float price.
+            try:
+                row["closing_odds"] = str(int(_co)) if _co != "STALE" else str(_co)
+            except (TypeError, ValueError):
+                row["closing_odds"] = str(_co)
             row["clv"] = f"{updates[key]['clv']:.4f}" if updates[key]["clv"] is not None else ""
             updated += 1
 
@@ -669,9 +685,13 @@ def game_str_matches(pick_game: str, event_home: str, event_away: str) -> bool:
     if h in g and a in g:
         return True
 
-    # Fallback: any word ≥ 3 chars from home + any word ≥ 3 chars from away
-    h_words = [w for w in h.split() if len(w) >= 3]
-    a_words = [w for w in a.split() if len(w) >= 3]
+    # Fallback: any word ≥ 3 chars from home + any word ≥ 3 chars from away.
+    # Exclude known ambiguous city fragments that could match multiple teams
+    # (e.g. "la" appears in both "Los Angeles Lakers" and "Los Angeles Clippers",
+    # "ny" in both "New York Knicks" and "New York Nets", "sf" in "San Francisco").
+    _AMBIGUOUS_FRAGMENTS: frozenset[str] = frozenset({"la", "ny", "sf", "nj", "lv"})
+    h_words = [w for w in h.split() if len(w) >= 3 and w not in _AMBIGUOUS_FRAGMENTS]
+    a_words = [w for w in a.split() if len(w) >= 3 and w not in _AMBIGUOUS_FRAGMENTS]
     home_match = any(w in g for w in h_words)
     away_match = any(w in g for w in a_words)
     return home_match and away_match
@@ -836,8 +856,10 @@ def get_closing_odds_for_pick(pick: dict, outcomes_by_market: dict,
     #   name        = "Over" / "Under"
     #   description = player full name ("LeBron James")
     # Match player via `description`, direction via `name`.
-    player_lower = player.lower().replace("-", " ")  # normalise hyphens → spaces
-    player_words = [w for w in player_lower.split() if len(w) > 2]
+    # Use fold_name (accent-stripping) so "Dončić" (pick log) matches
+    # "Doncic" (Odds API description) — same contract as grade_picks.py (H-3).
+    player_folded = _fold_name(player)
+    player_words = [w for w in player_folded.split() if len(w) > 2]
 
     best = None
     best_book = ""
@@ -849,12 +871,13 @@ def get_closing_odds_for_pick(pick: dict, outcomes_by_market: dict,
         price = oc.get("price")
         point = oc.get("point")
         oc_name = oc.get("name", "").lower()          # "over" / "under"
-        oc_desc = oc.get("description", "").lower()    # player name
+        oc_desc = oc.get("description", "")            # player name (API)
 
         # Player match against description (fall back to name if description empty —
         # shouldn't happen for props but keeps us safe if a book returns a legacy
         # payload with player name in `name`).
-        target = oc_desc or oc_name
+        # Apply fold_name to the API description so accent variants compare equal.
+        target = _fold_name(oc_desc) if oc_desc else oc_name
         if not player_words or not any(w in target for w in player_words):
             continue
         if line is not None and point is not None and abs(float(point) - line) > 0.25:

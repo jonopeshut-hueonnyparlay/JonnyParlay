@@ -38,7 +38,7 @@ from __future__ import annotations
 from typing import Iterable, Mapping
 
 # ─────────────────────────────────────────────────────────────────
-# Canonical schema (v3)
+# Canonical schema (v4)
 # ─────────────────────────────────────────────────────────────────
 
 SCHEMA_VERSION = 4

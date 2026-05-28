@@ -58,7 +58,7 @@ class TestCLVDateKey:
         may3_row = next(r for r in out if r["date"] == "2026-05-03")
         may4_row = next(r for r in out if r["date"] == "2026-05-04")
         assert may3_row["closing_odds"] == ""
-        assert may4_row["closing_odds"] == str(-110.0)
+        assert may4_row["closing_odds"] == "-110"
 
     def test_update_writes_to_matching_date_row(self, tmp_path):
         """An update should write to the exact row whose date matches the key."""
@@ -74,7 +74,7 @@ class TestCLVDateKey:
 
         with open(log, newline="") as f:
             out = list(csv.DictReader(f))
-        assert out[0]["closing_odds"] == str(-115.0)
+        assert out[0]["closing_odds"] == "-115"
 
     def test_no_overwrite_already_filled(self, tmp_path):
         """Row with existing closing_odds should not be overwritten."""

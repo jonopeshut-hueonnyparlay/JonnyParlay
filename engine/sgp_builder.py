@@ -54,8 +54,6 @@ MIN_LEG_WIN_PROB = 0.65      # floor: 0.65^3 = 29% × 1.35 corr = 39% > +200 imp
 IDEAL_LEG_WIN_PROB = 0.70    # target: 0.70^3 = 34% × 1.35 corr = 46% — clearly +EV
 MAX_LEG_ODDS = -115          # loosened: -130 to -149 alt lines excluded before were good value
                               # floor still screens out uncorrelated junk (+100 etc.)
-MIN_DISTINCT_PLAYERS = 3     # unused — diversity gate now enforces n_legs unique players (see build_sgp)
-
 ODDS_BASE = "https://api.the-odds-api.com/v4"
 ODDS_REGIONS = "us,us2,us_ex"
 API_SLEEP = 1.3
@@ -1093,6 +1091,8 @@ def post_sgp(legs, parlay_odds, game, suppress_ping=False, today_str=None, save=
                 pass
         if save and today_str:
             _log_sgp(legs, parlay_odds, game, today_str, book=book, sgp_size=sgp_size, copula_joint=_cj)
+        elif save and not today_str:
+            print("[SGP] WARNING: today_str is None — pick not logged")
     return ok
 
 
@@ -1184,8 +1184,7 @@ def run_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
         print_sgp(legs, parlay_odds, game, score)
         results.append((legs, parlay_odds, game))
         if dry_run:
-            reason = "--dry-run" if not save else "--no-discord"
-            print(f"  [SGP] {reason}: skipping Discord post.")
+            print(f"  [SGP] --dry-run: skipping Discord post.")
         elif confirm:
             ans = input(f"  [SGP] Post this SGP to #bonus-drops? (y/n): ").strip().lower()
             if ans == "y":

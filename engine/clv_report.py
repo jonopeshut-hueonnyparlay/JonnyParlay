@@ -44,10 +44,12 @@ from paths import (  # noqa: E402
     PICK_LOG_PATH as PICK_LOG,
     PICK_LOG_MANUAL_PATH as PICK_LOG_MANUAL,
     PICK_LOG_MLB_PATH,
+    PICK_LOG_WNBA_PATH,
 )
 
 SHADOW_LOGS = {
-    "MLB": PICK_LOG_MLB_PATH,
+    "MLB":  PICK_LOG_MLB_PATH,
+    "WNBA": PICK_LOG_WNBA_PATH,
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

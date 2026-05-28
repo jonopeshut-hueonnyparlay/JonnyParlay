@@ -111,7 +111,8 @@ def calc_metrics(picks):
 
     risked = sum(p["size_num"] for p in picks if p["result"] not in ("P", "VOID"))
     roi = (units_pl / risked * 100) if risked > 0 else 0
-    avg_edge = sum(p["edge_num"] for p in picks) / len(picks) if picks else 0
+    graded_picks = [p for p in picks if p["result"] in ("W", "L")]
+    avg_edge = sum(p["edge_num"] for p in graded_picks) / len(graded_picks) if graded_picks else 0
     avg_predicted = sum(p["win_prob_num"] for p in picks) / len(picks) if picks else 0
 
     return {
