@@ -412,7 +412,7 @@ def run(
     # 1. Implied totals + team totals (Odds API)
     # Module-level cache: keyed by game_date so the late run reuses the morning
     # fetch instead of making a second live Odds API call.
-    if not hasattr(generate_projections, "_totals_cache"):
+    if not hasattr(run, "_totals_cache"):
         run._totals_cache = {}
     if not late_run or game_date not in run._totals_cache:
         log.info("Fetching implied totals%s...", " (late run — cache miss)" if late_run else "")

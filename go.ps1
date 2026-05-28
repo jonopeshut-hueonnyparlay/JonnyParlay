@@ -1,11 +1,26 @@
 #Requires -Version 5
+# L16: root entry-point files are 5-line runpy shims — no sync loop needed.
 param([string]$Sport = "")
 
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding           = [System.Text.Encoding]::UTF8
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding           = [System.Text.Encoding]::UTF8
+} catch { }
 $env:PYTHONIOENCODING     = "utf-8"
 $ErrorActionPreference    = "Continue"
 Set-Location $PSScriptRoot
+
+# Dependency map: import-name → pip-name (M-9)
+$depMap = @{
+    "filelock"  = "filelock"
+    "requests"  = "requests"
+    "PIL"       = "pillow"
+    "openpyxl"  = "openpyxl"
+}
+
+function Write-Hdr([string]$msg) {
+    Write-Host "`n=== $msg ===" -ForegroundColor Cyan
+}
 
 function Find-CSV([string]$sport) {
     $dirs = @("$env:USERPROFILE\Downloads\projections", "$env:USERPROFILE\Downloads") |
@@ -19,21 +34,32 @@ function Find-CSV([string]$sport) {
     return $csvs | Select-Object -First 1
 }
 
+Write-Hdr "JonnyParlay — go.ps1"
+
 if ($Sport -eq "") {
-    Write-Host "Usage: .\go.bat <sport>"
-    Write-Host "  .\go.bat mlb"
-    Write-Host "  .\go.bat wnba"
-    Write-Host "  .\go.bat nhl"
-    Write-Host "  .\go.bat nba"
+    Write-Host "Usage: .\go.ps1 <sport>"
+    Write-Host "  .\go.ps1 mlb"
+    Write-Host "  .\go.ps1 wnba"
+    Write-Host "  .\go.ps1 nhl"
+    Write-Host "  .\go.ps1 nba"
     Read-Host "`nPress Enter to exit"
     exit 0
 }
 
-$csv = Find-CSV $Sport
-if (-not $csv) {
-    Write-Host "No $($Sport.ToUpper()) CSV found in Downloads (modified in last 12h)." -ForegroundColor Yellow
-    Read-Host "Press Enter to exit"
-    exit 1
+# Wait up to 15 minutes for the SaberSim CSV to appear in Downloads.
+$waitStart = Get-Date
+$csv = $null
+while ($true) {
+    $csv = Find-CSV $Sport
+    if ($csv) { break }
+    $elapsed = (Get-Date) - $waitStart
+    if ($elapsed.TotalMinutes -gt 15) {
+        Write-Host "Timed out waiting for $($Sport.ToUpper()) CSV (15 min). Drop the file and re-run." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 2
+    }
+    Write-Host "Waiting for $($Sport.ToUpper()) CSV in Downloads..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 15
 }
 
 Write-Host "$($Sport.ToUpper()): $($csv.Name)" -ForegroundColor Cyan

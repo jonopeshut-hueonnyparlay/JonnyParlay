@@ -451,7 +451,7 @@ MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 # These coefficients were fitted FOR this formula. Do NOT use them with logit-space.
 #
 # !! MIGRATION NOTE (2026-05-25): calibrate_platt.py now fits logit-space:
-#    sigmoid(A * logit(over_p) + B)
+#    i.e. sigmoid(A * logit(over_p) + B)
 #    When H3 fires (100 native rows), BOTH of the following must happen together:
 #      1. Update _platt_calibrate_prop() below to use logit-space
 #      2. Paste new A/B from calibrate_platt.py (they will be different values)
@@ -5388,12 +5388,9 @@ def select_killshots(qualified, today_str, manual_players=None):
         except (TypeError, ValueError):
             score = 0.0
         player = p.get("player", "")
-        # Manual promote: bypass tier/score v2 gate, but stat must still be in KILLSHOT_STAT_ALLOW
-        stat = p.get("stat", "")
+        # Manual promote: bypass ALL v2 gate criteria (tier/score/wp/odds/stat).
+        # Only KILLSHOT_MANUAL_FLOOR applies.
         if _player_matches(player) and score >= KILLSHOT_MANUAL_FLOOR:
-            if stat not in KILLSHOT_STAT_ALLOW:
-                print(f"  [KILLSHOT] Manual override rejected: {player} {stat} not in KILLSHOT_STAT_ALLOW {KILLSHOT_STAT_ALLOW}")
-                continue
             candidates.append(p)
             continue
         # Auto-qualify: must pass full v2 gate

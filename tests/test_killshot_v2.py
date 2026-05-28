@@ -74,7 +74,7 @@ def test_gate_passes_on_clean_T1():
 
 
 def test_gate_passes_all_allowed_stats():
-    for stat in ("PTS", "AST", "SOG", "3PM"):
+    for stat in ("PTS", "AST", "SOG"):
         ok, reason = _passes_killshot_v2_gate(_pick(stat=stat))
         assert ok, f"stat={stat} should pass; got reason={reason}"
 
@@ -96,7 +96,7 @@ def test_gate_passes_at_win_prob_floor():
 
 def test_gate_passes_at_score_floor():
     ok, _ = _passes_killshot_v2_gate(_pick(pick_score=KILLSHOT_SCORE_FLOOR))
-    assert ok, "pick_score == floor (90) should pass (inclusive)"
+    assert ok, "pick_score == floor (65) should pass (inclusive)"
 
 
 # ─── v2 gate: rejects ────────────────────────────────────────────────────────────
@@ -120,7 +120,7 @@ def test_gate_rejects_T3():
 
 
 def test_gate_rejects_score_below_floor():
-    ok, reason = _passes_killshot_v2_gate(_pick(pick_score=89.9))
+    ok, reason = _passes_killshot_v2_gate(_pick(pick_score=64.9))
     assert not ok
     assert "score" in reason.lower()
 
@@ -297,7 +297,7 @@ def test_manual_override_bypasses_v2_filters():
 def test_manual_override_still_requires_manual_floor():
     # Score below manual floor (75) — should NOT promote even with name match
     with patch.object(run_picks, "_killshots_this_week", return_value=0):
-        picks = [_pick(player="Doncic Luka", pick_score=KILLSHOT_MANUAL_FLOOR - 0.1)]
+        picks = [_pick(player="Doncic Luka", tier="T2", pick_score=KILLSHOT_MANUAL_FLOOR - 0.1)]
         ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
     assert len(ks) == 0, "manual promote should still require score >= MANUAL_FLOOR (75)"
 
@@ -325,11 +325,11 @@ def test_manual_player_match_case_insensitive():
 def test_constants_are_sane():
     assert KILLSHOT_TIER_REQUIRED == "T1"
     assert KILLSHOT_WEEKLY_CAP == 2
-    assert KILLSHOT_SCORE_FLOOR == 90.0
+    assert KILLSHOT_SCORE_FLOOR == 65.0
     assert KILLSHOT_WIN_PROB_FLOOR == 0.65
     assert KILLSHOT_ODDS_MIN == -200
     assert KILLSHOT_ODDS_MAX == 110
-    assert KILLSHOT_STAT_ALLOW == frozenset({"PTS", "AST", "SOG", "3PM"})
+    assert KILLSHOT_STAT_ALLOW == frozenset({"PTS", "AST", "SOG"})
     assert KILLSHOT_SIZE_BASE == 3.0
     assert KILLSHOT_SIZE_BUMP == 4.0
     assert KILLSHOT_BUMP_WIN_PROB == 0.70
