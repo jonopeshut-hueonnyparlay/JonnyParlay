@@ -38,7 +38,21 @@ Full docs: `docs/audits/audit_2026-05-27_run_picks_p1.md`, `audit_2026-05-27_run
 - clv_report.py: sgp/longshot explicitly excluded from CLV — commit `52ca7fc`
 - calibrate_distributions.py: K entry removed from `deployed_nb_r` — commit `eba1a2d`
 
-**Deferred (~25L, several M):** cosmetic/dead-code items; open questions documented in audit files.
+**Deferred (~25L, several M) — all closed — commit `eada064`:**
+- run_picks.py: T4 dead entries in VAKE_MULT; dead MLB SHADOW_LOG_PATHS entry; dead ABBREV_TO_NAMES dict; dead SIGMA["REC"]
+- run_picks.py: KILLSHOT sanity check false-positive; run_type="gameline" invalid schema; SGP ImportError→Exception
+- run_picks.py: bonus cap check post-VAKE sizing; today_str double-assignment; "Max 5 Positions" wrong text
+- run_picks.py: _save_discord_guard TTL prune in fallback; log_candidates FileLock; _log_daily_lay silent return
+- run_picks.py: NRFI/F5 matchup_abbrev substring → resolve_team_abbrev(); hardcoded "MST"; G14 comment scope
+- run_picks.py: CSV parser debug log; run_type param on log_picks(); "No qualifying picks" shadow-aware message
+- grade_picks.py: dead ALL_LOG_PATHS; dead suppress_ping param; docstring "manual" mismatch; _rt lambda default ""
+- grade_picks.py: _game_is_complete sport guard; NBA scores for longshot/sgp only when needed
+- capture_clv.py: picks_needing_clv run_type filter; closing_odds int normalization; fold_name for accented names
+- capture_clv.py: game_str_matches ambiguous city fragments; quota header debug log; redundant math import; direction len guard
+- sgp_builder.py: today_str=None warning; CLI reason string; dead MIN_DISTINCT_PLAYERS
+- analyze_picks.py: avg_edge W/L only; clv_report.py: WNBA in SHADOW_LOGS
+- pick_log_schema.py: "(v3)" → "(v4)"; calibrate_distributions.py: _CURRENT_PARAMS + docstring threshold
+- secrets_config.py: .env.example template; tests/test_clv_date_key.py: closing_odds format assertions
 
 ---
 
