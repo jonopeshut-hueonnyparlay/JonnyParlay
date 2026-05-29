@@ -69,6 +69,7 @@ MAX_PARLAY_ODDS = 450
 MIN_LEG_EDGE = 0.010
 MIN_LEG_WIN_PROB = 0.65
 MAX_LEG_ODDS = -115
+MAX_SGPS_PER_DAY = 3   # MLB has 15 games/night vs NBA's ~5 — cap to top 3 by score
 
 ODDS_BASE = "https://api.the-odds-api.com/v4"
 ODDS_REGIONS = "us,us2,us_ex"
@@ -773,23 +774,33 @@ def run_mlb_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
         return []
 
     events = fetch_mlb_events()
-    print(f"  [MLB SGP] Fetched {len(events)} MLB games")
+    print(f"  [MLB SGP] Fetched {len(events)} MLB games — building candidates...")
 
-    results = []
+    # Phase 1: build SGPs for every game, collect scored candidates
+    candidates = []  # list of (score, legs, parlay_odds, game)
     for event in events:
         eid  = event["id"]
         game = f"{event.get('away_team', '?')} @ {event.get('home_team', '?')}"
-        print(f"\n  [MLB SGP] Building SGP for: {game}")
         odds_data = fetch_mlb_event_props(eid)
         if not odds_data:
-            print(f"  [MLB SGP] No prop odds for {game} — skipping.")
             continue
         result = build_mlb_sgp(projections, odds_data, event)
         if result is None:
-            print(f"  [MLB SGP] No valid SGP found for {game} "
-                  f"(need {MIN_LEGS}+ legs in +{MIN_PARLAY_ODDS}-{MAX_PARLAY_ODDS} range).")
             continue
         legs, parlay_odds, score = result
+        candidates.append((score, legs, parlay_odds, game))
+
+    if not candidates:
+        print("\n  [MLB SGP] No valid MLB SGPs built for tonight's slate.")
+        return []
+
+    # Phase 2: take top MAX_SGPS_PER_DAY by score
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    selected = candidates[:MAX_SGPS_PER_DAY]
+    print(f"\n  [MLB SGP] {len(candidates)} valid SGPs found — posting top {len(selected)} by score.")
+
+    results = []
+    for score, legs, parlay_odds, game in selected:
         print_mlb_sgp(legs, parlay_odds, game, score)
         results.append((legs, parlay_odds, game))
         if dry_run:
@@ -807,8 +818,6 @@ def run_mlb_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
                                today_str=today_str, save=save)
             print(f"  [MLB SGP] {'Posted' if ok else 'FAILED'}: {game}")
 
-    if not results:
-        print("\n  [MLB SGP] No valid MLB SGPs built for tonight's slate.")
     return results
 
 

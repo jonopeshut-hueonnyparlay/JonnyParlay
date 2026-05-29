@@ -4955,13 +4955,21 @@ def post_longshot(safest6_parlay, today, suppress_ping=False, save=True):
     parlay_odds   = fmt_odds(safest6_parlay.get("parlay_odds", 0))
     book_display  = display_book(safest6_parlay.get("book", "")) or "N/A"
 
+    _GL_STAT_CODES = {
+        "ML_FAV", "ML_DOG", "SPREAD", "TOTAL", "TEAM_TOTAL",
+        "F5_ML", "F5_SPREAD", "F5_TOTAL", "NRFI", "YRFI",
+    }
     leg_lines = [f"6-leg longshot — safest model picks\n"]
     for i, leg in enumerate(legs, 1):
         dir_word  = "Over" if str(leg.get("direction", "")).lower() == "over" else "Under"
         wp_pct    = f"{leg.get('win_prob', 0)*100:.0f}%"
+        stat      = leg.get("stat", "")
+        # Game-line picks: player description already contains the market name;
+        # appending the raw stat code (e.g. TEAM_TOTAL, F5_TOTAL) is redundant.
+        stat_suffix = "" if stat in _GL_STAT_CODES else f" {stat}"
         leg_lines.append(
-            f"**Leg {i}** | {leg.get('player','')} {dir_word} {leg.get('line','')} "
-            f"{leg.get('stat','')} | {wp_pct}"
+            f"**Leg {i}** | {leg.get('player','')} {dir_word} {leg.get('line','')}"
+            f"{stat_suffix} | {wp_pct}"
         )
     leg_lines.append(f"\n━━━━━━━━━━━━━━━━")
     leg_lines.append(f"**{parlay_odds}** combined | **{LONGSHOT_SIZE:.2f}u** | {combined_prob*100:.1f}% model prob | 📍 {book_display}")
