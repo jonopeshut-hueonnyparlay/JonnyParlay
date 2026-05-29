@@ -5,6 +5,46 @@ All audits below are fully closed — no open items.
 
 ---
 
+## Audit 2026-05-28 — Full system re-audit (1C/8H/16M) — commit 2e3738a
+
+7 parallel audit agents covering all engine files. Previously interrupted session (2026-05-27 22:18) left 4 fix agents incomplete; rebuilt and applied all fixes directly.
+
+**CRITICAL (1) — closed:**
+- post_nrfi_bonus.py: MLB in _SHADOW_SPORTS — live MLB bonuses never posted to Discord since go-live 2026-05-20
+
+**HIGH (8) — closed:**
+- grade_picks.py: ks_record_line never in desc — KILLSHOT W-L summary missing from every recap embed
+- results_graphic.py: MLB in SHADOW_SPORTS — live MLB picks excluded from public results card
+- morning_preview.py: guard-blocked return triggered sys.exit(2) + false alarm on every normal run
+- run_picks.py: F5 Total/ML/Spread projection lookup (substring) always failed — all F5 sub-picks silently blocked
+- calibrate_platt.py: SV/RBI/ER missing from prop_stats — excluded from H3 Platt refit training set
+- grade_picks.py: NHL skater block missing GOALS field
+- csv_writer.py: fetch_nba_implied_totals DB connection leaked on exception
+- capture_clv.py: ghost-game check missing sgp/longshot run_type filter (spurious evictions)
+
+**MEDIUM (16) — closed:**
+- weekly_recap.py: guard key format (weekly: → weekly_recap:); guard not persisted on force=True + fallback backend
+- morning_preview.py: NRFI/YRFI missing from game_line_stats; SGP/LONGSHOT missing from TIER_ORDER
+- clv_report.py: avg_edge included P/VOID picks (now W/L only, matches analyze_picks.py)
+- csv_writer.py: projection floats not NaN/inf guarded before CSV write
+- run_picks.py: WNBA shadow picks missing pick_score; --repost not sorted by card_slot; H-9/NRFI use wrong logger; G13B checklist stale
+- sgp_builder.py: parlay odds :+d format spec
+- nba_projector.py: pts_cv head(20) fragile sort order; dk_std incorrectly in _SCALE_KEYS
+- pick_log_schema.py: context_verdict comment stale (tombstone, not live)
+- post_nrfi_bonus.py: urllib timeout; game field f-string consistency
+- grade_picks.py: day_picks lacked run_type=manual filter; _recap_pick_line Jr. suffix; NHL GOALS field
+
+**Deferred (complex, monitoring):**
+- projections_db.py: "GUARD" long-form position mismatch with nba_projector (theoretical, NBA API never returns "GUARD")
+- injury_parser.py: trade context uses current team_id; avg_min conditional average — known limitations, documented
+- sgp_builder.py: _sgp_book vs _pick_best_book algorithm divergence — needs deeper trace before fixing
+- calibrate_platt.py: logit-space calibrator vs raw-space live formula — documentation/process issue, code correct
+- nba_projector.py: pace normalization uses today's pace for historical training (precision improvement, not correctness bug)
+
+**Tests: 1019 passing. Updated section20/27/35/39 for MLB live status.**
+
+---
+
 ## Audit 2026-05-27 — run_picks / grade_picks / capture_clv / support files (2C/11H/10M)
 
 Full docs: `docs/audits/audit_2026-05-27_run_picks_p1.md`, `audit_2026-05-27_run_picks_p2.md`, `audit_2026-05-27_grade_clv.md`, `audit_2026-05-27_support.md`
