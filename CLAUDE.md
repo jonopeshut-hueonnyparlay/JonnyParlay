@@ -14,6 +14,10 @@
 - `PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate. Formula: `sigmoid(A * over_p + B)` (**raw-probability space — NOT logit-space**). At H3, BOTH formula AND coefficients change simultaneously from calibrate_platt.py output.
 - `NB_R` (run_picks.py): `3PM`=9.15 (1246 player-seasons, var/mu=1.1486); `AST`=9.68 (1395 player-seasons, var/mu=1.2539); `REB`=10.18 (1395 player-seasons, var/mu=1.4073); `HA`=13.41 (69k pitcher games, var/mu=1.204 — moved from Normal SIGMA 2026-05-26); `RBI`=0.87 (169k batter games, var/mu=1.535 — heavy zero-inflation ~74% games 0-RBI); `ER`=2.62 (69k pitcher games, var/mu=1.700 — bullpen/run-support tails); `HRR`=1.5 (moment-matched shadow log).
 - `SIGMA` (run_picks.py): `PTS`=mult 0.35/min 5.0; `REB`=mult 0.48/min 2.0 (combo path only); `AST`=mult 0.53/min 2.0 (combo path only); `OUTS`=mult 0.311/min 1.0 (recalibrated 2026-05-26 from 69k games; min was 3.0); `SV`=mult 0.253/min 3.5 (NHL goalie saves, calibrated 2026-05-26 from 15k goalie games). `HA` removed from SIGMA — now NB_STATS (r=13.41).
+- `F5_SIGMA` (run_picks.py): `total`=2.65, `spread`=2.70, `team`=2.10. Tuned 2026-05-29 (was total=2.6/spread=2.75/team=2.0).
+- **F5 scalar**: 0.540 (all three paths — total, ML, spread). Updated 2026-05-29 from 0.503 (was ~3-5pp too low; 0.540 is market-calibrated from 2022-2025 F5 lines). SaberSim team totals are already park-adjusted so no additional park multiplier is applied.
+- **NRFI/YRFI model** (run_picks.py `evaluate_nrfi()`): Rewritten 2026-05-29 to Poisson λ model. `BASE_LAMBDA_1ST=0.32` (first-inning specific, calibrated so avg matchup → ~53% P(NRFI); was `BASE_SCORING_RATE=0.1633` which was miscalibrated against a misinterpreted 70% baseline). `_LEAGUE_AVG_BLENDED_RATE=0.438` (0.40×ERA/9 + 0.60×FIP/9, league avg). Formula: `λ_team = 0.32 × (pitcher_blended_rate / 0.438) × (team_runs / 4.39)`; `P(NRFI) = e^(-λ_away - λ_home)`. Park factor intentionally omitted — SaberSim saber_team projections already park-adjusted.
+- `MLB_PARK_FACTORS` dict added to run_picks.py (keyed by home team abbrev, source: Baseball Savant 2022-2025). Not currently applied to projections (park effects already embedded in SaberSim inputs). Available for future park-neutral input paths.
 
 ## Data-gated / Open
 *Current gate counts: see `memory/project_backlog.md`.*
@@ -34,6 +38,7 @@ Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
 
 | Audit | Findings | Status |
 |-------|----------|--------|
+| 2026-05-29 accuracy overhaul | 4 tracks | ALL CLOSED (commit 9712b5b). NRFI Poisson rewrite, cross-type correlation kills, F5 scalar 0.503→0.540, MLB SGP builder. 1038 tests passing. |
 | 2026-05-28 full re-audit (7-agent) | 1C/8H/16M | ALL CLOSED (commit 2e3738a). Key: post_nrfi_bonus MLB routing, F5 projection lookup, ks_record_line, MLB results_graphic. |
 | 2026-05-27 full system | 2C/11H/10M | ALL CLOSED. Shadow-stats system (10 new markets), NRFI pitcher fix, card filter relaxation. |
 | 2026-05-26 gate/rule/filter | 2C/5H/6M | ALL CLOSED (commit 89c9605). Full detail: `docs/audits/gate_audit_2026-05-26.md`. |
@@ -78,7 +83,8 @@ Discord bot display name: **PicksByJonny**
 | `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 29-column schema. Graded alongside main log but never posted to Discord. Excluded from CLV daemon. |
 | `data/pick_log_mlb.csv` | Historical MLB shadow log (pre-go-live, Apr 12–May 19). MLB now posts to main `pick_log.csv`. |
 | `data/pick_log_wnba.csv` | WNBA shadow log — separate from pick_log.csv. Go-live gate: 100 graded picks post-dampener (Jun 3+). Current count: see project_wnba_shadow.md. |
-| `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. Same-Game Parlay builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
+| `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. NBA SGP builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
+| `engine/mlb_sgp_builder.py` | MLB SGP builder (added 2026-05-29). 3-4 legs, +200–+450. Stats: K (over ≥5.5), OUTS (pitchers); HITS (batters). Hard kills: same-pitcher K+OUTS (r≈0.70), K over + opp HITS over (ρ≈−0.30). Gaussian copula with MLB-calibrated ρ table. Fires automatically when MLB CSV is present. Logs to pick_log.csv: `sport=MLB, tier=SGP`. |
 | `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
 | `setup_clv_task.ps1` | Registers CLV daemon scheduled task. S4U logon + WakeToRun. `ExecutionTimeLimit=22h`. Re-run as admin to reset. |
 | `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. Restored 2026-05-27. |
@@ -105,8 +111,8 @@ ARCHIVE: (collapsed)
 | Premium | Top 3 picks per sport from the model each day |
 | Bonus Drop | Single highest-scoring NEW pick per run (max 5/day) |
 | Daily Lay | Alt spread parlay — 3-leg (min 2), model-identified mispriced lines. **Max combined odds: +100**. Per-leg gates: `edge≥0.025`, `cover_prob≥0.58`. `MIN_DAILY_LAY_PROB=0.47`. Kelly-derived sizing: 0.25–0.75u via `size_daily_lay()`. Redesigned Apr 28 2026. |
-| SGP | Same-Game Parlay — **3-4 leg** (redesigned Apr 28 2026), NBA only, **+200–450 range**. Composite pool_score sort, Gaussian odds scoring, BetMGM first. Dynamic sizing: 0.25u default / 0.50u premium (copula EV margin ≥ 0.10 AND cohesion ≥ 0.55 AND avg_edge ≥ 0.035). Allowed books only (see sgp_builder.py). `--sgp-only` flag forces SGP post only. |
-| Longshot | 6-leg parlay of safest picks. Logged as `run_type=longshot`. Per-game cap: max 2 legs per game (`LONGSHOT_MAX_PER_GAME=2`). Added Apr 28 2026. |
+| SGP | Same-Game Parlay — **3-4 leg**, **+200–450 range**. NBA (sgp_builder.py) and MLB (mlb_sgp_builder.py, added 2026-05-29). Gaussian copula joint probability. BetMGM preferred. Dynamic sizing: 0.25u default / 0.50u premium (copula EV margin ≥ 0.10 AND avg_edge ≥ 0.035). Allowed books only. `--sgp-only` flag forces SGP post only. |
+| Longshot | 6-leg parlay of safest picks. Logged as `run_type=longshot`. Per-game cap: max 2 legs (`LONGSHOT_MAX_PER_GAME=2`). Per-player cap: max 1 leg (added 2026-05-29 — same player's stats are correlated). Added Apr 28 2026. |
 | CLV | Closing Line Value — primary edge indicator. Positive = beat the close. Raw vigged closing implied minus raw vigged open implied (not vig-free — consistent with industry standard). |
 | CO-legal books | 18 CO-approved books. API key "espnbet" = display "theScore Bet" |
 | cold_start sub-types | R7/RB8. Players below `MIN_GAMES_FOR_TIER=10` in current season are classified at projection time: **taxi** — n_career_games=0, min cap=12; **returner** — last appearance ≥180 days, min cap=min(career_avg, 22); **extended_absence** — last appearance 60-179 days, min cap=min(career_avg×0.70, 25); **new_acquisition** — last appearance <60 days, min cap=min(career_avg, 28). Cap applied after role scalar. Source: `project_player()` in nba_projector.py. |
@@ -142,6 +148,22 @@ Authoritative source: `engine/pick_log_schema.py`. Updated to v4 by RB8 IMMEDIAT
 - **Daily total cap: 12u** (12.0 literal in `apply_caps()` — `G12` in code is the pitcher-prop same-game direction gate, unrelated) — hard ceiling across all run_types per session.
 - **Sport unit caps:** NBA=8.0u | MLB=8.0u | NHL=5.0u | NFL=5.0u | WNBA=4.0u max per pick (`SPORT_UNIT_CAP` dict).
 - **NHL SOG stat cap:** max 6 picks per run (`STAT_CAP = {"SOG": 6, ...}`; default cap = 2 for other stats).
+
+## Negative Correlation Filter System
+Two functions in run_picks.py run before `build_safest6_parlay()` to prevent anti-correlated legs from combining in the longshot pool:
+
+**`filter_game_line_correlations()`** — GL vs GL pairs. Rules 1-5:
+- R1: Team ML/SPREAD + opponent TEAM_TOTAL over → kill
+- R2: F5_ML both teams same game → kill
+- R3: TOTAL over + TOTAL under same game → kill
+- R4: TOTAL + TEAM_TOTAL same direction → kill
+- R5: NRFI + YRFI same game (ρ=−1.0) → kill *(added 2026-05-29)*
+
+**`filter_cross_type_correlations()`** — Prop vs GL pairs *(added 2026-05-29)*:
+- X1 (HARD): Pitcher HA/ER UNDER + opposing TEAM_TOTAL OVER same game (ρ≈−0.65–0.75 — fewer hits/ER = fewer runs)
+- X2 (HARD): Pitcher K OVER + opposing batter HITS OVER same game (ρ≈−0.30 — more Ks = fewer balls in play)
+
+**SGP hard kills** (in sgp_builder.py and mlb_sgp_builder.py) are separate — they operate within a single SGP slip, not the main card/longshot pool.
 
 ## Context Sanity System
 **DELETED 2026-05-23.** All context system code removed from run_picks.py. The `context_verdict` column in pick_log.csv remains (existing rows carry "disabled" value). The `--context` flag no longer exists.
