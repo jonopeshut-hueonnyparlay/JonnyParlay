@@ -16,11 +16,12 @@
 - `SIGMA` (run_picks.py): `PTS`=mult 0.35/min 5.0; `REB`=mult 0.48/min 2.0 (combo path only); `AST`=mult 0.53/min 2.0 (combo path only); `OUTS`=mult 0.311/min 1.0 (recalibrated 2026-05-26 from 69k games; min was 3.0); `SV`=mult 0.253/min 3.5 (NHL goalie saves, calibrated 2026-05-26 from 15k goalie games). `HA` removed from SIGMA — now NB_STATS (r=13.41).
 
 ## Data-gated / Open
-- **H3 (Platt refit)**: gated on 100 post-v4 `over_p_raw` rows (50 as of 2026-05-25). Check: count non-empty `over_p_raw` in pick_log.csv. Use `python engine/calibrate_platt.py --native-only --force` to test; deploy only if OOS Brier improvement > 0.
-- **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv` (63/100 as of 2026-05-25). Daemon stable post-2026-05-09 MAX_UPTIME fix.
-- **SGP Platt calibration gate**: 43/100 as of 2026-05-25. Current Platt (A=1.4988, B=−0.8102) built on NBA props; applying to SGP leg probs over-corrects (model→58% vs 69% actual win rate). Gate: 100 scored SGP slips before any Platt refit on SGP data.
-- **PICK_SCORE_TIER_MULT T1=0.90×**: confirmed accurate 2026-05-26 (T1 WR=46.55% n=58, T2 WR=61.67% n=60). Re-evaluate at n=30 T1 picks post-2026-05-23 gates (G8B/G8C/G8D). Raise to 0.95× if post-gate T1 WR ≥ 55%; remove T1 reserved slots if WR < 50%.
-- **NBA TEAM_TOTAL over block**: 45.45% WR n=11 as of 2026-05-26. Block maintained. Remove when n=30 TEAM_TOTAL over picks (check via `analyze_picks.py --stat TEAM_TOTAL`).
+*Current gate counts: see `memory/project_backlog.md`.*
+- **H3 (Platt refit)**: gated on 100 post-v4 `over_p_raw` rows. Check: count non-empty `over_p_raw` in pick_log.csv. Use `python engine/calibrate_platt.py --native-only --force` to test; deploy only if OOS Brier improvement > 0.
+- **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv`. Daemon stable post-2026-05-09 MAX_UPTIME fix.
+- **SGP Platt calibration gate**: need 100 scored SGP slips. Current Platt (A=1.4988, B=−0.8102) built on NBA props; applying to SGP leg probs over-corrects (model→58% vs 69% actual win rate). Gate: 100 scored SGP slips before any Platt refit on SGP data.
+- **PICK_SCORE_TIER_MULT T1=0.90×**: Re-evaluate at n=30 T1 picks post-2026-05-23 gates (G8B/G8C/G8D). Raise to 0.95× if post-gate T1 WR ≥ 55%; remove T1 reserved slots if WR < 50%.
+- **NBA TEAM_TOTAL over block**: maintained. Remove when n=30 TEAM_TOTAL over picks (check via `analyze_picks.py --stat TEAM_TOTAL`).
 - **K distribution**: CLOSED 2026-05-26. Within-player var/mu=1.031 from 69k pitcher game-logs → Poisson confirmed. Moved from NB_STATS to POISSON_STATS. K unders still banned (G_K_NO_UNDERS), K overs still require line ≥6.0 (G_K_MIN_LINE) — directional biases are structural, not distribution-related.
 - **Gate recalibration checkpoints** (2026-05-26 gate audit): G8B (AST over ≤4.5) at n=30 post-gate AST picks; G8C (SOG under ≤3.5) at n=30 SOG picks; G8D (3PM over ≤1.5) at n=30 3PM picks. Blocked picks not logged — requires shadow run with gates disabled or accumulated "top filtered" output review.
 - **WNBA COMBO ρ**: n=9 players, near-zero values unreliable. Refit at n=500+ WNBA player-games in shadow DB.
@@ -33,17 +34,11 @@ Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
 
 | Audit | Findings | Status |
 |-------|----------|--------|
-| 2026-05-26 gate/rule/filter audit | 2C/5H/6M | C ALL CLOSED (commit 89c9605). H1/H4 confirmed+monitored, H2/H5 deferred, H3 monitoring thresholds set. M open. Full detail: `docs/audits/gate_audit_2026-05-26.md`. |
-| 2026-05-25 full system (12-track) | 2C/10H/23M/~25L | C/H/M ALL CLOSED (18 commits). ~25L deferred. REB→NB(r=10.18) added post-audit. |
-| 2026-05-25 probability pipeline | AST→NB(r=9.68), 3PM r refit, I6 wp fix, TEAM_TOTAL over block | ALL CLOSED (1 commit). |
-| 2026-05-22 full system (~26k lines) | 2C/14H/26M/~25L | C/H/M ALL CLOSED (8 commits). ~25L deferred. H3 data-gated. |
-| 2026-05-06 projection deep-dive | 0C/5H/8M/5L | ALL CLOSED (H3 data-gated) |
-| 2026-05-05 injury + deep audit | various | ALL CLOSED |
-| 2026-05-04 10-agent | 14C/17H/28M/17L | ALL CLOSED |
-| 2026-05-02 10-agent season | 6C/33H/16M/3L | ALL CLOSED |
-| 2026-05-01 | 0C/2H/4M/9L | ALL CLOSED |
-| 2026-04-28 | 3C/11H/14M/20L | ALL CLOSED |
-| 2026-04-21 | 78 items | ALL CLOSED |
+| 2026-05-28 full re-audit (7-agent) | 1C/8H/16M | ALL CLOSED (commit 2e3738a). Key: post_nrfi_bonus MLB routing, F5 projection lookup, ks_record_line, MLB results_graphic. |
+| 2026-05-27 full system | 2C/11H/10M | ALL CLOSED. Shadow-stats system (10 new markets), NRFI pitcher fix, card filter relaxation. |
+| 2026-05-26 gate/rule/filter | 2C/5H/6M | ALL CLOSED (commit 89c9605). Full detail: `docs/audits/gate_audit_2026-05-26.md`. |
+| 2026-05-25 full system (12-track) | 2C/10H/23M | ALL CLOSED (18 commits). REB→NB(r=10.18) post-audit. |
+| Pre-2026-05-25 | multiple audits | All C/H/M closed. See `docs/audits/AUDIT_HISTORY.md`. |
 
 ---
 
@@ -62,7 +57,7 @@ Discord bot display name: **PicksByJonny**
 | **Discord Overhaul** | Full server rebuild — **done**. Phase 1 design + Phase 2 manual build both shipped. |
 | **KILLSHOT** | Premium tier (v2, Apr 21 2026). Auto-qualifies only when ALL pass: `tier=T1` strict, `pick_score≥65`, `win_prob≥0.65`, `odds ∈ [-200, +110]`, `stat ∈ {PTS,AST,SOG}` (3PM dropped — T3 stat, can't pass T1 gate). Sizing: 3u default, 4u iff `win_prob≥0.70 AND edge≥0.06` (no 5u). Weekly cap: **2**. Manual override (`--killshot NAME`) bypasses gate but still counts toward cap + requires `score≥75`. Posts to #killshot with @everyone. |
 | **KairosEdge** | Halftime trade system — buying trailing team YES in full-game winner market. Tracked separately from props. |
-| **Custom Projection Engine** | Replacement for SaberSim as `run_picks.py` CSV input. **Code:** engine/nba_projector.py + projections_db.py + injury_parser.py + csv_writer.py + backtest_projections.py; data/projections.db (SQLite, ~16 MB). **Run daily:** `python engine\generate_projections.py [--run-picks]`. **Late updates:** `--late-run` re-fetches injuries + re-runs without DB persist. **Shadow mode:** `--shadow` → logs to pick_log_custom.csv, no Discord (parallel CLV validation). **Go-live gate:** ~100 shadow CLV rows (0/86 as of 2026-05-09). **Key features:** EWMA + Bayesian projection per player, role-tier minute scalars (RS + PO), confirmed-starter lineup integration (`engine/lineup_fetcher.py`, C1 2026-05-08), injury redistribution (override/bump split), 240-min lineup-protected constraint, Vegas team-total constraint, blowout sigmoid, high-var `[HIGH-VAR]` flag for bimodal 3PT scorers. Development log: `docs/audits/AUDIT_HISTORY.md`. Full spec: `memory/projects/custom-projection-engine.md`. |
+| **Custom Projection Engine** | Replacement for SaberSim as `run_picks.py` CSV input. **Code:** engine/nba_projector.py + projections_db.py + injury_parser.py + csv_writer.py + backtest_projections.py; data/projections.db (SQLite, ~16 MB). **Run daily:** `python engine\generate_projections.py [--run-picks]`. **Late updates:** `--late-run` re-fetches injuries + re-runs without DB persist. **Shadow mode:** `--shadow` → logs to pick_log_custom.csv, no Discord (parallel CLV validation). **Go-live gate:** ~100 shadow CLV rows (see project_backlog.md for current count). **Key features:** EWMA + Bayesian projection per player, role-tier minute scalars (RS + PO), confirmed-starter lineup integration (`engine/lineup_fetcher.py`, C1 2026-05-08), injury redistribution (override/bump split), 240-min lineup-protected constraint, Vegas team-total constraint, blowout sigmoid, high-var `[HIGH-VAR]` flag for bimodal 3PT scorers. Development log: `docs/audits/AUDIT_HISTORY.md`. |
 
 ## Key Files
 
@@ -82,11 +77,11 @@ Discord bot display name: **PicksByJonny**
 | `data/pick_log.csv` | Model-generated ledger (primary / bonus / daily_lay / sgp / longshot). Starts Apr 14 2026. **29-column** header (schema_version=4, last col is `over_p_raw`). |
 | `data/pick_log_manual.csv` | Manual picks only (--log-manual). Same 29-column schema. Graded alongside main log but never posted to Discord. Excluded from CLV daemon. |
 | `data/pick_log_mlb.csv` | Historical MLB shadow log (pre-go-live, Apr 12–May 19). MLB now posts to main `pick_log.csv`. |
-| `data/pick_log_wnba.csv` | WNBA shadow log — separate from pick_log.csv. 43 picks (May 19–21), 42 graded. Go-live gate: 100 graded picks post-dampener (Jun 3+). |
+| `data/pick_log_wnba.csv` | WNBA shadow log — separate from pick_log.csv. Go-live gate: 100 graded picks post-dampener (Jun 3+). Current count: see project_wnba_shadow.md. |
 | `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. Same-Game Parlay builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
 | `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
 | `setup_clv_task.ps1` | Registers CLV daemon scheduled task. S4U logon + WakeToRun. `ExecutionTimeLimit=22h`. Re-run as admin to reset. |
-| `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. **Source file missing** — only .pyc bytecode remains. Restore from `git log -- post_nrfi_bonus.py` if needed. |
+| `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. Restored 2026-05-27. |
 
 ## Discord Structure (Target)
 ```

@@ -39,16 +39,16 @@ def _six_picks_two_games():
 
 
 def _six_picks_six_games():
-    """6 picks, each from a different game — all pass the per-game cap."""
+    """6 picks, each from a different game and different player — all pass caps."""
     games = [f"Team{i} @ Team{i+1}" for i in range(6)]
-    return [_pick(0.70 - i * 0.01, games[i]) for i in range(6)]
+    return [_pick(0.70 - i * 0.01, games[i], player=f"Player{i}") for i in range(6)]
 
 
 def _seven_picks_six_games():
     """7 picks across 6 games — top 6 by WP should be selected."""
     games = [f"Team{i} @ Team{i+1}" for i in range(6)]
-    picks = [_pick(0.70 - i * 0.01, games[i]) for i in range(6)]
-    picks.append(_pick(0.60, games[0]))  # 7th: low WP, same game as first
+    picks = [_pick(0.70 - i * 0.01, games[i], player=f"Player{i}") for i in range(6)]
+    picks.append(_pick(0.60, games[0], player="PlayerX"))  # 7th: low WP, same game as first
     return picks
 
 
@@ -67,8 +67,22 @@ class TestLongshotConstants:
 
 class TestBuildLongshotParlay:
     def test_returns_none_if_fewer_than_6_qualified(self):
-        result = rp.build_safest6_parlay([_pick()] * 5)
+        picks = [_pick(0.70, f"G{i} @ H{i}", player=f"P{i}") for i in range(5)]
+        result = rp.build_safest6_parlay(picks)
         assert result is None
+
+    def test_player_dedup_blocks_same_player_twice(self):
+        """Same player appearing for two stats in same game: only 1 leg allowed."""
+        # 5 unique players in 5 games + same player twice in a 6th game → only 1 from that player
+        picks = [_pick(0.70, f"G{i} @ H{i}", player=f"P{i}") for i in range(5)]
+        picks.append(_pick(0.80, "G5 @ H5", player="StarPlayer", stat="PTS"))
+        picks.append(_pick(0.79, "G5 @ H5", player="StarPlayer", stat="REB"))
+        result = rp.build_safest6_parlay(picks)
+        # 5 unique players + only 1 leg from StarPlayer = 6 legs total
+        assert result is not None
+        assert len(result["legs"]) == 6
+        star_legs = [l for l in result["legs"] if l["player"] == "StarPlayer"]
+        assert len(star_legs) == 1
 
     def test_returns_none_on_empty_input(self):
         assert rp.build_safest6_parlay([]) is None
@@ -86,9 +100,12 @@ class TestBuildLongshotParlay:
         assert result is None
 
     def test_per_game_cap_exactly_2_passes(self):
-        """2 picks per game, 3 games → exactly 6 legs → valid parlay."""
+        """2 picks per game, 3 games, unique players → exactly 6 legs → valid parlay."""
         games = ["OKC @ DEN", "MIN @ LAL", "PHX @ GSW"]
-        picks = [_pick(0.70, g) for g in games for _ in range(2)]
+        picks = [
+            _pick(0.70, games[i], player=f"P{i}{j}")
+            for i in range(3) for j in range(2)
+        ]
         result = rp.build_safest6_parlay(picks)
         assert result is not None
         assert len(result["legs"]) == 6
@@ -126,12 +143,12 @@ class TestBuildLongshotParlay:
         assert rp.build_safest6_parlay(picks) is None
 
     def test_mixed_cap_scenario_enough_games(self):
-        """2 per game, 4 games = 8 picks available; selects top 6."""
+        """2 per game, 4 games, unique players = 8 picks available; selects top 6."""
         games = [f"G{i} @ G{i+1}" for i in range(4)]
         picks = []
         for i, g in enumerate(games):
-            picks.append(_pick(0.80 - i * 0.02, g))
-            picks.append(_pick(0.75 - i * 0.02, g))
+            picks.append(_pick(0.80 - i * 0.02, g, player=f"P{i}A"))
+            picks.append(_pick(0.75 - i * 0.02, g, player=f"P{i}B"))
         assert len(picks) == 8
         result = rp.build_safest6_parlay(picks)
         assert result is not None

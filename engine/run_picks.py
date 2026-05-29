@@ -3667,12 +3667,19 @@ def build_safest6_parlay(qualified):
     """
     ranked = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
     game_counts: dict = {}
+    player_counts: dict = {}
     safest = []
     for p in ranked:
         g = p.get("game", "")
+        player = p.get("player", "")
         if game_counts.get(g, 0) >= LONGSHOT_MAX_PER_GAME:
             continue
+        # Max 1 leg per player — same player's stats are correlated, not independent
+        if player and player_counts.get(player, 0) >= 1:
+            continue
         game_counts[g] = game_counts.get(g, 0) + 1
+        if player:
+            player_counts[player] = player_counts.get(player, 0) + 1
         safest.append(p)
         if len(safest) == 6:
             break
