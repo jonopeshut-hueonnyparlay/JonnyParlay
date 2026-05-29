@@ -480,7 +480,19 @@ GAME_SIGMA = {
 _FIXED_SPREAD_SPORTS = {"MLB", "NHL"}
 
 # First 5 innings sigmas (MLB only — starter matchup, no bullpen noise)
-F5_SIGMA = {"total": 2.6, "spread": 2.75, "team": 2.0}  # spread: 2.5→2.75 (empirical F5 run-diff σ≈2.7-2.8)
+F5_SIGMA = {"total": 2.65, "spread": 2.70, "team": 2.10}  # calibrated 2026-05-29; total/team raised ±0.1 for park variance
+
+# Park run factors by HOME team — multiplied onto projected runs.
+# Source: Baseball Savant 2022-2025 Statcast park factors (100 = neutral).
+# Applied to F5 and NRFI projections; SaberSim team totals don't carry park-factor information.
+MLB_PARK_FACTORS = {
+    "COL": 1.28, "CIN": 1.08, "BOS": 1.07, "PHI": 1.06, "TEX": 1.05,
+    "NYY": 1.04, "HOU": 1.03, "ATL": 1.02, "CHC": 1.01, "LAD": 1.00,
+    "MIL": 0.99, "ARI": 0.99, "MIN": 0.98, "DET": 0.97, "WSH": 0.97,
+    "BAL": 0.97, "MIA": 0.96, "TOR": 0.96, "CLE": 0.96, "STL": 0.95,
+    "KC":  0.95, "PIT": 0.95, "NYM": 0.95, "CHW": 0.95, "TB":  0.94,
+    "SEA": 0.93, "OAK": 0.93, "LAA": 0.93, "SF":  0.92, "SD":  0.91,
+}
 
 # Game line projection blending: anchor SaberSim to the market line.
 # Formula in prose: the blended projection equals the market line plus
@@ -2958,7 +2970,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                     game_total_proj = (find_team_proj(home, team_proj, "saber_total") or
                                        find_team_proj(away, team_proj, "saber_total"))
                     if game_total_proj and game_total_proj > 0:
-                        proj = game_total_proj * 0.503  # F5 is ~50.3% of full game (2024 data: 4.41/8.76 = 0.5034)
+                        proj = game_total_proj * 0.540  # F5 ~54% of full game (2022-2025 market-calibrated; was 0.503 — too low)
                         # FIX: Anchor F5 projection to market line (same as full-game BLEND_ALPHA)
                         proj = line + BLEND_ALPHA * (proj - line)
                         sigma = sigmas["total"]
@@ -3009,9 +3021,9 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                     t2_proj = find_team_proj(team2, team_proj, "saber_team")
 
                     if t1_proj and t2_proj and t1_proj > 0 and t2_proj > 0:
-                        # F5 team runs scaled (0.503 = empirical F5/full ratio: 4.41/8.76 = 0.5034; was 0.51 — rounding error)
-                        f5_t1 = t1_proj * 0.503
-                        f5_t2 = t2_proj * 0.503
+                        # F5 team runs scaled — 0.540 = market-calibrated 2022-2025 (was 0.503 — too low by ~4pp)
+                        f5_t1 = t1_proj * 0.540
+                        f5_t2 = t2_proj * 0.540
                         margin = f5_t1 - f5_t2
                         sigma = sigmas["spread"]
 
@@ -3086,7 +3098,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                     o_proj = find_team_proj(other_team[0], team_proj, "saber_team")
 
                     if t_proj and o_proj:
-                        raw_f5_margin = (t_proj - o_proj) * 0.503  # 50.3% scaling (2024 data: 4.41/8.76 = 0.5034)
+                        raw_f5_margin = (t_proj - o_proj) * 0.540  # 54% scaling — market-calibrated 2022-2025
                         # FIX: Anchor F5 margin to market-implied margin (same BLEND_ALPHA as full-game)
                         market_f5_margin = -sp_line  # sp_line is from team perspective: negative = fav
                         f5_margin = market_f5_margin + BLEND_ALPHA * (raw_f5_margin - market_f5_margin)
@@ -3126,17 +3138,25 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
 def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
     """Evaluate NRFI/YRFI for MLB games using totals_1st_1_innings market.
     NRFI = Under 0.5 on 1st inning total.  YRFI = Over 0.5.
-    P(NRFI) = P(away scores 0 in 1st) × P(home scores 0 in 1st)
-    Base rate: ~70% NRFI league-wide (~16.3% scoring prob per team per 1st inning)
-    Adjust per team based on pitcher ER rate + opposing team quality.
+
+    Poisson λ model (rewritten 2026-05-29):
+      P(team scores 0 in 1st) = e^(-λ)
+      P(NRFI) = e^(-λ_away) × e^(-λ_home)
+
+    λ_team = BASE_LAMBDA_1ST × pitcher_quality_mult × offense_mult × park_mult
+
+    BASE_LAMBDA_1ST = 0.32 is calibrated from 2022-2024 empirical NRFI rates:
+      avg matchup → P(NRFI) = e^(-0.64) ≈ 0.527  (observed 2022-24: ~52-54%)
     """
     # G_NRFI_DISABLED removed 2026-05-27 — re-enabled for shadow data accumulation; NRFI+YRFI in SHADOW_STATS.
     if sport != "MLB":
         return []
 
     picks = []
-    BASE_SCORING_RATE = 0.1633  # 1 - sqrt(0.70): actual 2024-25 MLB 1st-inning NRFI baseline is 70%
-    _LEAGUE_AVG_RUNS = 4.39     # 2024-25 MLB average runs/game/team (for offense_factor normalisation)
+    # Poisson model constants (2026-05-29 calibration)
+    BASE_LAMBDA_1ST = 0.32        # first-inning λ per team — calibrated to ~53% NRFI for avg matchup
+    _LEAGUE_AVG_RUNS = 4.39       # 2024-25 MLB runs/game/team (offense normalisation)
+    _LEAGUE_AVG_BLENDED_RATE = 0.438  # 0.40*(4.16/9) + 0.60*(3.80/9) — avg pitcher blended ERA+FIP rate
 
     # Build pitcher and team offense maps
     pitcher_map = {}       # team → pitcher stats
@@ -3233,20 +3253,26 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
         if not home_pitcher or not away_pitcher:
             continue
 
-        # Adjust scoring rate per team (I4: use blended ERA/FIP rate for stability)
-        avg_er_per_ip = 0.46  # R2: 2025 MLB ERA ≈ 4.16 → 4.16/9 = 0.462
-        home_pitch_factor = home_pitcher.get("blended_rate", home_pitcher["er_per_ip"]) / avg_er_per_ip
-        away_pitch_factor = away_pitcher.get("blended_rate", away_pitcher["er_per_ip"]) / avg_er_per_ip
+        # Pitcher quality multiplier: blended FIP/ERA rate normalised to league avg.
+        # Higher blended_rate = weaker pitcher = more runs allowed = larger λ.
+        # Note: park factor intentionally omitted — SaberSim saber_team projections
+        # are already park-adjusted, so the offense factor below inherits park effects.
+        home_pitch_mult = home_pitcher.get("blended_rate", home_pitcher["er_per_ip"]) / _LEAGUE_AVG_BLENDED_RATE
+        away_pitch_mult = away_pitcher.get("blended_rate", away_pitcher["er_per_ip"]) / _LEAGUE_AVG_BLENDED_RATE
 
-        # Offense factor: batting team's projected run output vs league average.
-        # Away bats in top of 1st vs home pitcher; home bats in bottom of 1st vs away pitcher.
+        # Offense factor: batting team full-game projected runs (park-adjusted via SaberSim)
+        # vs league average. Away bats vs home pitcher; home bats vs away pitcher.
         off_away = _team_runs(away) / _LEAGUE_AVG_RUNS
         off_home = _team_runs(home) / _LEAGUE_AVG_RUNS
 
-        p_away_scores = min(0.45, max(0.05, BASE_SCORING_RATE * home_pitch_factor * off_away))
-        p_home_scores = min(0.45, max(0.05, BASE_SCORING_RATE * away_pitch_factor * off_home))
+        # Poisson λ per half-inning: higher λ = more expected runs = lower P(0 runs)
+        lam_away = BASE_LAMBDA_1ST * home_pitch_mult * off_away
+        lam_home = BASE_LAMBDA_1ST * away_pitch_mult * off_home
+        lam_away = max(0.05, min(0.90, lam_away))
+        lam_home = max(0.05, min(0.90, lam_home))
 
-        p_nrfi = (1.0 - p_away_scores) * (1.0 - p_home_scores)
+        import math as _math
+        p_nrfi = _math.exp(-(lam_away + lam_home))
         p_yrfi = 1.0 - p_nrfi
 
         # Build matchup abbreviation
@@ -3484,6 +3510,10 @@ def filter_game_line_correlations(picks):
                     if ({sa, sb} == {"TOTAL", "TEAM_TOTAL"} and da == db):
                         conflict = True
 
+                # Rule 5: NRFI + YRFI same game (logical impossibility — exactly one can hit)
+                if not conflict and {sa, sb} == {"NRFI", "YRFI"}:
+                    conflict = True
+
                 if conflict:
                     # Drop the lower pick_score leg
                     score_a = a.get("pick_score") or 0
@@ -3517,6 +3547,95 @@ def filter_game_line_correlations(picks):
 def dedup_game_line_correlation(picks):
     """Thin alias for filter_game_line_correlations (FIX 5, preserved for compatibility)."""
     return filter_game_line_correlations(picks)
+
+
+def filter_cross_type_correlations(picks):
+    """Kill prop-vs-game-line pairs that are structurally anti-correlated.
+
+    filter_game_line_correlations() only checks GL-vs-GL pairs; props pass through
+    untouched.  This function handles cross-type MLB conflicts:
+
+      X1 (HARD): Pitcher HA/ER UNDER + opposing team TEAM_TOTAL OVER (same game)
+                 ρ ≈ −0.65–0.75 — mechanically anti-correlated (fewer hits/ER = fewer runs)
+      X2 (HARD): Pitcher K OVER + opposing batter HITS OVER (same game)
+                 ρ ≈ −0.25–0.35 — more strikeouts = fewer balls in play = fewer hits
+
+    Both picks could independently qualify and land in the longshot pool.
+    Drop the lower pick_score leg on conflict.
+    """
+    _PITCHER_KILL = {("HA", "under"), ("ER", "under")}   # X1 triggers
+    _K_OVER       = {("K",  "over")}                      # X2 trigger
+    _HITS_OVER    = {("HITS", "over")}                    # X2 victim
+
+    game_groups: dict = {}
+    for p in picks:
+        g = p.get("game", "")
+        game_groups.setdefault(g, []).append(p)
+
+    dropped: set = set()  # Python id()s of picks to remove
+
+    for group in game_groups.values():
+        if len(group) < 2:
+            continue
+        for i, a in enumerate(group):
+            if id(a) in dropped:
+                continue
+            for b in group[i + 1:]:
+                if id(b) in dropped:
+                    continue
+
+                conflict = False
+                loser = None
+
+                # Try both orderings so we don't have to repeat logic
+                for pitcher_pick, other_pick in ((a, b), (b, a)):
+                    pp_key  = (pitcher_pick.get("stat", ""), pitcher_pick.get("direction", ""))
+                    op_stat = other_pick.get("stat", "")
+                    op_dir  = other_pick.get("direction", "")
+                    pp_team = pitcher_pick.get("team_abbrev", "")
+                    op_team = other_pick.get("team_abbrev", "")
+                    same_game_opp = pp_team and op_team and pp_team != op_team
+
+                    # X1: pitcher HA/ER under + opposing TEAM_TOTAL over
+                    if (pp_key in _PITCHER_KILL and
+                            op_stat == "TEAM_TOTAL" and op_dir == "over" and
+                            same_game_opp):
+                        conflict = True
+                        score_pp = pitcher_pick.get("pick_score") or 0
+                        score_op = other_pick.get("pick_score") or 0
+                        loser = other_pick if score_pp >= score_op else pitcher_pick
+                        break
+
+                    # X2: pitcher K over + opposing batter HITS over
+                    if (pp_key in _K_OVER and
+                            (op_stat, op_dir) in _HITS_OVER and
+                            same_game_opp):
+                        conflict = True
+                        score_pp = pitcher_pick.get("pick_score") or 0
+                        score_op = other_pick.get("pick_score") or 0
+                        loser = other_pick if score_pp >= score_op else pitcher_pick
+                        break
+
+                if conflict and loser is not None:
+                    dropped.add(id(loser))
+                    winner = b if loser is a else a
+                    logger.info(
+                        "CROSS-TYPE CONFLICT [%s]: dropped %s %s %s (score=%.1f) "
+                        "conflicts with %s %s %s (score=%.1f)",
+                        a.get("game", ""),
+                        loser.get("player"), loser.get("stat"), loser.get("direction"),
+                        float(loser.get("pick_score") or 0),
+                        winner.get("player"), winner.get("stat"), winner.get("direction"),
+                        float(winner.get("pick_score") or 0),
+                    )
+                    print(
+                        f"  [XTYPE] Dropped {loser.get('player')} {loser.get('stat')} "
+                        f"{loser.get('direction')} (score={loser.get('pick_score', 0):.1f}) "
+                        f"— anti-correlated with {winner.get('player')} {winner.get('stat')} "
+                        f"{winner.get('direction')} (score={winner.get('pick_score', 0):.1f})"
+                    )
+
+    return [p for p in picks if id(p) not in dropped]
 
 
 # ── CHANGE 2: Team-total lambda divergence warning ─────────────────────────────
@@ -6139,6 +6258,8 @@ def main():
     # CHANGE 1 / FIX 5: Full GLC matrix — drop hard-conflict game-line pairs
     qualified_pre_glc = list(qualified)  # snapshot for thesis block
     qualified = filter_game_line_correlations(qualified)
+    # Drop prop ↔ game-line anti-correlations (pitcher HA/ER under + opp TT over; K over + HITS over)
+    qualified = filter_cross_type_correlations(qualified)
 
     # CHANGE 3: Thesis block — show pre vs post GLC per game (multi-pick games only)
     print_thesis_block(qualified_pre_glc, qualified)
@@ -6637,6 +6758,23 @@ def main():
             )
         except Exception as e:
             print(f'  [SGP] Error: {e} — skipping.')
+
+    # MLB SGP — runs whenever an MLB CSV is present
+    if not getattr(args, 'no_sgp', False):
+        try:
+            from mlb_sgp_builder import run_mlb_sgp_builder
+            _mlb_csv_strs = [str(p) for p in csv_paths_resolved]
+            _mlb_sgp_dry  = (args.dry_run or args.no_discord) and not getattr(args, 'sgp_only', False)
+            print("\n  [MLB SGP] Running MLB SGP builder...")
+            run_mlb_sgp_builder(
+                _mlb_csv_strs,
+                dry_run=_mlb_sgp_dry,
+                confirm=_CONFIRM_MODE,
+                test=getattr(args, 'test', False),
+                save=not args.no_save,
+            )
+        except Exception as e:
+            print(f'  [MLB SGP] Error: {e} — skipping.')
 
     print("\n  Done. Let's eat.\n")
 
