@@ -1549,7 +1549,7 @@ def project_player(
     pts_cv = None
     pts_std_recent = 0.0
     if len(df_clean) >= HIGH_VAR_MIN_GAMES and "pts" in df_clean.columns:
-        _pts = df_clean["pts"].head(20)
+        _pts = df_clean.sort_values("game_date", ascending=False)["pts"].head(20)
         _mean = float(_pts.mean())
         if _mean > 4.0:
             pts_std_recent = float(_pts.std(ddof=1))
@@ -1752,8 +1752,7 @@ def run_projections(
         "proj_ast",  "proj_ast_p25",  "proj_ast_p75",
         "proj_fg3m", "proj_fg3m_p25", "proj_fg3m_p75",
         "proj_blk", "proj_stl", "proj_tov",
-        "dk_std",
-    ]
+    ]  # dk_std excluded: floored at DK_STD_FLOOR, must not be scaled below it
     from collections import defaultdict as _dd
     _by_team = _dd(list)
     for p in results:

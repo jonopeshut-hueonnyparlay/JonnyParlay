@@ -48,7 +48,7 @@ def load_settled_props(log_path: Path, sport: str = "all") -> pd.DataFrame:
         & df["win_prob"].notna()
     )
     # Props only — game lines have a different distribution model
-    prop_stats = {"PTS", "AST", "REB", "3PM", "SOG", "K", "OUTS", "HA", "HITS", "TB", "HRR", "REC"}
+    prop_stats = {"PTS", "AST", "REB", "3PM", "SOG", "K", "OUTS", "HA", "HITS", "TB", "HRR", "REC", "SV", "RBI", "ER"}
     mask &= df["stat"].isin(prop_stats)
     if sport != "all":
         mask &= df["sport"].str.upper() == sport.upper()

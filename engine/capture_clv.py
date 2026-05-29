@@ -1045,6 +1045,7 @@ def run(run_date: str):
             if not p.get("closing_odds", "").strip()
             and p.get("stat", "") not in SKIP_STATS
             and p.get("result", "") not in {"W", "L", "P", "VOID"}
+            and p.get("run_type", "") not in {"sgp", "longshot"}
         }
         ghost_games = captured_games & needs_clv_games
         if ghost_games:

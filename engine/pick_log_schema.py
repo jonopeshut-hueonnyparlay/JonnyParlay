@@ -56,7 +56,7 @@ CANONICAL_HEADER: list[str] = [
     # M-3: is_home is canonical "True"/"False"/"" — set for SPREAD/ML_FAV/ML_DOG/
     # F5_SPREAD/F5_ML/TEAM_TOTAL, blank for props (see normalize_is_home).
     "is_home",
-    "context_verdict",   # v2: supports | neutral | conflicts | skipped | disabled (H-11)
+    "context_verdict",   # disabled (frozen — context system removed 2026-05-23; existing rows carry "disabled")
     "context_reason",    # v2: ≤12-word reason string
     "context_score",     # v2: 0-3 confluence count
     # v3: parlay leg detail — JSON array for longshot/sgp/daily_lay rows.

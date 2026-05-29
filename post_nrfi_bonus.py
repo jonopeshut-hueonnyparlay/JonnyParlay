@@ -1,8 +1,6 @@
 """post_nrfi_bonus.py — one-shot bonus pick poster for NRFI / pitcher-matchup props.
 
 Audit fixes applied:
-  H-1 / H-14  MLB bonus routes to pick_log_mlb.csv (shadow log); does NOT
-               post to Discord for shadow sports.
   H-3          normalize_american_odds ensures sign-prefixed odds at write time.
   M-13         write_schema_sidecar refreshed after every write.
   M-19         pick_log_lock held across existence-check AND append.
@@ -48,9 +46,8 @@ DATA_DIR = Path(__file__).parent / "data"
 MAIN_LOG: Path = DATA_DIR / "pick_log.csv"
 
 # Shadow logs: sports not yet at go-live post here instead of the main log
-# and Discord posting is suppressed.
+# and Discord posting is suppressed.  MLB is live as of 2026-05-20.
 SHADOW_LOGS: dict[str, Path] = {
-    "MLB":  DATA_DIR / "pick_log_mlb.csv",
     "WNBA": DATA_DIR / "pick_log_wnba.csv",
 }
 
@@ -60,8 +57,8 @@ _SHADOW_SPORTS: frozenset[str] = frozenset(SHADOW_LOGS.keys())
 def _log_path_for(sport: str) -> Path:
     """Route a sport to the correct pick_log CSV path.
 
-    NBA (and any other live sport) → MAIN_LOG.
-    Shadow sports (MLB, WNBA)      → SHADOW_LOGS[sport].
+    NBA/MLB (and any other live sport) → MAIN_LOG.
+    Shadow sports (WNBA)               → SHADOW_LOGS[sport].
     """
     return SHADOW_LOGS.get(sport.upper(), MAIN_LOG)
 
@@ -110,7 +107,7 @@ def _build_row() -> dict:
         "tier":             _TIER,
         "pick_score":       _PICK_SCORE,
         "size":             normalize_size(_SIZE_RAW),
-        "game":             "Toronto Blue Jays @ Arizona Diamondbacks",
+        "game":             f"{_AWAY_TEAM} @ {_HOME_TEAM}",
         "mode":             "",
         "result":           "",
         "closing_odds":     "",
@@ -154,7 +151,7 @@ def _post_to_discord(row: dict) -> None:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    urllib.request.urlopen(req)
+    urllib.request.urlopen(req, timeout=10)
 
 
 def main() -> None:

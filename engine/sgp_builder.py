@@ -927,7 +927,7 @@ def build_sgp_embed(legs, parlay_odds, game, sgp_size=None, _copula_joint=None):
         "",
         *leg_lines,
         "",
-        f"**+{parlay_odds}** | {len(legs)} legs | {sgp_size:.2f}u",
+        f"**{parlay_odds:+d}** | {len(legs)} legs | {sgp_size:.2f}u",
         f"Copula joint: {copula_pct:.0f}% | Implied: {implied_pct:.0f}% ({ev_sign}{ev_pct:.0f}pp)",
         f"Avg leg prob: {avg_wp:.0f}% | Cohesion: {cohesion:.0f}%",
         f"📍 Bet on: **{display_book(book)}**",
@@ -1033,7 +1033,7 @@ def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None, copula_
                 writer.writerow(row)
                 f.flush()
                 os.fsync(f.fileno())
-        print(f"  [SGP] 📝 Logged to pick_log ({len(legs)} legs, +{parlay_odds})")
+        print(f"  [SGP] 📝 Logged to pick_log ({len(legs)} legs, {parlay_odds:+d})")
         try:
             _write_schema_sidecar(log_path)
         except Exception:
@@ -1121,7 +1121,7 @@ def print_sgp(legs, parlay_odds, game, score):
     stat_div = len(set(l["stat"] for l in legs)) / len(legs)
     dyn_size = size_sgp(legs, cohesion)
     print()
-    print(f"  Parlay odds: +{parlay_odds}")
+    print(f"  Parlay odds: {parlay_odds:+d}")
     print(f"  Legs: {len(legs)} | Avg edge: {avg_edge:.1f}% | Avg WP: {avg_wp:.0f}% | Size: {dyn_size}u")
     print(f"  Teams: {', '.join(teams)} | Cohesion: {cohesion*100:.0f}% | Stat diversity: {stat_div*100:.0f}% | Score: {score:.3f}")
     print(f"\n  Correlation check:")

@@ -633,8 +633,9 @@ def post_weekly_recap(week_picks, mon_str, sun_str, all_rows, suppress_ping=Fals
         print(f"  No graded picks for week {mon_str} – {sun_str}")
         return False
 
-    guard_key = f"weekly:{mon_str}"
+    guard_key = f"weekly_recap:{mon_str}"
 
+    guard = {}  # always defined so success path can persist it in fallback
     if not force:
         if _HAS_SHARED_GUARD:
             if not _shared_claim_post(guard_key):
@@ -650,6 +651,9 @@ def post_weekly_recap(week_picks, mon_str, sun_str, all_rows, suppress_ping=Fals
         # force=True (--repost): mark claimed so we can release on failure
         if _HAS_SHARED_GUARD:
             _shared_claim_post(guard_key)  # may already be claimed; that's OK
+        else:
+            guard = _load_guard()
+            guard[guard_key] = True  # pre-claim for fallback persistence
 
     payload   = build_weekly_embed(mon_str, sun_str, week_picks, all_rows, suppress_ping=suppress_ping)
     xlsx_buf  = build_weekly_xlsx(week_picks, mon_str, sun_str)

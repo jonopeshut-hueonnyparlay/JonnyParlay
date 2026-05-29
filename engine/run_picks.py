@@ -2955,15 +2955,8 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                 line = over_info.get("line")
                 if line is not None:
                     # Find game total projection and scale to F5
-                    game_total_proj = None
-                    for tk, tv in team_proj.items():
-                        if tv["saber_total"] > 0:
-                            if (tk in home.upper() or home.upper() in tk or
-                                tk in away.upper() or away.upper() in tk or
-                                any(w in tk for w in home.upper().split()[-1:]) or
-                                any(w in tk for w in away.upper().split()[-1:])):
-                                game_total_proj = tv["saber_total"]
-                                break
+                    game_total_proj = (find_team_proj(home, team_proj, "saber_total") or
+                                       find_team_proj(away, team_proj, "saber_total"))
                     if game_total_proj and game_total_proj > 0:
                         proj = game_total_proj * 0.503  # F5 is ~50.3% of full game (2024 data: 4.41/8.76 = 0.5034)
                         # FIX: Anchor F5 projection to market line (same as full-game BLEND_ALPHA)
@@ -3012,12 +3005,8 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
 
                 if not is_decimal_leak(odds1) and not is_decimal_leak(odds2):
                     # Derive F5 ML probability from team total projections
-                    t1_proj, t2_proj = None, None
-                    for tk, tv in team_proj.items():
-                        if tk in team1.upper() or team1.upper() in tk or any(w in tk for w in team1.upper().split()[-1:]):
-                            t1_proj = tv["saber_team"]
-                        if tk in team2.upper() or team2.upper() in tk or any(w in tk for w in team2.upper().split()[-1:]):
-                            t2_proj = tv["saber_team"]
+                    t1_proj = find_team_proj(team1, team_proj, "saber_team")
+                    t2_proj = find_team_proj(team2, team_proj, "saber_team")
 
                     if t1_proj and t2_proj and t1_proj > 0 and t2_proj > 0:
                         # F5 team runs scaled (0.503 = empirical F5/full ratio: 4.41/8.76 = 0.5034; was 0.51 — rounding error)
@@ -3093,14 +3082,8 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                         continue
 
                     # Project F5 margin
-                    t_proj = None
-                    for tk, tv in team_proj.items():
-                        if tk in team_name.upper() or team_name.upper() in tk or any(w in tk for w in team_name.upper().split()[-1:]):
-                            t_proj = tv["saber_team"]
-                    o_proj = None
-                    for tk, tv in team_proj.items():
-                        if tk in other_team[0].upper() or other_team[0].upper() in tk or any(w in tk for w in other_team[0].upper().split()[-1:]):
-                            o_proj = tv["saber_team"]
+                    t_proj = find_team_proj(team_name, team_proj, "saber_team")
+                    o_proj = find_team_proj(other_team[0], team_proj, "saber_team")
 
                     if t_proj and o_proj:
                         raw_f5_margin = (t_proj - o_proj) * 0.503  # 50.3% scaling (2024 data: 4.41/8.76 = 0.5034)
@@ -3190,7 +3173,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
         abbr = resolve_team_abbrev(team_name)
         if abbr and abbr in team_saber_runs:
             return team_saber_runs[abbr]
-        logging.warning(f"NRFI _team_runs: no match for '{team_name}' — using league avg {_LEAGUE_AVG_RUNS}")
+        logger.warning(f"NRFI _team_runs: no match for '{team_name}' — using league avg {_LEAGUE_AVG_RUNS}")
         return _LEAGUE_AVG_RUNS
 
     # Extract NRFI odds from the _nrfi keyed entries (totals_1st_1_innings)
@@ -5155,7 +5138,7 @@ def post_extras_to_discord(qualified, run_id=None, save=True):
         # pick failing sizing is a real signal that today's bonus slate is
         # too weak. Skip for the day rather than drilling down into the
         # scraps.
-        print("  [Discord] Bonus drop skipped — top eligible pick failed H-9 sizing gate.")
+        logger.warning("Bonus drop skipped — top eligible pick failed H-9 sizing gate.")
         return
     best["size"] = resized
     if _prev_size is not None and _prev_size != best["size"]:
@@ -6550,6 +6533,8 @@ def main():
                                    and r.get("tier", "") != "KILLSHOT"
                                    and r.get("date", "") == today_str]
             if repost_rows:
+                # Sort by card_slot (original card order) so POTD is always slot 1
+                repost_rows.sort(key=lambda r: int(r.get("card_slot") or 99))
                 # Reconstruct minimal pick dicts from log
                 repost_picks = []
                 for r in repost_rows[:5]:  # top 5 primary picks

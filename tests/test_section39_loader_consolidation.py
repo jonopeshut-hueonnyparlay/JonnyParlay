@@ -291,9 +291,10 @@ def test_results_graphic_wrapper(sample_log, monkeypatch):
     # Legacy blank-run_type row on 2026-04-22 must pass _PUBLIC_RUN_TYPES.
     assert len(rows) == 1
     assert rows[0]["sport"] == "NBA"
-    # MLB row on 2026-04-21 must be filtered out as shadow.
+    # MLB is live (2026-05-20) — MLB rows appear on the public graphic.
+    # WNBA is still shadow and must be excluded.
     rows2 = results_graphic._load_day_picks("2026-04-21")
-    assert all(r["sport"].upper() != "MLB" for r in rows2)
+    assert all(r["sport"].upper() != "WNBA" for r in rows2)
 
 
 def test_clv_report_wrapper(sample_log, monkeypatch):

@@ -93,6 +93,8 @@ TIER_ORDER: list[str] = [
     "T2",
     "T3",
     "DAILY_LAY",
+    "SGP",
+    "LONGSHOT",
 ]
 
 _GUARD_TTL_DAYS = 90
@@ -229,7 +231,7 @@ def _format_pick_line(pick: dict) -> str:
 
     # Spread / ML / total stats: game-line format
     game_line_stats = {"SPREAD", "ML_FAV", "ML_DOG", "TOTAL", "TEAM_TOTAL",
-                       "F5_ML", "F5_SPREAD", "F5_TOTAL", "PARLAY"}
+                       "F5_ML", "F5_SPREAD", "F5_TOTAL", "PARLAY", "NRFI", "YRFI"}
     if stat.upper() in game_line_stats:
         pick_str = f"{player} {dir_} {line}".strip()
     else:
@@ -422,7 +424,21 @@ def main() -> None:
     )
 
     # AUDIT H-7: exit non-zero on failure so Task Scheduler surfaces the outage.
+    # Guard-blocked (already posted today) is a normal outcome — exit 0, not 2.
     if not posted:
+        guard_key = f"preview:{date_str}"
+        _already_blocked = False
+        try:
+            if _HAS_SHARED_GUARD:
+                from discord_guard import is_posted as _ip
+                _already_blocked = _ip(guard_key)
+            else:
+                _already_blocked = bool(_load_guard().get(guard_key))
+        except Exception:
+            pass
+        if _already_blocked:
+            print(f"  Morning preview already posted for {date_str} — nothing to do.")
+            sys.exit(0)
         print("  [morning_preview] H-7: post failed — exiting 2 so the scheduler flags it.")
         try:
             notify_fallback("morning_preview", err=f"date={date_str}")

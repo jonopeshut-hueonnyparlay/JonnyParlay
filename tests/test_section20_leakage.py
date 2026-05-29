@@ -136,9 +136,9 @@ def rg_with_mixed_log(tmp_path, monkeypatch):
         mk("primary",   "NBA", "Public Primary"),
         mk("bonus",     "NBA", "Public Bonus"),
         mk("daily_lay", "NBA", "Public Daily Lay"),
-        mk("manual",    "NBA", "Manual Pick"),        # must be filtered (H-6)
-        mk("primary",   "MLB", "Shadow Primary"),     # must be filtered (shadow)
-        mk("bonus",     "MLB", "Shadow Bonus"),       # must be filtered (shadow)
+        mk("manual",    "NBA", "Manual Pick"),         # must be filtered (H-6)
+        mk("primary",   "WNBA", "Shadow Primary"),    # must be filtered (WNBA still shadow)
+        mk("bonus",     "WNBA", "Shadow Bonus"),      # must be filtered (WNBA still shadow)
         mk("primary",   "NBA", "Ungraded", result=""),  # must be filtered (ungraded)
     ]
     with open(log, "w", newline="") as f:
@@ -172,8 +172,8 @@ def test_results_graphic_drops_manual_run_type(rg_with_mixed_log):
 def test_results_graphic_drops_shadow_sports(rg_with_mixed_log):
     rg = rg_with_mixed_log
     picks = rg._load_day_picks("2026-04-20")
-    assert not any(p["sport"] == "MLB" for p in picks), (
-        "H-14: shadow sports must never appear on the public card."
+    assert not any(p["sport"] == "WNBA" for p in picks), (
+        "H-14: shadow sports (WNBA) must never appear on the public card."
     )
 
 
@@ -190,32 +190,26 @@ def test_results_graphic_drops_ungraded(rg_with_mixed_log):
 # ─────────────────────────────────────────────────────────────────
 
 def test_post_nrfi_bonus_routes_mlb_to_shadow_log(tmp_path, monkeypatch):
-    """The whole point of the H-1 fix: an MLB bonus must NOT land in
-    data/pick_log.csv. It goes to pick_log_mlb.csv.
+    """MLB went live 2026-05-20: MLB bonuses now go to pick_log.csv (main log)
+    and post to Discord. WNBA still goes to shadow log.
     """
-    # Redirect the DATA_DIR on a fresh import of the module.
     data_dir = tmp_path / "data"
     data_dir.mkdir()
 
-    # Stub secrets_config so we don't need a real webhook.
     import secrets_config as sc
     monkeypatch.setattr(sc, "DISCORD_BONUS_WEBHOOK", "https://fake/webhook",
                         raising=False)
 
-    # Patch urlopen before import so if it ever fires, the test fails loudly.
+    # MLB is live — Discord posting is expected; stub urlopen to succeed silently.
     import urllib.request
-    def _boom(*a, **kw):  # pragma: no cover — shouldn't be reached
-        raise AssertionError("Shadow sport should NOT post to Discord")
-    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    class _FakeResp:
+        def read(self): return b""
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
 
-    # Shim the module to use our temp data dir by replacing Path(__file__)
-    # in sys.argv-style imports is awkward — easier to monkeypatch after import.
-    # Reload post_nrfi_bonus with patched paths.
-    # We emulate execution by importing with the constants replaced.
     spec_path = Path(__file__).resolve().parent.parent / "post_nrfi_bonus.py"
     src = spec_path.read_text(encoding="utf-8")
-    # Rewrite the DATA_DIR assignment to our tmp dir. Crude but keeps the
-    # test hermetic without adding a CLI param to a one-shot script.
     shimmed = src.replace(
         'DATA_DIR = Path(__file__).parent / "data"',
         f'DATA_DIR = Path(r"{data_dir}")',
@@ -226,17 +220,16 @@ def test_post_nrfi_bonus_routes_mlb_to_shadow_log(tmp_path, monkeypatch):
     main_log = data_dir / "pick_log.csv"
     shadow_log = data_dir / "pick_log_mlb.csv"
 
-    # H-1: the MLB row must be in shadow log, NOT main log.
-    assert shadow_log.exists(), (
-        "Shadow log wasn't written — H-1 routing is broken."
+    # MLB is live — row goes to MAIN log, NOT the old shadow log.
+    assert main_log.exists(), (
+        "Main pick_log.csv was not written — MLB is live and should route to the main log."
     )
-    assert not main_log.exists(), (
-        "Main pick_log.csv was written — this is the public-leak bug the "
-        "Section 20 fix was supposed to close."
+    assert not shadow_log.exists(), (
+        "pick_log_mlb.csv was written — MLB should no longer route to the shadow log."
     )
 
-    # Verify the row is canonical-shaped and odds are sign-prefixed.
-    with open(shadow_log, newline="") as f:
+    # Verify the row is canonical-shaped and odds are sign-prefixed (now in main log).
+    with open(main_log, newline="") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 1
     row = rows[0]
@@ -264,10 +257,11 @@ def test_post_nrfi_bonus_log_path_helper_routes_by_sport():
 
     # NBA → main log
     assert pnb._log_path_for("NBA") == pnb.MAIN_LOG
-    # MLB → shadow log
-    assert pnb._log_path_for("MLB") == pnb.SHADOW_LOGS["MLB"]
-    # Case-insensitive
-    assert pnb._log_path_for("mlb") == pnb.SHADOW_LOGS["MLB"]
+    # MLB is live (2026-05-20) → main log
+    assert pnb._log_path_for("MLB") == pnb.MAIN_LOG
+    assert pnb._log_path_for("mlb") == pnb.MAIN_LOG
+    # WNBA still shadow → shadow log
+    assert pnb._log_path_for("WNBA") == pnb.SHADOW_LOGS["WNBA"]
 
 
 if __name__ == "__main__":

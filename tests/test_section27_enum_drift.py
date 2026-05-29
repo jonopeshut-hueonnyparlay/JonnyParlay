@@ -81,8 +81,12 @@ def test_tier_order_killshot_first_daily_lay_last():
     assert TIER_ORDER[0] == "KILLSHOT", (
         f"KILLSHOT must render first in the preview. Got TIER_ORDER[0]={TIER_ORDER[0]!r}"
     )
-    assert TIER_ORDER[-1] == "DAILY_LAY", (
-        f"DAILY_LAY must render last. Got TIER_ORDER[-1]={TIER_ORDER[-1]!r}"
+    assert "DAILY_LAY" in TIER_ORDER, "DAILY_LAY must be in TIER_ORDER"
+    dl_idx = TIER_ORDER.index("DAILY_LAY")
+    # SGP/LONGSHOT may follow DAILY_LAY; no other primary tier comes after it.
+    primary_tiers = {"KILLSHOT", "T1", "T1B", "T2", "T3"}
+    assert not any(TIER_ORDER.index(t) > dl_idx for t in primary_tiers if t in TIER_ORDER), (
+        f"A primary tier comes after DAILY_LAY in TIER_ORDER: {TIER_ORDER}"
     )
 
 

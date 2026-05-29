@@ -411,6 +411,7 @@ def fetch_nhl_boxscores(date_str):
                             player_stats[name.lower()] = {
                                 "SOG": player.get("sog", 0),
                                 "AST": player.get("assists", 0),
+                                "GOALS": player.get("goals", 0),
                             }
                     for goalie in team_data.get("goalies", []):
                         raw_name = goalie.get("name", "")
@@ -1610,7 +1611,7 @@ def build_recap_embed(date_str, day_picks, all_rows):
     color = 0x2ECC71 if pl >= 0 else 0xFF4444
 
     desc = (
-        f"{record}{streak_line}{pick_streak_line}\n\n"
+        f"{record}{ks_record_line}{streak_line}{pick_streak_line}\n\n"
         + "\n".join(pick_lines)
         + f"\n\n━━━━━━━━━━━━━━━━\n"
         + f"**This week:** {week_str}\n"

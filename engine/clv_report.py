@@ -194,7 +194,7 @@ def analyze(picks):
         if result in ("W", "L"):
             units_risked += size
 
-        if edge is not None:
+        if edge is not None and result in ("W", "L"):
             edges.append(edge)
         if score is not None:
             pick_scores.append(score)

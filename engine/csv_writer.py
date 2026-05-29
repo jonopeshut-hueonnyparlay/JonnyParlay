@@ -176,19 +176,20 @@ def fetch_nba_implied_totals(
         return {}, {}
 
     conn = get_conn(db_path)
+    try:
+        # Build name -> team_id map from DB (Odds API uses full team names)
+        name_to_tid: Dict[str, int] = {
+            r["name"]: r["team_id"]
+            for r in conn.execute("SELECT team_id, name FROM teams").fetchall()
+        }
 
-    # Build name -> team_id map from DB (Odds API uses full team names)
-    name_to_tid: Dict[str, int] = {
-        r["name"]: r["team_id"]
-        for r in conn.execute("SELECT team_id, name FROM teams").fetchall()
-    }
-
-    # Load today's games (game_id, home_team_id, away_team_id)
-    games_rows = conn.execute(
-        "SELECT game_id, home_team_id, away_team_id FROM games WHERE game_date=?",
-        (game_date,)
-    ).fetchall()
-    conn.close()
+        # Load today's games (game_id, home_team_id, away_team_id)
+        games_rows = conn.execute(
+            "SELECT game_id, home_team_id, away_team_id FROM games WHERE game_date=?",
+            (game_date,)
+        ).fetchall()
+    finally:
+        conn.close()
 
     if not games_rows:
         log.info("fetch_nba_implied_totals: no games in DB for %s -- skipping", game_date)
@@ -315,6 +316,12 @@ def _proj_to_row(
     # injury_parser._normalise_position() collapses to G/F/C at read time for redistribution.
     pos = str(proj.get("position") or "F").strip().upper() or "F"
 
+    import math as _math
+    def _sf(v, d=0.0):
+        if v is None or (isinstance(v, float) and (_math.isnan(v) or _math.isinf(v))):
+            return d
+        return v
+
     return {
         "Name":        proj["player_name"],
         "Pos":         pos,
@@ -323,11 +330,11 @@ def _proj_to_row(
         "Status":      csv_status,
         "Saber Team":  round(saber_team, 2),
         "Saber Total": round(saber_total, 2),
-        "PTS":         proj.get("proj_pts", 0.0),
-        "RB":          proj.get("proj_reb", 0.0),
-        "AST":         proj.get("proj_ast", 0.0),
-        "3PT":         proj.get("proj_fg3m", 0.0),
-        "dk_std":      proj.get("dk_std", 0.0),
+        "PTS":         _sf(proj.get("proj_pts")),
+        "RB":          _sf(proj.get("proj_reb")),
+        "AST":         _sf(proj.get("proj_ast")),
+        "3PT":         _sf(proj.get("proj_fg3m")),
+        "dk_std":      _sf(proj.get("dk_std")),
         "pts_cv":      proj.get("pts_cv") or "",
         "cold_start_subtype": proj.get("cold_start_subtype") or "",
         "injury_trigger":     proj.get("injury_trigger", False),

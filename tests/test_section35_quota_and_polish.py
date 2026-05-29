@@ -312,10 +312,21 @@ def test_post_nrfi_team_matches_away_team_in_game_string(nrfi_src: str):
     """Convention: for NRFI-style pitcher-matchup props, team column holds the
     AWAY team (leftmost slot in the `game` field). Verify the two rows agree."""
     team_m = re.search(r'"team"\s*:\s*"([^"]+)"', nrfi_src)
-    game_m = re.search(r'"game"\s*:\s*"([^"]+)"', nrfi_src)
-    assert team_m and game_m, "could not locate team/game rows in post_nrfi_bonus.py"
+    assert team_m, "could not locate team row in post_nrfi_bonus.py"
     team = team_m.group(1)
-    game = game_m.group(1)
+
+    # game may be a plain string literal OR an f-string using _AWAY_TEAM/_HOME_TEAM.
+    # Check for plain literal first, then variable reference.
+    game_m = re.search(r'"game"\s*:\s*"([^"]+)"', nrfi_src)
+    if game_m:
+        game = game_m.group(1)
+    else:
+        # f-string or _GAME_STR reference — extract _AWAY_TEAM/_HOME_TEAM values
+        away_m = re.search(r'_AWAY_TEAM\s*=\s*"([^"]+)"', nrfi_src)
+        home_m = re.search(r'_HOME_TEAM\s*=\s*"([^"]+)"', nrfi_src)
+        assert away_m and home_m, "could not locate _AWAY_TEAM/_HOME_TEAM in post_nrfi_bonus.py"
+        game = f"{away_m.group(1)} @ {home_m.group(1)}"
+
     assert " @ " in game, f"game string must use ' @ ' separator, got {game!r}"
     away, _home = game.split(" @ ", 1)
     assert team == away, (
