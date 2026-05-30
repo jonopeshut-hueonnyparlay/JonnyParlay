@@ -39,6 +39,9 @@ Thumbs.db
 
 # Claude Code session state
 .claude/
+.claude/audit.log
+.claude/hook-debug.log
+.claude/backups/
 
 # Large retired / archive folders
 archive/

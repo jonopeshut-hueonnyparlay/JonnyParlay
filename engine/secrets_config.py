@@ -1,4 +1,4 @@
-"""secrets_config.py — Centralized secrets for the JonnyParlay engine.
+﻿"""secrets_config.py â€” Centralized secrets for the JonnyParlay engine.
 
 Reads from environment variables first, then from a local `.env` file in
 the project root (or engine/, or ~/Documents/JonnyParlay/). `.env` is
@@ -23,7 +23,7 @@ Template (copy from `.env.example`):
     DISCORD_ANNOUNCE_WEBHOOK=...
     DISCORD_LONGSHOT_WEBHOOK=...
     DISCORD_SGP_WEBHOOK=...
-    DISCORD_FALLBACK_WEBHOOK=...   # optional — fires on primary post failure (H-7)
+    DISCORD_FALLBACK_WEBHOOK=...   # optional â€” fires on primary post failure (H-7)
 
 Covers audit findings C-5 (hardcoded Odds API key) and C-6 (hardcoded
 Discord webhook URLs).
@@ -35,7 +35,7 @@ import os
 from pathlib import Path
 
 
-# ── .env loader (no external deps) ──────────────────────────────────────────
+# â”€â”€ .env loader (no external deps) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _load_dotenv(path: Path) -> bool:
     """Load KEY=VALUE pairs from a .env file into os.environ.
@@ -85,11 +85,17 @@ for _p in _CANDIDATES:
         break
 
 
-# ── Public secrets ──────────────────────────────────────────────────────────
+# â”€â”€ Public secrets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 ODDS_API_KEY: str = os.getenv("ODDS_API_KEY", "")
 
-# Discord webhooks — one per channel. Blank = not configured.
+# Path to EdgeModel's projections.db — set in .env after repo split.
+EDGEMODEL_DB_PATH: str = os.getenv(
+    "EDGEMODEL_DB_PATH",
+    r"C:\Users\jono4\Documents\EdgeModel\data\projections.db"
+)
+
+# Discord webhooks â€” one per channel. Blank = not configured.
 DISCORD_WEBHOOK_URL:        str = os.getenv("DISCORD_WEBHOOK_URL",        "")  # #premium-portfolio
 DISCORD_BONUS_WEBHOOK:      str = os.getenv("DISCORD_BONUS_WEBHOOK",      "")  # #bonus-drops
 DISCORD_ALT_PARLAY_WEBHOOK: str = os.getenv("DISCORD_ALT_PARLAY_WEBHOOK", "")  # #daily-lay
@@ -107,7 +113,7 @@ DISCORD_LONGSHOT_WEBHOOK:   str = os.getenv("DISCORD_LONGSHOT_WEBHOOK",   "")  #
 DISCORD_SGP_WEBHOOK:        str = os.getenv("DISCORD_SGP_WEBHOOK",        "")  # #sgp (falls back to #bonus-drops)
 
 
-# ── Helpers (fail-fast when a value is required at use-time) ────────────────
+# â”€â”€ Helpers (fail-fast when a value is required at use-time) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def require_odds_api_key() -> str:
     """Return ODDS_API_KEY or raise a descriptive error. Use in API call sites."""
@@ -148,7 +154,7 @@ def require_webhook(name: str) -> str:
 
 
 def summary() -> str:
-    """Return a redacted inventory — useful for debugging missing secrets."""
+    """Return a redacted inventory â€” useful for debugging missing secrets."""
     def _redact(s: str) -> str:
         if not s:
             return "<not set>"
