@@ -59,6 +59,8 @@ def implied_prob(american_odds):
         o = float(american_odds)
     except (ValueError, TypeError):
         return None
+    if not o or not math.isfinite(o):
+        return None
     if o < 0:
         return abs(o) / (abs(o) + 100)
     else:

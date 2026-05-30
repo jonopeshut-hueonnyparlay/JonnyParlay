@@ -1779,8 +1779,11 @@ def _atomic_write_rows(log_path, fieldnames, rows, lock_timeout=30):
         with FileLock(lock_path, timeout=lock_timeout):
             _do_write()
     except FileLockTimeout:
-        logger.error(f"[grade_picks] Could not acquire lock on {lock_path} within {lock_timeout}s — writing anyway (RISK OF CLOBBER)")
-        _do_write()
+        raise RuntimeError(
+            f"[grade_picks] Lock timeout on {lock_path} after {lock_timeout}s — "
+            "CLV daemon may be holding the lock. Retry manually: "
+            "schtasks /end /tn 'JonnyParlay CLV Daemon' then re-run grade_picks."
+        )
 
     # Arch note #5: refresh the schema sidecar on every successful write so
     # readers can fail-fast on forward-incompatible drift. Sidecar failure

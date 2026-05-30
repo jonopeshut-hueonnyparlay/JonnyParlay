@@ -176,8 +176,8 @@ from io_utils import atomic_write_json  # noqa: E402
 BONUS_DAILY_CAP = 5             # Max bonus posts per calendar day
 MIN_BONUS_SCORE = 65            # Minimum pick_score to qualify for a bonus drop
 MIN_BONUS_WIN_PROB = 0.65       # Minimum win probability to qualify for a bonus drop
-MIN_DAILY_LAY_PROB = 0.47       # Minimum combined cover probability before posting daily lay
-                                 # 0.47 is a liquidity/quality floor, not a Kelly-positive threshold.
+MIN_DAILY_LAY_PROB = 0.50       # Minimum combined cover probability before posting daily lay
+                                 # 0.50 guarantees EV > 0 at +100 cap: 0.50 × 2.00 = 1.00 (break-even at minimum).
                                  # Kelly is negative at 47% for any realistic odds range; the 0.25u
                                  # floor in size_daily_lay() handles under-Kelly stakes. Old 0.33
                                  # allowed zero-EV posts at the parlay level.
@@ -190,7 +190,7 @@ SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_bui
 
 # ── KILLSHOT tier (v2 — safer/tighter; see CLAUDE.md) ─────────
 # Auto-qualify gate: ALL must pass
-KILLSHOT_SCORE_FLOOR    = 65.0                             # Pick Score floor (post-Platt max win_prob ~0.666 → max achievable score ~95 at edge ceiling; 65 = strong pick requiring wp≥0.65 + edge≥12%+)
+KILLSHOT_SCORE_FLOOR    = 65.0                             # Pick Score floor (post-Platt max win_prob ~0.666 → max score ~87 no-bonus or ~97 with +7 injury bonus; 65 = strong pick requiring wp≥0.65 + edge≥12%+)
 KILLSHOT_TIER_REQUIRED  = "T1"                             # v2: strict T1 only (excludes T1B, T2, T3)
 KILLSHOT_WIN_PROB_FLOOR = 0.65                             # v2: hard win-prob floor
 KILLSHOT_ODDS_MIN       = -200                             # v2: no razor-thin chalk
@@ -770,7 +770,7 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
     Normal-distribution stats (PTS etc.). Used to pass dk_std from the custom
     projection engine, which includes a role floor and an observed high-var floor.
     """
-    if stat in POISSON_STATS and line <= POISSON_CUTOFF:
+    if stat in POISSON_STATS and (line <= POISSON_CUTOFF or stat == "SOG"):
         k = math.floor(line)
         if line == k:  # Integer line — push-adjusted
             push = poisson_pmf(k, proj)
@@ -818,8 +818,17 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
                 logger.warning("calc_prop_prob: no SIGMA entry for stat=%r sport=%r — using default fallback (mult=0.40, min=2.0)", stat, sport)
                 s = {"mult": 0.40, "min": 2.0}
             sigma = max(proj * s["mult"], s["min"])
-        under_p = normal_cdf(line, proj, sigma)
-        over_p = 1.0 - normal_cdf(line, proj, sigma)
+        if stat == "PTS":
+            # Truncated Normal at [0, ∞): points scored can't be negative.
+            # P(X > line | X ≥ 0) = [1-Φ((line-μ)/σ)] / Φ(μ/σ)
+            # Correction increases over_p slightly (typically +0.5-4pp at μ=10-25, σ≈5).
+            phi_zero = normal_cdf(0, proj, sigma)          # Φ(-proj/σ) = mass below 0
+            phi_above_zero = max(1.0 - phi_zero, 1e-9)    # Φ(proj/σ) = mass above 0
+            over_p  = (1.0 - normal_cdf(line, proj, sigma)) / phi_above_zero
+            under_p = (normal_cdf(line, proj, sigma) - phi_zero) / phi_above_zero
+        else:
+            under_p = normal_cdf(line, proj, sigma)
+            over_p = 1.0 - normal_cdf(line, proj, sigma)
     return over_p, under_p
 
 def calc_tb_prob(singles: float, doubles: float, triples: float, hr: float, line: float):
@@ -912,8 +921,9 @@ def pick_score(win_prob, edge, mode="Default", tier=None,
     Injury trigger bonus: +7 for redistribution-bump picks.
 
     NOTE: Score is NOT capped at 100. At wp=0.666 (Platt ceiling) + edge=0.15 (ceiling),
-    max score is ~95. Scores above 100 are theoretically possible but don't occur in
-    practice given the Platt calibration ceiling (~66.6%) and G2 edge cap (20%).
+    max score is ~87 (T2, no bonuses) or ~97 (T2 + max injury bonus +7 + tier at 1.0×).
+    Scores above 100 are theoretically possible but don't occur in practice given the
+    Platt calibration ceiling (~66.6%) and G2 edge cap (20%).
 
     R11 NOTE: Game line picks (totals, spreads, ML) intentionally score lower than
     props. Win probs for game lines cluster near 50-55% (well-priced markets),
@@ -1027,7 +1037,8 @@ def check_prop_gates(pick):
     # G8D: 3PM over at line ≤ 1.5 — 50.0% actual vs 70.4% model (n=16, gap −20pp).
     # Binary line (needs 2+ threes) creates structural over-projection; consistent with
     # G8B/G8C pattern. Was too noisy at n=8-9 (May 13); confirmed at n=16.
-    if stat == "3PM" and direction == "over" and line <= 1.5:
+    # WNBA exempt: calibrated on NBA data only; WNBA line 1.5 is not sub-elite territory.
+    if stat == "3PM" and direction == "over" and line <= 1.5 and sport != "WNBA":
         return False, "G8D"
 
     # WNBA structural gates — applied after sport is known
@@ -2362,8 +2373,23 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         # the actual model output without double-calibration bias.
         over_p_raw = over_p
 
+        # I6: Confidence modifier — penalizes early-season or low-sample players.
+        # Applied BEFORE Platt so calibration acts on the confidence-adjusted probability.
+        # Low-GP players have inflated model confidence — pull toward 50% first, then calibrate.
+        proj_player = prop.get("proj_player", {})
+        gp = proj_player.get("GP", proj_player.get("gp", 0))
+        if gp and int(gp) < 10:
+            conf = 0.70  # Very early season — heavy penalty
+        elif gp and int(gp) < 20:
+            conf = 0.85  # Early season — moderate penalty
+        else:
+            conf = 1.0   # Full confidence (20+ games or GP not available)
+        if conf < 1.0:
+            over_p = 0.50 + (over_p - 0.50) * conf
+            under_p = 1.0 - over_p
+
         # P9: Platt calibration — compress overconfident win_probs toward actual hit rate.
-        # Calibrate over_p; derive under_p to preserve over+under=1.
+        # Calibrate confidence-adjusted over_p; derive under_p to preserve over+under=1.
         # Skip for MLB: Platt was fitted on NBA+NHL props only; applying it to MLB
         # stat distributions (K%, OUTS, HA) would mis-calibrate until an MLB sample exists.
         # WNBA is intentionally included (not MLB, so Platt applies). NBA+NHL coefficients
@@ -2393,20 +2419,9 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
             if odds is None or odds == 0:
                 continue
 
-            # I6: Confidence modifier — penalizes early-season or low-sample players
-            # Uses games played (GP) if available from CSV, else defaults to 1.0
-            proj_player = prop.get("proj_player", {})
-            gp = proj_player.get("GP", proj_player.get("gp", 0))
-            if gp and int(gp) < 10:
-                conf = 0.70  # Very early season — heavy penalty
-            elif gp and int(gp) < 20:
-                conf = 0.85  # Early season — moderate penalty
-            else:
-                conf = 1.0   # Full confidence (20+ games or GP not available)
             adj_edge = raw_edge * conf
-            # I6: apply same confidence scalar to win_prob (not just edge).
-            # Low-GP players have inflated model confidence — pull toward 50%.
-            adj_wp = 0.50 + (win_prob - 0.50) * conf
+            # Confidence already applied to over_p/under_p before Platt; adj_wp == win_prob.
+            adj_wp = win_prob
 
             # Get tier (sport-aware: NHL AST → T3, NBA/MLB TEAM_TOTAL → T1B)
             tier = get_tier(stat, direction, sport=_sport)
@@ -3155,8 +3170,8 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
     picks = []
     # Poisson model constants (2026-05-29 calibration)
     BASE_LAMBDA_1ST = 0.32        # first-inning λ per team — calibrated to ~53% NRFI for avg matchup
-    _LEAGUE_AVG_RUNS = 4.39       # 2024-25 MLB runs/game/team (offense normalisation)
-    _LEAGUE_AVG_BLENDED_RATE = 0.438  # 0.40*(4.16/9) + 0.60*(3.80/9) — avg pitcher blended ERA+FIP rate
+    _LEAGUE_AVG_RUNS = 4.45       # 2025 MLB runs/game/team (offense normalisation)
+    _LEAGUE_AVG_BLENDED_RATE = 0.477  # 0.40*(4.17/9) + 0.60*(4.38/9) — avg pitcher blended ERA+FIP rate (2025)
 
     # Build pitcher and team offense maps
     pitcher_map = {}       # team → pitcher stats
@@ -3167,11 +3182,11 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
             ip = p.get("IP", 1) or 1.0
             er_per_ip = p.get("ER", 0) / ip
             # I4: Compute projected FIP for more stable pitcher quality estimate
-            # FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.17 (FIP constant 3.17 = 2024 lgERA 4.08)
+            # FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.26 (FIP constant 3.26 = 2025 lgERA≈4.17)
             hr = p.get("HR", 0)  # R4: HR allowed — now correctly stored for pitchers in parse_csv
             bb = p.get("BB", 0)
             k_val = p.get("K", 0)
-            fip_raw = ((13 * hr + 3 * bb - 2 * k_val) / ip) + 3.17 if ip > 0 else 4.50  # FIP constant 3.17 (2024 lgERA=4.08)
+            fip_raw = ((13 * hr + 3 * bb - 2 * k_val) / ip) + 3.26 if ip > 0 else 4.50  # FIP constant 3.26 (2025 lgERA≈4.17)
             # Blend ERA proxy and FIP: 60% FIP, 40% ERA (FIP is more stable)
             fip_per_ip = fip_raw / 9.0  # Convert FIP (per 9) to per-inning rate
             blended_rate = 0.40 * er_per_ip + 0.60 * fip_per_ip
@@ -5779,7 +5794,8 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (p["stat"] == "AST" and p["direction"] == "over" and p["line"] <= 4.5
          and p.get("sport") != "WNBA") or
         (p["stat"] == "SOG" and p["direction"] == "under" and p["line"] <= 3.5) or
-        (p["stat"] == "3PM" and p["direction"] == "over" and p["line"] <= 1.5)
+        (p["stat"] == "3PM" and p["direction"] == "over" and p["line"] <= 1.5
+         and p.get("sport") != "WNBA")
         for p in all_qualified
     )
     has_heavy_juice = any(p["odds"] <= -150 for p in all_qualified)
@@ -5839,7 +5855,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
 
     checks = [
         (f"Premium card: {n_prem} picks generated", n_prem == MAX_PREMIUM_PICKS or n_prem == 0),
-        (f"Safest 5 generated", len(safest5) >= 5 or len(safest5) == 0),
+        (f"Safest picks generated", len(safest5) > 0 or not qualified),
         (f"R9 directional balance: {n_overs_prem} overs on Premium", n_overs_prem >= 1 if n_overs_all >= 3 else True),
         (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 1),
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),

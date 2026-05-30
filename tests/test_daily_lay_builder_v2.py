@@ -94,7 +94,7 @@ class TestSizeDailyLay:
 class TestDailyLayProbGate:
     def test_constant_value(self):
         import run_picks as rp
-        assert rp.MIN_DAILY_LAY_PROB == 0.47
+        assert rp.MIN_DAILY_LAY_PROB == 0.50
 
     def test_min_daily_lay_margin_constant(self):
         import run_picks as rp

@@ -27,10 +27,10 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent / "data" / "projections.db"
 
-# Current production values from run_picks.py SIGMA dict
+# Current production values from run_picks.py SIGMA dict (sync with SIGMA dict in run_picks.py)
 CURRENT_SIGMA = {
-    "PTS": {"mult": 0.35, "min": 4.5},
-    "REB": {"mult": 0.58, "min": 2.5},
+    "PTS": {"mult": 0.35, "min": 5.0},   # min raised 4.5→5.0 (MAE backtest 2026-05-25)
+    "REB": {"mult": 0.48, "min": 2.0},   # mult 0.58→0.48, min 2.5→2.0 (empirical CV, combo path)
     # AST has no entry — falls back to {"mult": 0.40, "min": 2.0}
 }
 AST_FALLBACK = {"mult": 0.40, "min": 2.0}
