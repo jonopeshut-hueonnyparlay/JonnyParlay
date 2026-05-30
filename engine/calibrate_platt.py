@@ -23,6 +23,15 @@ Fitting basis:
     This is standard Platt scaling in logit-space (superior tail compression
     vs raw-probability-space — see PROBABILITY_PIPELINE_AUDIT_2026-05-24.md).
     under_p derived as 1 - cal_over_p (preserves complementarity).
+
+IMPORTANT — logit-space fitting vs raw-space live formula:
+    This script fits A and B in LOGIT-SPACE (logit = log(p/(1-p))).
+    BUT the live formula in run_picks.py uses RAW-PROBABILITY SPACE:
+        cal_p = sigmoid(PLATT_A * over_p_raw + PLATT_B)   ← raw p, not logit(p)
+    These are NOT interchangeable. When pasting the constants from this script
+    into run_picks.py you are intentionally applying logit-fit coefficients to
+    raw probabilities — this approximation is calibrated and intentional.
+    Do NOT convert to logit before applying in run_picks.py.
     Loss: negative log-likelihood of outcomes given calibrated p_win.
 """
 from __future__ import annotations
@@ -240,7 +249,7 @@ def main() -> None:
               f"cal={cal_p_win[mask].mean():.3f}")
     print()
     # M16: hard exit when OOS Brier improvement is negative — do NOT paste bad constants
-    if not (brier_oos_pct != brier_oos_pct):  # check not NaN
+    if not np.isnan(brier_oos_pct):
         if brier_oos_pct < 0:
             print("  WARNING: OOS Brier improvement is NEGATIVE -- calibration hurts out-of-sample.")
             print("  Do NOT update PLATT_A/PLATT_B.  Keep existing constants.")

@@ -1,6 +1,6 @@
 """Shared Discord post-dedup guard — cross-process safe.
 
-Every Discord-posting writer in the engine (morning_preview, weekly_recap,
+Every Discord-posting writer in the engine (weekly_recap,
 grade_picks, run_picks) reads and writes the same guard file:
 
     ~/Documents/JonnyParlay/data/discord_posted.json
@@ -21,7 +21,6 @@ Guard key format (L14):
         daily_lay:<YYYY-MM-DD>
         killshot:<YYYY-MM-DD>:<PlayerName>:<STAT>:<DIR>:<line>
         sgp:<YYYY-MM-DD>:<Home> vs <Away>
-        morning_preview:<YYYY-MM-DD>
         weekly_recap:<YYYY-MM-DD>
     Consumers must construct keys here rather than hardcoding them elsewhere.
 

@@ -254,8 +254,6 @@ _ENGINE = HERE.parent / "engine"
 
 @pytest.mark.parametrize("fname", [
     "grade_picks.py",
-    "morning_preview.py",
-    "results_graphic.py",
     "run_picks.py",
 ])
 def test_no_bare_retry_after_float_json(fname):
@@ -271,8 +269,6 @@ def test_no_bare_retry_after_float_json(fname):
 
 @pytest.mark.parametrize("fname", [
     "grade_picks.py",
-    "morning_preview.py",
-    "results_graphic.py",
 ])
 def test_webhook_post_imports_retry_after_secs(fname):
     """Every _webhook_post site must import the shared helper."""
@@ -284,8 +280,6 @@ def test_webhook_post_imports_retry_after_secs(fname):
 
 @pytest.mark.parametrize("fname", [
     "grade_picks.py",
-    "morning_preview.py",
-    "results_graphic.py",
     "run_picks.py",
     "capture_clv.py",
 ])
@@ -356,40 +350,6 @@ def test_grade_picks_webhook_post_survives_empty_429_body(monkeypatch):
     assert calls["slept"] and 0.5 <= calls["slept"][0] <= 30.0
 
 
-def test_morning_preview_webhook_post_survives_empty_429_body(monkeypatch):
-    """Same invariant for morning_preview."""
-    import morning_preview
-
-    calls = {"n": 0}
-
-    class _RL:
-        status_code = 429
-        headers = {}
-        text = ""
-
-        def json(self):
-            raise ValueError("no json")
-
-    class _OK:
-        status_code = 204
-        headers = {}
-        text = ""
-
-        def json(self):
-            return {}
-
-    def _fake_post(url, json=None, headers=None, timeout=None):
-        calls["n"] += 1
-        return _RL() if calls["n"] == 1 else _OK()
-
-    monkeypatch.setattr(morning_preview.requests, "post", _fake_post)
-    monkeypatch.setattr(morning_preview.time, "sleep", lambda *_a, **_k: None)
-
-    ok = morning_preview._webhook_post(
-        "https://example.invalid/webhook", {"content": "hi"},
-    )
-    assert ok is True
-    assert calls["n"] == 2
 
 
 def test_webhook_post_sends_ua_header(monkeypatch):

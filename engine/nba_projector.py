@@ -30,7 +30,10 @@ Training-quality weights (L4+L6, 2026-05-02): per-game weight = vacancy_w * blow
     bench inflated, starters deflated in garbage time).
 """
 from __future__ import annotations
-import datetime, logging, math, sys
+import datetime
+import logging
+import math
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -1052,6 +1055,7 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None,
     """
     if injury_minutes_override is not None:
         return float(injury_minutes_override)
+    prior = minutes_prior_override if minutes_prior_override is not None else ROLE_MINUTE_PRIOR[role]
     if not df.empty:
         clean = df.sort_values("game_date")
         # Task #4: cap raw minutes at OT_MIN_CAP before EWMA so OT games
@@ -1060,9 +1064,8 @@ def project_minutes(role, df, b2b, spread=None, injury_minutes_override=None,
         ewma_min = float(min_series.ewm(span=EWMA_SPAN_MIN, min_periods=1).mean().iloc[-1])
         weight = min(len(clean) / 20.0, 1.0)
     else:
-        ewma_min = minutes_prior_override if minutes_prior_override is not None else ROLE_MINUTE_PRIOR[role]
+        ewma_min = prior
         weight   = 0.0
-    prior    = minutes_prior_override if minutes_prior_override is not None else ROLE_MINUTE_PRIOR[role]
     proj_min = weight * ewma_min + (1 - weight) * prior
 
     # Days-rest reduction: continuous variable replaces binary B2B flag (Brief P3, Sec. 6b).
@@ -1560,7 +1563,7 @@ def project_player(
     dk_std = round(max(projections["pts"] * DK_STD_COEFF,
                        DK_STD_FLOOR.get(role, 3.0),
                        pts_std_recent), 2)
-    run_ts = datetime.datetime.utcnow().isoformat(timespec="seconds")
+    run_ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
     return {
         "run_date": game_date, "run_ts": run_ts,

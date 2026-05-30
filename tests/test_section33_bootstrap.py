@@ -142,18 +142,9 @@ def test_preflight_bat_openpyxl_check_is_before_required_files(preflight_src: st
     )
 
 
-def test_preflight_bat_openpyxl_check_is_after_pillow(preflight_src: str):
-    """The four install-on-miss checks (filelock → requests → pillow →
-    openpyxl) share a visual pattern. openpyxl should come last in the dep
-    group so existing muscle-memory for earlier steps still works."""
-    pillow_idx = preflight_src.find("import PIL")
-    openpyxl_idx = preflight_src.find("import openpyxl")
-    assert pillow_idx != -1, "pillow check missing from preflight.bat"
-    assert openpyxl_idx != -1, "openpyxl check missing from preflight.bat"
-    assert pillow_idx < openpyxl_idx, (
-        "openpyxl check should come after the pillow check, "
-        "matching the filelock → requests → pillow → openpyxl order."
-    )
+def test_preflight_bat_openpyxl_check_exists(preflight_src: str):
+    """openpyxl install-on-miss check must be present in preflight.bat."""
+    assert preflight_src.find("import openpyxl") != -1, "openpyxl check missing from preflight.bat"
 
 
 # ── M-9: go.ps1 $depMap includes openpyxl ───────────────────────────────────
@@ -261,8 +252,7 @@ def test_go_ps1_no_sync_pairs_s33(go_src: str):
     assert "$syncPairs = @(" not in go_src, (
         "go.ps1 must not contain $syncPairs array after H1 fix (L16 shim architecture)"
     )
-def test_preflight_bat_still_checks_filelock_requests_pillow(preflight_src: str):
-    """Regression guard — our step-5 insertion must not have broken the
-    earlier dep checks."""
-    for tok in ["import filelock", "import requests", "import PIL", "import openpyxl"]:
+def test_preflight_bat_still_checks_filelock_requests_openpyxl(preflight_src: str):
+    """Regression guard — dep checks must remain in preflight.bat."""
+    for tok in ["import filelock", "import requests", "import openpyxl"]:
         assert tok in preflight_src, f"preflight.bat dropped `{tok}` check"

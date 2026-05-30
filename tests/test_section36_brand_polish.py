@@ -95,8 +95,6 @@ CALLER_FILES: list[tuple[Path, str]] = [
     (RUN_PICKS, "run_picks"),
     (GRADE_PICKS, "grade_picks"),
     (WEEKLY_RECAP, "weekly_recap"),
-    (MORNING_PREVIEW, "morning_preview"),
-    (RESULTS_GRAPHIC, "results_graphic"),
     (POST_NRFI, "post_nrfi_bonus"),
 ]
 
@@ -125,27 +123,6 @@ def test_caller_has_no_hardcoded_tagline_in_code(path: Path, label: str):
     assert "edge > everything" not in code_only, (
         f"{label} still contains a hardcoded 'edge > everything' literal in "
         f"code — replace with BRAND_TAGLINE"
-    )
-
-
-# ── L-1: morning_preview delegates SPORT_EMOJI to brand.py ──────────────────
-
-def test_morning_preview_imports_sport_emoji_from_brand():
-    src = MORNING_PREVIEW.read_text(encoding="utf-8")
-    assert re.search(
-        r"from\s+brand\s+import\s+[^\n]*SPORT_EMOJI",
-        src,
-    ), "morning_preview.py must import SPORT_EMOJI from brand.py (audit L-1)"
-
-
-def test_morning_preview_sport_emoji_is_brand_module_map():
-    """The local SPORT_EMOJI name must point at brand.SPORT_EMOJI — not a
-    copy. Shared identity means a future brand update is picked up without
-    another edit here."""
-    import brand  # noqa: E402
-    morning = importlib.import_module("morning_preview")
-    assert morning.SPORT_EMOJI is brand.SPORT_EMOJI, (
-        "morning_preview.SPORT_EMOJI must be the same object as brand.SPORT_EMOJI"
     )
 
 

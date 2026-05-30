@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """Regression tests for Section 27 — downstream enum drift.
 
-Three downstream consumers of pick_log had enums/buckets that fell out
+Two downstream consumers of pick_log had enums/buckets that fell out
 of sync with upstream schema additions:
 
-  M-11   morning_preview.TIER_ORDER was missing T1B and DAILY_LAY, mixed
-         tier tokens with run-type labels, and relied on alphabetical
-         fallback that placed T1B after T3 in the output.
   M-12   weekly_recap.GAME_LINE_STATS was missing PARLAY, so a daily_lay
          aggregate row dropped into the prop-label branch and emitted
          garbage ("3-LEG COVER  PARLAY").
@@ -26,78 +23,6 @@ import pytest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "engine"))
-
-
-# ─────────────────────────────────────────────────────────────────
-# M-11 — morning_preview.TIER_ORDER
-# ─────────────────────────────────────────────────────────────────
-
-def test_tier_order_contains_all_real_tier_tokens():
-    """Every tier token actually emitted by run_picks.py (per CLAUDE.md
-    schema) must be present in TIER_ORDER so morning_preview can render
-    it in the intended position instead of falling back to alphabetical.
-    """
-    from morning_preview import TIER_ORDER
-    expected = {"KILLSHOT", "T1", "T1B", "T2", "T3", "DAILY_LAY"}
-    assert expected <= set(TIER_ORDER), (
-        f"TIER_ORDER is missing real tier tokens: "
-        f"{expected - set(TIER_ORDER)}. Present: {TIER_ORDER}"
-    )
-
-
-def test_tier_order_has_no_run_type_contamination():
-    """PREMIUM / POTD / BONUS are run-type / channel labels, NOT tier
-    tokens. They never appear in pick_log.csv's `tier` column, so their
-    presence in TIER_ORDER was dead code that confused readers.
-    """
-    from morning_preview import TIER_ORDER
-    run_type_labels = {"PREMIUM", "POTD", "BONUS", "primary", "bonus",
-                       "manual", "daily_lay"}
-    contamination = set(TIER_ORDER) & run_type_labels
-    assert not contamination, (
-        f"TIER_ORDER contains run-type labels, not tier tokens: "
-        f"{contamination}. Move these out — TIER_ORDER must be tier-only."
-    )
-
-
-def test_tier_order_places_t1b_between_t1_and_t2():
-    """T1B is a sub-tier of T1 (strong but not KILLSHOT). It must render
-    between T1 and T2 in the preview, not after T3 (which is what the
-    alphabetical fallback produced before M-11 closed).
-    """
-    from morning_preview import TIER_ORDER
-    idx = {t: i for i, t in enumerate(TIER_ORDER)}
-    assert "T1" in idx and "T1B" in idx and "T2" in idx
-    assert idx["T1"] < idx["T1B"] < idx["T2"], (
-        f"Tier display order is wrong: {TIER_ORDER}. Expected T1 < T1B < T2."
-    )
-
-
-def test_tier_order_killshot_first_daily_lay_last():
-    """Conviction ordering: KILLSHOT at the top (highest), DAILY_LAY at
-    the bottom (separate product, separate pricing model).
-    """
-    from morning_preview import TIER_ORDER
-    assert TIER_ORDER[0] == "KILLSHOT", (
-        f"KILLSHOT must render first in the preview. Got TIER_ORDER[0]={TIER_ORDER[0]!r}"
-    )
-    assert "DAILY_LAY" in TIER_ORDER, "DAILY_LAY must be in TIER_ORDER"
-    dl_idx = TIER_ORDER.index("DAILY_LAY")
-    # SGP/LONGSHOT may follow DAILY_LAY; no other primary tier comes after it.
-    primary_tiers = {"KILLSHOT", "T1", "T1B", "T2", "T3"}
-    assert not any(TIER_ORDER.index(t) > dl_idx for t in primary_tiers if t in TIER_ORDER), (
-        f"A primary tier comes after DAILY_LAY in TIER_ORDER: {TIER_ORDER}"
-    )
-
-
-def test_tier_order_is_unique():
-    """Defense against a future rebase that duplicates a tier — duplicate
-    keys would render twice and inflate the totals in the preview.
-    """
-    from morning_preview import TIER_ORDER
-    assert len(TIER_ORDER) == len(set(TIER_ORDER)), (
-        f"TIER_ORDER has duplicates: {TIER_ORDER}"
-    )
 
 
 # ─────────────────────────────────────────────────────────────────

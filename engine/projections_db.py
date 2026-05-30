@@ -870,7 +870,7 @@ def get_player_career_avg_minutes(
     finally:
         conn.close()
     if row is None:
-        log.warning("H19: no career history for player_id=%s (season=%s, min_games=%s) — cold_start will use flat prior", player_id, current_season, min_games)
+        log.warning("no career history for player_id=%s (season=%s, min_games=%s) — cold_start will use flat prior", player_id, current_season, min_games)
     return float(row[0]) if row else None
 
 

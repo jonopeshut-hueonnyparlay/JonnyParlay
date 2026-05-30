@@ -481,6 +481,7 @@ _FIXED_SPREAD_SPORTS = {"MLB", "NHL"}
 
 # First 5 innings sigmas (MLB only — starter matchup, no bullpen noise)
 F5_SIGMA = {"total": 2.65, "spread": 2.70, "team": 2.10}  # calibrated 2026-05-29; total/team raised ±0.1 for park variance
+F5_SCALAR = 0.540  # F5 ≈ 54% of full-game total; market-calibrated 2022-2025 (was 0.503 — too low by ~4pp)
 
 # Park run factors by HOME team — multiplied onto projected runs.
 # Source: Baseball Savant 2022-2025 Statcast park factors (100 = neutral).
@@ -814,7 +815,7 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
             # WNBA uses sport-specific sigma calibrated from 2024 season game logs.
             s = (SIGMA_WNBA.get(stat) if sport == "WNBA" else None) or SIGMA.get(stat)
             if s is None:  # L11: warn on unknown stat so calibration gaps surface early
-                logger.warning("calc_prop_prob: no SIGMA entry for stat=%r sport=%r — using default fallback {mult:0.40, min:2.0}", stat, sport)
+                logger.warning("calc_prop_prob: no SIGMA entry for stat=%r sport=%r — using default fallback (mult=0.40, min=2.0)", stat, sport)
                 s = {"mult": 0.40, "min": 2.0}
             sigma = max(proj * s["mult"], s["min"])
         under_p = normal_cdf(line, proj, sigma)
@@ -1509,11 +1510,12 @@ def size_bonus_pick(pick):
     # picks whose math lands close to it — it is NOT a way to manufacture
     # size where the VAKE math says zero.
     if final < floor:
-        print(
-            f"  [bonus-sizing] H-9 drop: {pick.get('player','?')} "
-            f"{pick.get('stat','?')} {pick.get('direction','?')} @ tier {tier} — "
-            f"raw VAKE {raw:.3f}u rounded to {final:.2f}u, below floor {floor}u. "
-            f"edge={edge:.3%}, win_prob={pick.get('win_prob', 0):.3f}. Not shipping."
+        logger.debug(
+            "[bonus-sizing] H-9 drop: %s %s %s @ tier %s — "
+            "raw VAKE %.3fu rounded to %.2fu, below floor %.2fu. "
+            "edge=%.1f%%, win_prob=%.3f. Not shipping.",
+            pick.get("player", "?"), pick.get("stat", "?"), pick.get("direction", "?"), tier,
+            raw, final, floor, edge * 100, pick.get("win_prob", 0),
         )
         return None
     final = min(final, 1.25)
@@ -1600,8 +1602,7 @@ def parse_csv(filepath):
             Path.home() / "Downloads" / "projections",
             Path.home() / "Downloads",
         ]
-        import time as _time
-        now = _time.time()
+        now = time.time()
         for d in downloads_dirs:
             if not d.exists():
                 continue
@@ -2641,8 +2642,8 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             edge = cover_prob - nv_this
 
             # Team abbreviations
-            home_abbr = TEAM_ABBREV.get(home_name.lower(), home_name[:3].upper())
-            away_abbr = TEAM_ABBREV.get(away_name.lower(), away_name[:3].upper())
+            home_abbr = TEAM_ABBREV.get(home_name.lower()) or resolve_team_abbrev(home_name) or home_name[:3].upper()
+            away_abbr = TEAM_ABBREV.get(away_name.lower()) or resolve_team_abbrev(away_name) or away_name[:3].upper()
             team_abbr = home_abbr if is_home else away_abbr
             matchup_abbrev = f"{away_abbr}/{home_abbr}"
 
@@ -2761,8 +2762,8 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             _dog_edge = {"NHL": 0.06, "NBA": 0.07}.get(sport, 0.08)
             min_edge = 0.05 if is_fav else _dog_edge
 
-            home_abbr = TEAM_ABBREV.get(home_name.lower(), home_name[:3].upper())
-            away_abbr = TEAM_ABBREV.get(away_name.lower(), away_name[:3].upper())
+            home_abbr = TEAM_ABBREV.get(home_name.lower()) or resolve_team_abbrev(home_name) or home_name[:3].upper()
+            away_abbr = TEAM_ABBREV.get(away_name.lower()) or resolve_team_abbrev(away_name) or away_name[:3].upper()
             team_abbr = home_abbr if is_home else away_abbr
             matchup_abbrev = f"{away_abbr}/{home_abbr}"
 
@@ -2970,7 +2971,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                     game_total_proj = (find_team_proj(home, team_proj, "saber_total") or
                                        find_team_proj(away, team_proj, "saber_total"))
                     if game_total_proj and game_total_proj > 0:
-                        proj = game_total_proj * 0.540  # F5 ~54% of full game (2022-2025 market-calibrated; was 0.503 — too low)
+                        proj = game_total_proj * F5_SCALAR
                         # FIX: Anchor F5 projection to market line (same as full-game BLEND_ALPHA)
                         proj = line + BLEND_ALPHA * (proj - line)
                         sigma = sigmas["total"]
@@ -3021,9 +3022,8 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                     t2_proj = find_team_proj(team2, team_proj, "saber_team")
 
                     if t1_proj and t2_proj and t1_proj > 0 and t2_proj > 0:
-                        # F5 team runs scaled — 0.540 = market-calibrated 2022-2025 (was 0.503 — too low by ~4pp)
-                        f5_t1 = t1_proj * 0.540
-                        f5_t2 = t2_proj * 0.540
+                        f5_t1 = t1_proj * F5_SCALAR
+                        f5_t2 = t2_proj * F5_SCALAR
                         margin = f5_t1 - f5_t2
                         sigma = sigmas["spread"]
 
@@ -3098,7 +3098,7 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                     o_proj = find_team_proj(other_team[0], team_proj, "saber_team")
 
                     if t_proj and o_proj:
-                        raw_f5_margin = (t_proj - o_proj) * 0.540  # 54% scaling — market-calibrated 2022-2025
+                        raw_f5_margin = (t_proj - o_proj) * F5_SCALAR
                         # FIX: Anchor F5 margin to market-implied margin (same BLEND_ALPHA as full-game)
                         market_f5_margin = -sp_line  # sp_line is from team perspective: negative = fav
                         f5_margin = market_f5_margin + BLEND_ALPHA * (raw_f5_margin - market_f5_margin)
@@ -3337,8 +3337,8 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
                 "nrfi_detail": {
                     "home_pitcher": home_pitcher["name"],
                     "away_pitcher": away_pitcher["name"],
-                    "p_away_scores": p_away_scores,
-                    "p_home_scores": p_home_scores,
+                    "lam_away": lam_away,
+                    "lam_home": lam_home,
                 },
             }
             # FIX 4: Run through standard game gates (GG1 edge cap, GG3 positive edge)
@@ -3565,7 +3565,6 @@ def filter_cross_type_correlations(picks):
     """
     _PITCHER_KILL = {("HA", "under"), ("ER", "under")}   # X1 triggers
     _K_OVER       = {("K",  "over")}                      # X2 trigger
-    _HITS_OVER    = {("HITS", "over")}                    # X2 victim
 
     game_groups: dict = {}
     for p in picks:
@@ -3608,7 +3607,7 @@ def filter_cross_type_correlations(picks):
 
                     # X2: pitcher K over + opposing batter HITS over
                     if (pp_key in _K_OVER and
-                            (op_stat, op_dir) in _HITS_OVER and
+                            (op_stat, op_dir) == ("HITS", "over") and
                             same_game_opp):
                         conflict = True
                         score_pp = pitcher_pick.get("pick_score") or 0
@@ -3861,7 +3860,7 @@ def build_alt_spread_parlay(game_lines, team_proj_map, sport_sigmas, alt_spread_
             continue
         home = gl["home"]
         away = gl["away"]
-        sigma = sport_sigmas.get("NBA", sport_sigmas.get("NBA", {})).get("spread", 12.0)
+        sigma = sport_sigmas.get("NBA", {}).get("spread", 12.0)
         sport_prefix = "NBA_"
 
         home_proj = away_proj = None
@@ -4132,7 +4131,7 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None, run_t
                    These get card_slot=1-5; all others get card_slot=''.
 
     run_type: schema run_type for logged rows (default "primary").
-              TODO: pass run_type='shadow' at shadow call sites.
+              Shadow call sites pass run_type explicitly via the run_type param.
 
     DEDUP: On repeat runs, skips picks that already exist in the log for today
     (matched on date + player + stat + line + direction). Updates odds/size/proj
@@ -5156,7 +5155,8 @@ def _card_already_posted_today(today_str, sport_key=None):
             and (not sport_key or r.get("sport", "") in sport_key.split("+"))
             for r in rows
         )
-    except Exception:
+    except Exception as e:
+        logger.warning("_is_card_posted: unexpected error — returning False: %s", e)
         return False
 
 
@@ -5181,7 +5181,8 @@ def _units_bet_today(today_str):
             and r.get("run_type", "").lower() != "manual"
         )
         return round(total, 4)
-    except Exception:
+    except Exception as e:
+        logger.warning("_units_bet_today: unexpected error — returning 0.0: %s", e)
         return 0.0
 
 
@@ -6205,6 +6206,8 @@ def main():
     if args.alt_parlay:
         sport_sigmas = {}
         for sport in all_players:
+            if sport not in GAME_SIGMA:
+                logger.debug("GAME_SIGMA: no entry for sport=%r — falling back to NBA", sport)
             sport_sigmas[sport] = GAME_SIGMA.get(sport) or GAME_SIGMA["NBA"]
         alt_spread_parlay = build_alt_spread_parlay(all_game_lines, all_team_proj, sport_sigmas, all_alt_spreads, debug=getattr(args, "debug_daily_lay", False))
 

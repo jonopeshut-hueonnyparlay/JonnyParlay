@@ -5,7 +5,7 @@ Read CLAUDE.md first for system context before starting.
 
 **Scope:** `engine/run_picks.py`, `engine/grade_picks.py`, `engine/capture_clv.py`,
 `engine/clv_report.py`, `engine/sgp_builder.py`, `engine/weekly_recap.py`,
-`engine/results_graphic.py`, `engine/analyze_picks.py`, `engine/pick_log_schema.py`,
+`engine/analyze_picks.py`, `engine/pick_log_schema.py`,
 `engine/pick_log_io.py`, `engine/name_utils.py`, `engine/book_names.py`,
 `engine/calibrate_platt.py`, `engine/calibrate_winprob.py`, `engine/nb_calibrate.py`,
 `engine/empirical_analysis.py`, `data/pick_log.csv`.

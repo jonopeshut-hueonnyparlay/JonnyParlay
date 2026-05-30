@@ -72,7 +72,6 @@ Discord bot display name: **PicksByJonny**
 | `engine/grade_picks.py` | Auto-grades pick_log.csv results, posts Discord recap + results graphic. Monthly summary auto-fires on 1st of month. |
 | `engine/capture_clv.py` | CLV daemon — polls every 2 min, captures closing odds T-45 to T+3; CLV written only within T-10 of tip. Scheduled via Task Scheduler at 10am daily. S4U logon. `MAX_DAEMON_UPTIME_SECS=18h` guard prevents no-picks day from blocking next-day start. Also watches `pick_log_custom.csv` when `ENABLE_CUSTOM_CLV=True`. |
 | `engine/clv_report.py` | CLI report: `python clv_report.py [--days N] [--sport X] [--tier Y] [--stat X] [--shadow]` |
-| `engine/results_graphic.py` | Generates PNG results card posted to Discord after recap. |
 | `engine/analyze_picks.py` | Backtest analysis dashboard. Usage: `python analyze_picks.py [--sport X] [--since YYYY-MM-DD] [--stat X] [--shadow] [--export]` |
 | `engine/weekly_recap.py` | Weekly P&L recap posted to #announcements every Sunday. |
 | `engine/mlb_stats_fetcher.py` | Fetches historical MLB pitcher+batter game logs from statsapi.mlb.com (2023-2026). Populates `mlb_games`, `mlb_pitcher_game_stats`, `mlb_batter_game_stats` in projections.db. Run: `python engine/mlb_stats_fetcher.py`. Status: 8,095 games, 69k pitcher rows, 169k batter rows. |
@@ -128,7 +127,7 @@ ARCHIVE: (collapsed)
 ## Python Dependencies
 - Install: `pip install -r requirements.txt --break-system-packages`
 - **Hard deps (required to import):** `filelock` (cross-process locks), `requests`
-- **Soft deps (feature-gated):** `openpyxl` (xlsx recap), `Pillow` (results_graphic PNG)
+- **Soft deps (feature-gated):** `openpyxl` (xlsx recap)
 
 ## pick_log.csv Schema (current — schema_version 4, 29 columns)
 `date, run_time, run_type, sport, player, team, stat, line, direction, proj, win_prob, edge, odds, book, tier, pick_score, size, game, mode, result, closing_odds, clv, card_slot, is_home, context_verdict, context_reason, context_score, legs, over_p_raw`

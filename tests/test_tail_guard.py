@@ -40,7 +40,6 @@ CRITICAL_FILES = [
     "run_picks.py",
     "grade_picks.py",
     "analyze_picks.py",
-    "morning_preview.py",
     "weekly_recap.py",
 ]
 

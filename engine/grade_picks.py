@@ -26,8 +26,8 @@ except ImportError as e:
     ) from e
 
 # Canonical locked-reader helper lives in pick_log_io.py and is used by every
-# other reader of pick_log (analyze_picks, clv_report, weekly_recap,
-# morning_preview, results_graphic). Grade_picks.py keeps a local wrapper
+# other reader of pick_log (analyze_picks, clv_report, weekly_recap).
+# Grade_picks.py keeps a local wrapper
 # (_read_rows_locked below) with the same semantics so fall-through warnings
 # route through the grader's file logger. Audit H-8 / M-series, closed Apr 20 2026.
 try:
@@ -37,7 +37,7 @@ except ImportError:
 try:
     import requests
 except ImportError:
-    print("  pip install requests --break-system-packages")
+    print("pip install requests --break-system-packages", file=sys.stderr)
     sys.exit(1)
 
 # Canonical player-name folding (audit H-3). Before this import, grade_picks
@@ -193,7 +193,7 @@ def fmt_date(date_str: str) -> str:
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
         return dt.strftime("%B %d").replace(" 0", " ")
-    except Exception:
+    except (ValueError, AttributeError):
         return date_str
 
 
@@ -683,7 +683,6 @@ def grade_daily_lay(row, all_scores):
         * "return 'P'" fall-through is only reachable when every leg pushed.
         * Unparseable/unmatched leg → return None (pick stays ungraded).
     """
-    import json as _json_dl
     game_desc = row.get("game", "")
     date_str  = row.get("date", "")
     nba_scores = all_scores.get((date_str, "NBA"), {})
@@ -697,7 +696,7 @@ def grade_daily_lay(row, all_scores):
     _used_json = False
     if _legs_json and isinstance(_legs_json, str):
         try:
-            _jlegs = _json_dl.loads(_legs_json)
+            _jlegs = json.loads(_legs_json)
             if isinstance(_jlegs, list) and _jlegs:
                 for _jl in _jlegs:
                     _t = str(_jl.get("team", "")).strip()
@@ -806,13 +805,12 @@ def grade_parlay_legs(row, all_player_stats, all_scores, all_linescores=None):
     or _log_sgp(). Each leg dict must have:
         player, direction, line, stat, sport, game
     """
-    import json as _json
     legs_raw = row.get("legs", "")
     if not legs_raw:
         return None
     try:
-        legs = _json.loads(legs_raw)
-    except (_json.JSONDecodeError, TypeError):
+        legs = json.loads(legs_raw)
+    except (json.JSONDecodeError, TypeError):
         logger.warning(
             f"[grade_parlay_legs] Bad legs JSON for row "
             f"player={row.get('player','?')!r} date={row.get('date','?')!r}"
@@ -1656,16 +1654,13 @@ def build_monthly_embed(year, month, all_rows):
     best  = max(pick_pls, key=lambda x: x[1], default=None)
     worst = min(pick_pls, key=lambda x: x[1], default=None)
 
-    def pick_label(p, _ppl):
-        return _recap_pick_line(p)
-
     win_pct = f"{round(w / (w + l) * 100)}%" if (w + l) > 0 else "—"
     # Tier breakdown intentionally omitted from public embed (internal only — use analyze_picks.py).
     desc = f"**{w}-{l} ({win_pct}) | {pl_str} | ROI {roi_str}**\n\n"
     if best:
-        desc += f"\n\n🏆 **Best:** {pick_label(*best)}"
+        desc += f"\n\n🏆 **Best:** {_recap_pick_line(best[0])}"
     if worst and worst != best:
-        desc += f"\n💀 **Worst:** {pick_label(*worst)}"
+        desc += f"\n💀 **Worst:** {_recap_pick_line(worst[0])}"
     desc += f"\n\n━━━━━━━━━━━━━━━━\n{BRAND_TAGLINE}"
 
     color = 0xFFD700 if pl >= 0 else 0xFF4444
@@ -2067,8 +2062,7 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
             _has_nba_leg = False
             if _legs_raw and isinstance(_legs_raw, str):
                 try:
-                    import json as _json_tmp
-                    _jlegs = _json_tmp.loads(_legs_raw)
+                    _jlegs = json.loads(_legs_raw)
                     _has_nba_leg = any(
                         str(lg.get("sport", "")).upper() == "NBA"
                         for lg in _jlegs
@@ -2162,7 +2156,7 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
             try:
                 if datetime.strptime(date_str, "%Y-%m-%d").date() < datetime.now(ZoneInfo("America/New_York")).date():
                     _raw_scores = None
-            except Exception:
+            except (ValueError, TypeError):
                 pass
         _scores_dict = _raw_scores if isinstance(_raw_scores, dict) else {}
 

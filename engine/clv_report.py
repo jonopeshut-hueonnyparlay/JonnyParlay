@@ -416,7 +416,7 @@ def run(days, sport_filter, tier_filter, stat_filter=None, include_shadow=False)
 
 def main():
     parser = argparse.ArgumentParser(description="CLV + performance report")
-    parser.add_argument("--version", action="version", version="clv_report 1.0.0")  # L6
+    parser.add_argument("--version", action="version", version="clv_report 1.0.0")
     parser.add_argument("--days",   type=int, default=30, help="Look-back days (default: 30)")
     parser.add_argument("--sport",  default=None, help="Filter by sport (NBA, NHL, etc.)")
     parser.add_argument("--tier",   default=None, help="Filter by tier (T1, T2, KILLSHOT, etc.)")

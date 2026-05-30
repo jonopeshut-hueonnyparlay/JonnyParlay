@@ -90,59 +90,6 @@ def test_weekly_recap_main_exits_zero_on_post_success(monkeypatch):
         )
 
 
-def test_morning_preview_main_exits_nonzero_on_post_failure(monkeypatch):
-    """morning_preview.main() mirrors weekly_recap — exit 2 on failed post."""
-    import morning_preview
-
-    fake_pick = {
-        "date": "2026-04-20", "sport": "NBA", "player": "Test", "team": "LAL",
-        "stat": "PTS", "line": "20.5", "direction": "over", "odds": "-110",
-        "book": "draftkings", "tier": "T2", "pick_score": "72",
-        "size": "1.0", "mode": "Default", "result": "",
-        "run_type": "primary",
-    }
-    monkeypatch.setattr(morning_preview, "load_pick_log", lambda: [fake_pick])
-    monkeypatch.setattr(morning_preview, "get_today_picks",
-                        lambda rows, date_str: [fake_pick])
-    monkeypatch.setattr(morning_preview, "post_morning_preview",
-                        lambda *a, **kw: False)
-    monkeypatch.setattr(sys, "argv", ["morning_preview.py",
-                                       "--date", "2026-04-20",
-                                       "--test"])
-
-    with pytest.raises(SystemExit) as excinfo:
-        morning_preview.main()
-    assert excinfo.value.code == 2, (
-        f"H-7: expected exit 2 on post failure, got {excinfo.value.code!r}"
-    )
-
-
-def test_morning_preview_main_exits_zero_on_post_success(monkeypatch):
-    import morning_preview
-
-    fake_pick = {
-        "date": "2026-04-20", "sport": "NBA", "player": "Test", "team": "LAL",
-        "stat": "PTS", "line": "20.5", "direction": "over", "odds": "-110",
-        "book": "draftkings", "tier": "T2", "pick_score": "72",
-        "size": "1.0", "mode": "Default", "result": "",
-        "run_type": "primary",
-    }
-    monkeypatch.setattr(morning_preview, "load_pick_log", lambda: [fake_pick])
-    monkeypatch.setattr(morning_preview, "get_today_picks",
-                        lambda rows, date_str: [fake_pick])
-    monkeypatch.setattr(morning_preview, "post_morning_preview",
-                        lambda *a, **kw: True)
-    monkeypatch.setattr(sys, "argv", ["morning_preview.py",
-                                       "--date", "2026-04-20",
-                                       "--test"])
-    try:
-        morning_preview.main()
-    except SystemExit as e:
-        assert e.code in (0, None), (
-            f"H-7: success path must not exit non-zero, got {e.code!r}"
-        )
-
-
 def test_h7_banner_printed_on_weekly_failure(monkeypatch, capsys):
     """The operator-visible failure banner must hit stdout. Without the
     banner, a silent sys.exit(2) is technically correct but the person

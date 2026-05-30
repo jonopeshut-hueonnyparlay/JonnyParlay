@@ -272,29 +272,10 @@ def test_analyze_picks_wrapper(sample_log):
         assert r["result"] in {"W", "L", "P"}
 
 
-def test_morning_preview_wrapper(sample_log):
-    import morning_preview
-    rows = morning_preview.load_pick_log(str(sample_log))
-    assert len(rows) == 6  # no filtering in the wrapper
-
-
 def test_weekly_recap_wrapper(sample_log, tmp_path):
     import weekly_recap
     rows = weekly_recap.load_picks(str(sample_log), extra_paths=())
     assert len(rows) == 6  # no filtering in the wrapper
-
-
-def test_results_graphic_wrapper(sample_log, monkeypatch):
-    import results_graphic
-    monkeypatch.setattr(results_graphic, "PICK_LOG_PATH", str(sample_log))
-    rows = results_graphic._load_day_picks("2026-04-22")
-    # Legacy blank-run_type row on 2026-04-22 must pass _PUBLIC_RUN_TYPES.
-    assert len(rows) == 1
-    assert rows[0]["sport"] == "NBA"
-    # MLB is live (2026-05-20) — MLB rows appear on the public graphic.
-    # WNBA is still shadow and must be excluded.
-    rows2 = results_graphic._load_day_picks("2026-04-21")
-    assert all(r["sport"].upper() != "WNBA" for r in rows2)
 
 
 def test_clv_report_wrapper(sample_log, monkeypatch):
@@ -316,9 +297,7 @@ def test_clv_report_wrapper(sample_log, monkeypatch):
 _CONSUMERS = [
     "analyze_picks.py",
     "clv_report.py",
-    "morning_preview.py",
     "weekly_recap.py",
-    "results_graphic.py",
 ]
 
 
@@ -343,9 +322,7 @@ def _extract_function_body(src: str, fn_name: str) -> str:
 _WRAPPER_FNS = [
     ("analyze_picks.py",   "load_picks"),
     ("clv_report.py",      "load_all_picks"),
-    ("morning_preview.py", "load_pick_log"),
     ("weekly_recap.py",    "load_picks"),
-    ("results_graphic.py", "_load_day_picks"),
 ]
 
 

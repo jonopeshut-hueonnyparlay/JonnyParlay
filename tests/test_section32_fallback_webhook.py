@@ -238,30 +238,10 @@ def _strip_comments(source: str) -> str:
     return "\n".join(out)
 
 
-def test_morning_preview_imports_notify_fallback():
-    src = _strip_comments((ENGINE_DIR / "morning_preview.py").read_text(encoding="utf-8"))
-    assert "from webhook_fallback import notify_fallback" in src
-    assert "notify_fallback(" in src
-
-
 def test_weekly_recap_imports_notify_fallback():
     src = _strip_comments((ENGINE_DIR / "weekly_recap.py").read_text(encoding="utf-8"))
     assert "from webhook_fallback import notify_fallback" in src
     assert "notify_fallback(" in src
-
-
-def test_morning_preview_calls_fallback_before_exit():
-    """Order check: notify_fallback must appear before sys.exit(2) in the
-    failure branch so the alert is sent before the process dies."""
-    src = _strip_comments((ENGINE_DIR / "morning_preview.py").read_text(encoding="utf-8"))
-    # Find the "post failed" branch. Simple substring order check — if both
-    # tokens appear, the fallback call must come first.
-    notify_idx = src.find("notify_fallback(")
-    # Use a specific substring that only appears in the failure branch.
-    exit_idx = src.rfind("sys.exit(2)")
-    assert notify_idx != -1 and exit_idx != -1
-    assert notify_idx < exit_idx, \
-        "notify_fallback must be called BEFORE sys.exit(2) so the alert fires"
 
 
 def test_weekly_recap_calls_fallback_before_exit():
@@ -276,7 +256,7 @@ def test_callers_wrap_fallback_in_try_except():
     """Paranoid contract: even though notify_fallback swallows its own errors,
     callers must still wrap it so a future refactor (e.g. someone adds a raise
     inside the notifier) can't leak an exception past the exit code."""
-    for name in ("morning_preview.py", "weekly_recap.py"):
+    for name in ("weekly_recap.py",):
         src = _strip_comments((ENGINE_DIR / name).read_text(encoding="utf-8"))
         # Find the block containing notify_fallback.
         idx = src.find("notify_fallback(")

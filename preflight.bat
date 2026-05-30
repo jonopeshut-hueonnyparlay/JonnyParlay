@@ -59,16 +59,7 @@ if errorlevel 1 (
     echo [ OK ] requests present
 )
 
-REM ── 4. PIL/pillow (for results_graphic) ────────────────────
-python -c "import PIL" >nul 2>&1
-if errorlevel 1 (
-    echo [WARN] pillow not installed — installing now...
-    python -m pip install pillow --break-system-packages
-) else (
-    echo [ OK ] pillow present
-)
-
-REM ── 5. openpyxl (for xlsx recap export) ────────────────────
+REM ── 4. openpyxl (for xlsx recap export) ────────────────────
 REM  Audit M-8 (closed Apr 20 2026): weekly_recap.py writes .xlsx via
 REM  openpyxl. It was previously a silent feature-gated import — if it
 REM  wasn't installed, the recap CLI printed a warning and skipped the

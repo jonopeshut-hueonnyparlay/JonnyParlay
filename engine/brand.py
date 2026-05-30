@@ -2,12 +2,12 @@
 
 Audit L-7 (closed Apr 21 2026): the tagline "edge > everything" was
 hardcoded across 30+ call sites spanning run_picks, grade_picks,
-weekly_recap, morning_preview, results_graphic, and post_nrfi_bonus.
+weekly_recap, and post_nrfi_bonus.
 If the brand ever evolves, we want ONE edit to change it — not a
 grep-and-pray sweep. This module is the single source of truth.
 
 Audit L-1 (closed Apr 21 2026): sport emoji were also scattered across
-morning_preview and weekly_recap with inconsistent mappings. SPORT_EMOJI
+weekly_recap with inconsistent mappings. SPORT_EMOJI
 is the canonical lookup. Downstream code should prefer
 `SPORT_EMOJI.get(sport, "")` over inline `{"NBA":"🏀",...}` dicts.
 
@@ -24,11 +24,11 @@ from __future__ import annotations
 # so it renders identically in Discord, console, and PNG graphic contexts.
 BRAND_TAGLINE: str = "edge > everything"
 
-# Brand handle — used in results_graphic and the weekly recap footer line.
+# Brand handle — used in the weekly recap footer line.
 BRAND_HANDLE: str = "picksbyjonny"
 
-# Canonical sport → emoji mapping. Consolidates two separate dicts that
-# previously lived in morning_preview.py and weekly_recap.py. Add new
+# Canonical sport → emoji mapping. Consolidates emoji dicts that
+# previously lived scattered across modules. Add new
 # sports here, not in-line at call sites.
 SPORT_EMOJI: dict[str, str] = {
     "NBA":   "🏀",

@@ -25,6 +25,7 @@ Correlation table:
 from __future__ import annotations
 
 import csv
+import json
 import math
 import os
 import sys
@@ -627,7 +628,6 @@ def print_mlb_sgp(legs, parlay_odds, game, score):
 
 def _log_mlb_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None, copula_joint=None):
     """Append an MLB SGP to pick_log.csv as run_type='sgp', sport='MLB'."""
-    import json
     try:
         from pick_log_schema import CANONICAL_HEADER
         from run_picks import PICK_LOG_PATH, _pick_log_lock, _normalize_odds, _normalize_size, _write_schema_sidecar

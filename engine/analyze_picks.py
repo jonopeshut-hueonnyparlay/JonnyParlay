@@ -431,7 +431,7 @@ def main():
 
     # Card slot breakdown (primary picks only)
     primary_with_slot = [p for p in picks
-                         if p.get("run_type", "") in ("primary", "", None)
+                         if p.get("run_type", "") in ("primary", "")
                          and p.get("card_slot", "").strip()]
     if primary_with_slot:
         report.append(breakdown(primary_with_slot,

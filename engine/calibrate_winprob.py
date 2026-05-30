@@ -40,7 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -202,7 +202,7 @@ def run_calibration(
     bias              = overall_mean_pred - overall_win_rate
 
     result = {
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "n_picks": int(n),
         "run_types": run_types,
         "overall_win_rate": round(overall_win_rate, 4),

@@ -142,7 +142,6 @@ _CONSUMERS_WITH_SAVE_FN = [
     ("discord_guard.py",   "_save_unlocked"),
     ("capture_clv.py",     "save_checkpoint"),
     ("grade_picks.py",     "_save_guard"),
-    ("morning_preview.py", "_save_guard"),
     ("weekly_recap.py",    "_save_guard"),
     ("run_picks.py",       "_save_discord_guard"),
 ]
@@ -179,7 +178,6 @@ _MIGRATED_SAVE_FNS = [
     ("discord_guard.py",   "_save_unlocked"),
     ("capture_clv.py",     "save_checkpoint"),
     ("grade_picks.py",     "_save_guard"),
-    ("morning_preview.py", "_save_guard"),
     ("weekly_recap.py",    "_save_guard"),
     ("run_picks.py",       "_save_discord_guard"),
 ]

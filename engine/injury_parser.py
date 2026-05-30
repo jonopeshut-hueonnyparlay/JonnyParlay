@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import datetime
 import logging
+
+_TRADED_AWAY_DAYS = 30  # exclude players with no game in last N days (likely traded)
 import sqlite3
 import sys
 import time
@@ -301,11 +303,11 @@ def _get_team_rotation(
             season_filter=season, min_minutes=REDISTRIB_MIN_ELIGIBLE, db_path=db_path)
         if df.empty:
             continue
-        # Exclude traded-away players: if most recent game is > 30 days before
+        # Exclude traded-away players: if most recent game is > _TRADED_AWAY_DAYS before
         # before_date they're no longer on this team's active roster.
         from datetime import datetime as _dt, timedelta as _td
         try:
-            _cutoff = (_dt.strptime(before_date, "%Y-%m-%d") - _td(days=30)).strftime("%Y-%m-%d")
+            _cutoff = (_dt.strptime(before_date, "%Y-%m-%d") - _td(days=_TRADED_AWAY_DAYS)).strftime("%Y-%m-%d")
             if str(df["game_date"].max()) < _cutoff:
                 continue
         except Exception:

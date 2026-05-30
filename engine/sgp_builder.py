@@ -18,6 +18,7 @@ Design rationale (Apr 2026 redesign + L8 copula update May 2026):
 from __future__ import annotations
 
 import csv
+import json
 import math
 import os
 import random
@@ -945,8 +946,6 @@ def build_sgp_embed(legs, parlay_odds, game, sgp_size=None, _copula_joint=None):
 
 def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None, copula_joint=None):
     """Append an SGP to pick_log.csv as run_type='sgp'."""
-    import csv, json, os
-    from pathlib import Path
     try:
         from pick_log_schema import CANONICAL_HEADER
         from run_picks import PICK_LOG_PATH, _pick_log_lock, _normalize_odds, _normalize_size, _write_schema_sidecar
@@ -1000,7 +999,7 @@ def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None, copula_
         "book":            book,
         "tier":            "SGP",
         "pick_score":      "",
-        "size":            _normalize_size(sgp_size if sgp_size is not None else size_sgp(legs, _correlation_cohesion(legs))),
+        "size":            _normalize_size(sgp_size if sgp_size is not None else size_sgp(legs, _correlation_cohesion(legs))),  # cohesion computed once if needed
         "game":            player_desc,
         "mode":            "",
         "result":          "",
