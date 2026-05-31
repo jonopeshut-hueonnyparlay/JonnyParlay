@@ -5,6 +5,25 @@ All audits below are fully closed — no open items.
 
 ---
 
+## Session 5 — 2026-05-30 — EdgeModel calibration outputs (0C/2H/2M/1confirm) — commit 23cfa46
+
+Applied EdgeModel calibrate_distributions.py outputs (game-level within-player fit, 582 players / 69773 NBA game-logs) to `engine/run_picks.py` NB_R dict. Game-level calibration supersedes prior player-season aggregates.
+
+**HIGH (2) — closed:**
+- [C05] `NB_R["AST"]` 9.68 → 12.16: prior player-season calibration (1395 seasons, var/mu=1.2539) underfit; game-level fit (var/mu=1.3234) gives tighter NB distribution → lower win_prob on aggressive AST overs at tight lines.
+- [REB] `NB_R["REB"]` 10.18 → 14.7: same root cause as AST; game-level var/mu=1.3873 vs prior 1.4073 (different n — game-logs vs seasons).
+
+**MEDIUM (2) — closed:**
+- [H25] Version stamp added to NB_R block header: "Last deployed: 2026-05-30 from EdgeModel calibrate_distributions.py."
+- [C04] `NB_R["HA"]` 13.41 confirmed unchanged: EdgeModel output (MLB_P "h", 56280 games, var/mu=1.2037) matches existing value. Comment updated with confirmation date.
+
+**Confirmed Poisson (no NB move needed):**
+- STL var/mu=1.072, BLK var/mu=1.113, TOV var/mu=1.050 — all below NB threshold. Documented in NB_R comment block.
+
+**Tests: 846 passing (48 pre-existing failures unrelated to NB_R — lineup_fetcher/projections_db import-path issues).**
+
+---
+
 ## Audit 2026-05-28 — Full system re-audit (1C/8H/16M) — commit 2e3738a
 
 7 parallel audit agents covering all engine files. Previously interrupted session (2026-05-27 22:18) left 4 fix agents incomplete; rebuilt and applied all fixes directly.
