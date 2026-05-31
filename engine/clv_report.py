@@ -52,6 +52,10 @@ SHADOW_LOGS = {
     "WNBA": PICK_LOG_WNBA_PATH,
 }
 
+# CLV methodology changed on this date: prior rows use vigged CLV,
+# post-reform rows use vig-free closing side (props + totals only).
+CLV_REFORM_DATE = "2026-05-31"
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def implied_prob(american_odds):
@@ -262,6 +266,7 @@ def run(days, sport_filter, tier_filter, stat_filter=None, include_shadow=False)
     print(f"\n{'═'*56}")
     print(f"  picksbyjonny — CLV + Performance Report")
     print(f"  Last {days} days{filter_str}  ·  {len(picks)} graded picks")
+    print(f"  CLV: vig-free closing (post-{CLV_REFORM_DATE}) / vigged (prior)")
     print(f"{'═'*56}")
 
     if not picks:

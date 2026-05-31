@@ -13,9 +13,11 @@ Capture window: T-45 to T+3 min relative to game commence_time.
 CLV written only within T-10 of tip for true closing line measurement.
 Poll interval: 2 minutes. ~22 pre-tip polling attempts per game.
 
-CLV formula: clv = implied_prob(closing_odds) - implied_prob(your_odds)
-  Positive = you beat the close (good). Negative = line moved in your favor
-  before you bet but away by close (bad).
+CLV formula (vig-free on closing side, props + totals):
+  no_vig_close = close_implied / (close_over_imp + close_under_imp)
+  clv = no_vig_close − implied_prob(your_odds)
+  Positive = you beat the close. Falls back to vigged CLV for ML/spread picks
+  or when only one side of the closing market is available.
 
 Supported stats:
   Game lines   — SPREAD, TOTAL, ML_FAV, ML_DOG (h2h/spreads/totals markets)
@@ -894,14 +896,37 @@ def get_closing_odds_for_pick(pick: dict, outcomes_by_market: dict,
     return best, best_book
 
 
-def calc_clv(your_odds: float, closing_odds: float):
-    """CLV = closing_implied - your_implied. Positive = beat the close.
-    Both sides use raw vigged implied (no vig removal). Direction is preserved;
-    magnitude is slightly compressed vs vig-free CLV. Standard industry practice.
-    Returns None if either implied_prob call returns None (zero/invalid odds)."""
+def _opposite_direction(direction: str) -> str | None:
+    """Return the opposing over/under direction for vig-free normalization.
+
+    Returns None for non-over/under directions (team names, home/away) where
+    the opposing side can't be fetched cleanly — those picks fall back to vigged.
+    """
+    _map = {"over": "under", "under": "over"}
+    return _map.get(direction.lower())
+
+
+def calc_clv(your_odds: float, closing_odds: float,
+             closing_odds_opposite: float | None = None):
+    """CLV = no_vig_close_implied − your_implied. Positive = beat the close.
+
+    When closing_odds_opposite is provided (props + totals):
+        no_vig_close = close_implied / (close_implied + close_opp_implied)
+    Opening side uses vigged implied (opposite side not stored at bet time).
+
+    Falls back to fully vigged when closing_odds_opposite is None (ML/spread
+    or single-side API response).
+    Returns None if any required implied_prob call returns None.
+    """
     a = implied_prob(closing_odds)
     b = implied_prob(your_odds)
-    return (a - b) if (a is not None and b is not None) else None
+    if a is None or b is None:
+        return None
+    if closing_odds_opposite is not None:
+        opp = implied_prob(closing_odds_opposite)
+        if opp is not None and (a + opp) > 0:
+            a = a / (a + opp)  # vig-free closing side
+    return a - b
 
 
 # ── Graceful shutdown (audit H-10) ─────────────────────────────────────────────
@@ -1366,8 +1391,27 @@ def run(run_date: str):
                     except (ValueError, TypeError):
                         your_odds = None
 
-                    clv = calc_clv(your_odds, closing_odds) if (your_odds is not None and your_odds != 0) else None
-                    clv_str = f"{clv:+.1%}" if clv is not None else "n/a"
+                    # Vig-free closing side: fetch the opposite direction for props + totals.
+                    # ML and spread picks (direction != over/under) fall back to vigged.
+                    direction_str = pick.get("direction", "").strip().lower()
+                    closing_odds_opposite = None
+                    opp_dir = _opposite_direction(direction_str)
+                    if opp_dir is not None:
+                        opp_pick = dict(pick)
+                        opp_pick["direction"] = opp_dir
+                        closing_odds_opposite, _ = get_closing_odds_for_pick(
+                            opp_pick, outcomes_by_market,
+                            home_team=ev_home, away_team=ev_away,
+                        )
+                        if closing_odds_opposite is None:
+                            logger.debug(
+                                "CLV: single-side fallback for %s %s (no opposite closing odds)",
+                                pick.get("player", ""), stat,
+                            )
+
+                    clv = calc_clv(your_odds, closing_odds, closing_odds_opposite) if (your_odds is not None and your_odds != 0) else None
+                    vf_tag = " (vf)" if closing_odds_opposite is not None else ""
+                    clv_str = f"{clv:+.1%}{vf_tag}" if clv is not None else "n/a"
 
                     key = (
                         pick.get("date", "").strip(),
