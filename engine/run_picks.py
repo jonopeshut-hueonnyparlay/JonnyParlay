@@ -358,27 +358,28 @@ POISSON_CUTOFF = 8.5
 # NB(mu, r): var = mu + mu²/r.  r calibrated from within-player conditional variance
 # (avg_var / avg_mu per player across 2024-25 DB), NOT population-level cross-player variance.
 # All values via: r = SUM(n*mu^2) / SUM(n*max(var-mu, 0.001)). Source: engine/calibrate_distributions.py.
+# Last deployed: 2026-05-30 from EdgeModel calibrate_distributions.py. To redeploy: python engine/calibrate_distributions.py --sport NBA --save and update values below.
 #   3PM: avg(var/mu)=1.1486 across n=1246 player-seasons -> r=9.15 (was 12.3 — too tight)
-#   AST: avg(var/mu)=1.2539 across n=1395 player-seasons -> r=9.68; Poisson was wrong (var>mu)
-#   REB: avg(var/mu)=1.4073 across n=1395 player-seasons -> r=10.18; Poisson was wrong (var>mu)
+#   AST: avg(var/mu)=1.3234 across n=69773 game-logs (582 players) -> r=12.16 (was 9.68 from 1395 player-seasons; game-level refit 2026-05-30)
+#   REB: avg(var/mu)=1.3873 across n=69773 game-logs (582 players) -> r=14.7 (was 10.18 from 1395 player-seasons; game-level refit 2026-05-30)
 #   HRR: r=1.5 calibrated from shadow log: NB(r=1.5, mu=2.0) gives P(X>=2)=47.8% matching empirical 48% WR.
 #        Normal was giving 63% for same projection — structural zero-inflation (batter 0-H/R/RBI ~37% of games).
 #   HA:  r=13.41 — calibrated 2026-05-26 from 69k pitcher game-logs (2023-2026); within-player var/mu=1.204.
-#        Was incorrectly using Normal (SIGMA); NB is correct — overdispersed at typical HA lines.
+#        Confirmed 2026-05-30 by EdgeModel (56280 game-logs, var/mu=1.2037); no change.
 #   K:   MOVED TO POISSON_STATS — within-player var/mu=1.031 (69k game-logs); Poisson confirmed.
 #        Bimodal "early hook vs deep start" was population-level thinking, not within-player.
 #   RBI: r=0.87 — calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535.
 #        Low r means heavy zero-inflation (batters go 0-RBI in ~74% of games) with long right tail.
 #   ER:  r=2.62 — calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700.
 #        Overdispersed relative to Poisson; bullpen usage and run-support create heavy tails.
-# STL/BLK not in any TIERS tier — included for completeness, no production impact yet.
+# STL/BLK/TOV: Poisson confirmed 2026-05-30 (69773 game-logs): var/mu=1.072/1.113/1.050 — all below NB threshold. No move to NB_STATS.
 NB_STATS = {"3PM", "HRR", "AST", "REB", "HA", "RBI", "ER", "TB"}
 NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
-    "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
-    "REB": 10.18,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
+    "AST": 12.16,  # recalibrated 2026-05-30: 582 players/69773 game-logs, avg(var/mu)=1.3234 (was 9.68 from player-seasons)
+    "REB": 14.7,   # recalibrated 2026-05-30: 582 players/69773 game-logs, avg(var/mu)=1.3873 (was 10.18 from player-seasons)
     "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) -> P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
-    "HA":  13.41,  # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.204. Was incorrectly Normal; NB is correct family.
+    "HA":  13.41,  # calibrated 2026-05-26: 69k pitcher game-logs; var/mu=1.204. Confirmed 2026-05-30 EdgeModel (56280 games, var/mu=1.2037); no change.
     "RBI": 0.87,   # calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535. r<1 is valid NB; reflects heavy zero-inflation (~74% of games are 0 RBI).
     "ER":  2.62,   # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700. Bullpen + run-support variance creates heavy tails vs Poisson.
     "TB":  1.3,    # calibrated 2026-05-26: 169k batter game-logs, within-player var/mu=2.117. Fallback only — calc_tb_prob() uses component Poisson convolution (1B/2B/3B/HR) when TB_1B available, which is more accurate.
@@ -1618,7 +1619,7 @@ def parse_csv(filepath):
             if not d.exists():
                 continue
             matches = sorted(
-                [f for f in d.glob("*.csv") if sport_key in f.name.lower() and (now - f.stat().st_mtime) < 43200],
+                [f for f in d.glob("*.csv") if re.search(r'(?<![a-z])' + re.escape(sport_key) + r'(?![a-z])', f.name.lower()) and (now - f.stat().st_mtime) < 43200],
                 key=lambda f: f.stat().st_mtime, reverse=True
             )
             if matches:
