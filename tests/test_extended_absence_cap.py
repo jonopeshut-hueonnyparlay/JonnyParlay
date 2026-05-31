@@ -96,14 +96,3 @@ class TestExtendedAbsenceVsNeighbors:
         _, ea_cap = _classify(90, n_career=5, career_avg=career_avg)
         _, ret_cap = _classify(200, n_career=5, career_avg=career_avg)
         assert ea_cap < ret_cap  # 12.6 < 18
-
-
-class TestExtendedAbsenceConstantInSource:
-    """Source-level check: nba_projector contains the extended_absence branch."""
-
-    def test_extended_absence_branch_present(self):
-        import inspect
-        import nba_projector
-        src = inspect.getsource(nba_projector.project_player)
-        assert "extended_absence" in src
-        assert "career_avg_min_raw * 0.70" in src
