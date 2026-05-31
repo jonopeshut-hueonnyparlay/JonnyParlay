@@ -1407,6 +1407,10 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
 
     return premium[:MAX_PREMIUM_PICKS]
 
+# Note: SGP (0.25u), Longshot (0.25u), and Daily Lay (up to 0.75u) are logged
+# AFTER apply_caps() runs and do not consume from the 12u hard cap tracked here.
+# Effective per-session ceiling is ~13.25u. Cross-run protection (units_already_bet)
+# applies to the primary/bonus pool only.
 def apply_caps(picks, sport_totals, max_per_game=2, units_already_bet=0.0):
     """Apply daily caps: per-stat, per-game, per-sport, daily total.
     Includes G12: max 2 same-direction pitcher props per game.
@@ -2395,7 +2399,10 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
         # stat distributions (K%, OUTS, HA) would mis-calibrate until an MLB sample exists.
         # WNBA is intentionally included (not MLB, so Platt applies). NBA+NHL coefficients
         # are a reasonable approximation for WNBA; WNBA-specific refit pending sample growth.
-        if _sport != "MLB":
+        # Skip for combo stats (PRA/PR/PA/RA): Platt was fitted on single-stat props;
+        # the joint-Normal combo probability has a different shape and will be mis-calibrated
+        # until a separate combo sample exists. TODO: refit at SGP Platt gate (100 scored slips).
+        if _sport != "MLB" and stat not in COMBO_STATS:
             over_p = _platt_calibrate_prop(over_p)
             under_p = 1.0 - over_p
 
@@ -3173,6 +3180,12 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
     BASE_LAMBDA_1ST = 0.32        # first-inning λ per team — calibrated to ~53% NRFI for avg matchup
     _LEAGUE_AVG_RUNS = 4.45       # 2025 MLB runs/game/team (offense normalisation)
     _LEAGUE_AVG_BLENDED_RATE = 0.477  # 0.40*(4.17/9) + 0.60*(4.38/9) — avg pitcher blended ERA+FIP rate (2025)
+    # Park factor intentionally omitted: SaberSim saber_team projections and
+    # pitcher ERA/FIP inputs are already park-adjusted at source. Applying
+    # MLB_PARK_FACTORS here would double-count park effects.
+    # TODO (if SaberSim source ever switches to park-neutral inputs): replace
+    # _LEAGUE_AVG_BLENDED_RATE with a park-adjusted league average derived
+    # from park-neutral pitcher lines, and apply MLB_PARK_FACTORS to λ_team.
 
     # Build pitcher and team offense maps
     pitcher_map = {}       # team → pitcher stats
@@ -3504,13 +3517,16 @@ def filter_game_line_correlations(picks):
                     td = tt_pick.get("direction", "")
                     wh = win_pick.get("is_home")
                     th = tt_pick.get("is_home")
-                    if (ws in {"ML_FAV", "ML_DOG", "SPREAD"} and
-                            ts == "TEAM_TOTAL" and
-                            td == "over" and
-                            wh is not None and th is not None and
-                            wh != th):          # different teams
-                        conflict = True
-                        break
+                    if ws in {"ML_FAV", "ML_DOG", "SPREAD"} and ts == "TEAM_TOTAL" and td == "over":
+                        if wh is None or th is None:
+                            log.warning(
+                                f"GLC Rule 1 scan: is_home=None for "
+                                f"{win_pick.get('player', '?')}/{ws} — "
+                                "ML/SPREAD correlation detection skipped"
+                            )
+                        elif wh != th:          # different teams
+                            conflict = True
+                            break
 
                 # Rule 2: F5_ML for both teams in the same game
                 if not conflict and sa == "F5_ML" and sb == "F5_ML":
@@ -6492,7 +6508,17 @@ def main():
     safest5 = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)[:5] if qualified else []
 
     # Build parlays
-    safest6_parlay = build_safest6_parlay(qualified)
+    # H12: Exclude premium + KILLSHOT picks from longshot pool — same pick can't appear
+    # on both the premium card and the longshot (duplicate disclosure, misleading bankroll).
+    _card_keys = {(p.get("player", "").lower(), p.get("stat"), p.get("direction"))
+                  for p in premium + killshots}
+    _longshot_pool = [p for p in qualified
+                      if (p.get("player", "").lower(), p.get("stat"), p.get("direction"))
+                      not in _card_keys]
+    _n_excluded = len(qualified) - len(_longshot_pool)
+    if _n_excluded:
+        log.debug(f"Excluded {_n_excluded} premium picks from longshot pool")
+    safest6_parlay = build_safest6_parlay(_longshot_pool)
     sport_sigmas = {}
     for sport in all_players:
         sport_sigmas[sport] = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])

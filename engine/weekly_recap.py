@@ -63,9 +63,10 @@ BRAND_LOGO               = "https://cdn.discordapp.com/attachments/1115840612915
 # PARLAY" as a prop until someone remembered to fix both sides.
 from pick_labels import GAME_LINE_STATS, short_label as _pick_short_label  # noqa: E402
 
-# Only props count toward weekly/monthly totals — parlays excluded from tracking.
-# Matches grade_picks.py COUNTED_RUN_TYPES. Manual picks discontinued.
-COUNTED_RUN_TYPES = {"primary", "bonus"}
+# All model-generated bet types count toward weekly/monthly totals.
+# Manual picks (pick_log_manual.csv) are graded separately and never included here.
+# Note: grade_picks.py has its own COUNTED_RUN_TYPES for recap display — keep in sync.
+COUNTED_RUN_TYPES = {"primary", "bonus", "sgp", "longshot", "daily_lay"}
 
 # Sportsbook display contract — canonical definition in book_names.py (audit H-13).
 from book_names import BOOK_DISPLAY as _BOOK_DISPLAY, display_book  # noqa: E402
@@ -492,6 +493,7 @@ def build_weekly_embed(mon_str, sun_str, week_picks, all_rows, suppress_ping=Fal
 
     desc = "\n".join([
         f"**{w}-{l} ({round(w/(w+l)*100) if w+l else 0}%) | {pl_str} | ROI {roi_str}**",
+        "*Includes: props (primary/bonus), SGPs, longshots, daily lays*",
         "",
         "\n".join(day_lines),
         "",

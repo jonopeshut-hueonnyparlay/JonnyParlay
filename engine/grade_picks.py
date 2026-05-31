@@ -381,22 +381,39 @@ def fetch_espn_game_scores(date_str):
 
 
 def fetch_nhl_boxscores(date_str):
-    """Fetch NHL player stats from NHL API."""
+    """Fetch NHL player stats from NHL API.
+
+    Returns (player_stats, game_ot_info) tuple.
+    game_ot_info: dict mapping 'Away @ Home' (lowercase) → True if game went to OT/SO.
+    Puck line (SPREAD) grading uses final score — which is how most books settle it —
+    but game_ot_info lets the grader flag picks where OT may have affected the outcome.
+    """
     try:
         r = requests.get(f"{NHL_STATS_BASE}/score/{date_str}",
                          headers=default_headers(), timeout=15)
         r.raise_for_status()
         data = r.json()
         player_stats = {}
+        game_ot_info = {}  # M24: 'away @ home' → is_ot bool
 
         for game in data.get("games", []):
             game_id = game.get("id")
+            # M24: detect OT/SO from periodDescriptor — available on the /score/ response.
+            period_type = game.get("periodDescriptor", {}).get("periodType", "REG")
+            home_name = (game.get("homeTeam", {}).get("name", {}) or {})
+            away_name = (game.get("awayTeam", {}).get("name", {}) or {})
+            if isinstance(home_name, dict):
+                home_name = home_name.get("default", "")
+            if isinstance(away_name, dict):
+                away_name = away_name.get("default", "")
+            if home_name and away_name:
+                game_key = f"{away_name} @ {home_name}".lower()
+                game_ot_info[game_key] = period_type in ("OT", "SO")
             try:
                 box = requests.get(f"{NHL_STATS_BASE}/gamecenter/{game_id}/boxscore",
                                    headers=default_headers(), timeout=15)
                 box.raise_for_status()
                 box_data = box.json()
-
 
                 # NHL API nests player stats under playerByGameStats
                 pgs = box_data.get("playerByGameStats", {})
@@ -428,10 +445,10 @@ def fetch_nhl_boxscores(date_str):
                 print(f"  ⚠ NHL boxscore fetch failed for game {game_id}: {e}")
                 continue
 
-        return player_stats
+        return player_stats, game_ot_info
     except Exception as e:
         print(f"  ⚠ NHL stats fetch failed: {e}")
-        return {}
+        return {}, {}
 
 
 def fetch_mlb_boxscores(date_str):
@@ -573,7 +590,7 @@ def fetch_mlb_linescores(date_str):
                     ls.raise_for_status()
                     innings = ls.json().get("innings", [])
                     game_key = f"{away} @ {home}".lower()
-                    linescores[game_key] = innings
+                    linescores[game_key] = {"innings": innings, "is_final": status == "Final"}
                     time.sleep(0.2)
                 except Exception as e:
                     logger.warning("MLB linescore failed for game %s: %s", game_pk, e)
@@ -866,24 +883,33 @@ def grade_parlay_legs(row, all_player_stats, all_scores, all_linescores=None):
 
 
 def _find_linescore_innings(game_str, linescores):
-    """Find inning list for a game string by fuzzy team-name matching."""
+    """Find inning list for a game string by fuzzy team-name matching.
+
+    Returns (innings_list, is_final) tuple, or None if not found.
+    is_final=True means the game has completed (as opposed to Live/in-progress).
+    """
     if not linescores:
         return None
     game_lower = game_str.lower()
+
+    def _unpack(val):
+        if isinstance(val, dict):
+            return val.get("innings", []), val.get("is_final", False)
+        return val, False  # legacy list format
+
     # Direct substring match
-    for key, innings in linescores.items():
+    for key, val in linescores.items():
         if game_lower in key or key in game_lower:
-            return innings
+            return _unpack(val)
     # Partial team name match — split on ' @ '
     parts = [p.strip() for p in game_lower.split("@") if p.strip()]
-    for key, innings in linescores.items():
+    for key, val in linescores.items():
         key_parts = [p.strip() for p in key.split("@") if p.strip()]
-        # Match if any meaningful word from pick game appears in linescore key
         for pp in parts:
             words = [w for w in pp.split() if len(w) > 3]
             for w in words:
                 if any(w in kp for kp in key_parts):
-                    return innings
+                    return _unpack(val)
     return None
 
 
@@ -944,10 +970,12 @@ def _resolve_pick_is_home(pick, away_team):
     return not is_away
 
 
-def grade_game_line(pick, scores_by_game, linescores=None):
+def grade_game_line(pick, scores_by_game, linescores=None, nhl_ot_info=None):
     """Grade a game-line pick (spread, total, ML, F5, NRFI) using scores.
 
     linescores: optional dict from fetch_mlb_linescores() for F5/NRFI grading.
+    nhl_ot_info: optional dict from fetch_nhl_boxscores() mapping game_key → is_ot bool.
+                 Used to flag NHL puck line picks where OT/SO affected the outcome (M24).
     """
     stat = pick["stat"]
     game = pick["game"]
@@ -1007,6 +1035,23 @@ def grade_game_line(pick, scores_by_game, linescores=None):
         else:
             margin = away_score - home_score
         result_val = margin + line  # line is already signed (e.g. -3.5)
+        # M24: NHL puck lines — most books settle on final score (including OT/SO).
+        # We grade on final score to match book settlement, but flag when a game
+        # went to OT so results can be reviewed if a book uses regulation-only.
+        if pick.get("sport") == "NHL" and nhl_ot_info:
+            _game_key = f"{away_team} @ {home_team}".lower()
+            _is_ot = nhl_ot_info.get(_game_key)
+            if _is_ot is None:
+                # Fuzzy fallback — try partial match
+                for k, v in nhl_ot_info.items():
+                    if home_team.lower() in k or away_team.lower() in k:
+                        _is_ot = v
+                        break
+            if _is_ot:
+                logger.info(
+                    "[M24] NHL puck line graded on final score (game went to OT/SO): %s %s %s",
+                    pick.get("game", "?"), pick.get("player", "?"), pick.get("direction", "")
+                )
         if result_val > 0: return "W"
         elif result_val < 0: return "L"
         else: return "P"
@@ -1021,9 +1066,10 @@ def grade_game_line(pick, scores_by_game, linescores=None):
             return "W" if away_score > home_score else ("L" if home_score > away_score else "P")
 
     elif stat in ("NRFI", "YRFI"):
-        innings = _find_linescore_innings(game, linescores or {})
-        if not innings:
+        _ls_result = _find_linescore_innings(game, linescores or {})
+        if not _ls_result:
             return None
+        innings, _ = _ls_result  # is_final not needed for NRFI (inning 1 either completed or not)
         # Need at least inning 1 complete — check both teams scored their half
         inning1 = next((i for i in innings if i.get("num") == 1), None)
         if not inning1:
@@ -1057,14 +1103,22 @@ def grade_game_line(pick, scores_by_game, linescores=None):
             else: return "P"
 
     elif stat in ("F5_TOTAL", "F5_SPREAD", "F5_ML"):
-        innings = _find_linescore_innings(game, linescores or {})
-        if not innings:
+        _ls_result = _find_linescore_innings(game, linescores or {})
+        if not _ls_result:
             return None
+        innings, _f5_is_final = _ls_result
         # Need 5 complete innings minimum
         complete = [i for i in innings if i.get("num", 0) <= 5
                     and i.get("away", {}).get("runs") is not None
                     and i.get("home", {}).get("runs") is not None]
         if len(complete) < 5:
+            # M23: weather/rain-shortened games that end early.
+            # If the game is officially final with fewer than 5 innings, the
+            # sportsbook voids F5 bets — stake returned. If still Live (in
+            # progress), leave ungradable so we retry next run.
+            if _f5_is_final and len(innings) > 0:
+                logger.info("[F5] Game %s ended officially with %d innings (<5) — voiding F5 pick", game, len(innings))
+                return "VOID"
             return None  # Game not yet 5 innings complete
 
         f5_away = sum(i["away"]["runs"] for i in complete)
@@ -2084,6 +2138,7 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
     all_scores: dict = {}        # (date, sport) → {game_key: game_data}
     all_player_stats: dict = {}  # (date, sport) → {player_name: stats}
     all_linescores: dict = {}    # (date, "MLB") → {game_key: innings_list}
+    all_nhl_ot_info: dict = {}   # (date, "NHL") → {game_key: is_ot bool} — M24
 
     for date_str, sports in dates_sports.items():
         for sport in sorted(sports):
@@ -2120,7 +2175,8 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
             elif sport == "WNBA":
                 pstats = fetch_wnba_boxscore(date_str)
             elif sport == "NHL":
-                pstats = fetch_nhl_boxscores(date_str)
+                pstats, _nhl_ot = fetch_nhl_boxscores(date_str)
+                all_nhl_ot_info[(date_str, "NHL")] = _nhl_ot
             elif sport == "MLB":
                 pstats = fetch_mlb_boxscores(date_str)
                 # MLB Stats API fallback for game scores when Odds API plan-limit
@@ -2169,7 +2225,8 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
             result = grade_daily_lay(row, all_scores)
         elif stat in GAME_LINE_STATS:
             ls = all_linescores.get((date_str, sport)) if sport == "MLB" else None
-            result = grade_game_line(row, _scores_dict, linescores=ls)
+            _nhl_ot = all_nhl_ot_info.get((date_str, "NHL")) if sport == "NHL" else None
+            result = grade_game_line(row, _scores_dict, linescores=ls, nhl_ot_info=_nhl_ot)
         else:
             result = grade_prop(row, all_player_stats.get((date_str, sport), {}),
                                 scores_by_game=_raw_scores)
