@@ -119,7 +119,7 @@ def retry_after_secs(response, default: float = 2.0) -> float:
         body = response.json()
     except Exception:
         body = None
-    if isinstance(body, MutableMapping) or isinstance(body, dict):
+    if isinstance(body, MutableMapping):
         candidate = body.get("retry_after")
         if candidate is not None:
             try:

@@ -4,7 +4,7 @@ Audit H-7 (closed Apr 20 2026).
 
 Before this module, a failed post to ``#announcements`` looked like this:
 
-    1. morning_preview or weekly_recap POSTs the embed.
+    1. weekly_recap POSTs the embed.
     2. Discord returns 4xx / 5xx / network error.
     3. ``_webhook_post`` prints a ``⚠`` and returns False.
     4. The CLI exits non-zero (Section 31 pre-H-7 partial close).
@@ -25,11 +25,11 @@ Design
 * The posted payload is compact — single ~80-char content string, no embed,
   no files — so the fallback channel can be rate-limited without drama.
 
-Usage (from morning_preview / weekly_recap failure paths)::
+Usage (from weekly_recap failure paths)::
 
     from webhook_fallback import notify_fallback
     if not posted:
-        notify_fallback("morning_preview", err="HTTP 404 (channel deleted?)")
+        notify_fallback("weekly_recap", err="HTTP 404 (channel deleted?)")
         sys.exit(2)
 """
 
@@ -82,7 +82,7 @@ def _format_alert(context: str, err: Optional[str]) -> str:
     """Build the single-line alert content string.
 
     Example:
-        [picksbyjonny alert] morning_preview post failed · host=jono-pc
+        [picksbyjonny alert] weekly_recap post failed · host=jono-pc
         2026-04-20T14:02:11Z · err: HTTP 404 (channel deleted?)
     """
     host = socket.gethostname() or "unknown-host"
@@ -101,8 +101,7 @@ def notify_fallback(context: str, err: Optional[str] = None) -> bool:
     Parameters
     ----------
     context : str
-        Short tag identifying the caller, e.g. ``"morning_preview"`` or
-        ``"weekly_recap"``. Surfaced in the alert body so the receiver can
+        Short tag identifying the caller, e.g. ``"weekly_recap"``. Surfaced in the alert body so the receiver can
         tell which post failed.
     err : str, optional
         Free-text error detail to append (usually the HTTP status or a
