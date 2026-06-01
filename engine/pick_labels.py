@@ -94,7 +94,7 @@ def short_label(p: Mapping[str, Any]) -> str:
     player = (p.get("player") or "").strip()
     parts = player.split() or [""]
     last = parts[-1]
-    _SUFFIXES = {"jr.", "sr.", "ii", "iii", "iv"}
+    _SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv", "v"})
     if last.lower() in _SUFFIXES and len(parts) >= 2:
         last = parts[-2]
     last = last.upper()
