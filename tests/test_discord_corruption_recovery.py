@@ -98,18 +98,19 @@ class TestLoadUnlockedCorruption:
             result = dg._load_unlocked()
         assert result == {}
 
-    def test_corrupt_file_returns_recovered_keys(self, tmp_path, capsys):
+    def test_corrupt_file_returns_recovered_keys(self, tmp_path, caplog):
         raw = (
             b'{"recap:2026-04-14": true, "premium_card:2026-04-14": true, '
             b'GARBAGE_HERE'
         )
         p = _make_guard_file(raw, tmp_path)
-        with mock.patch.object(dg, "GUARD_FILE", p):
-            result = dg._load_unlocked()
+        import logging
+        with caplog.at_level(logging.ERROR, logger="discord_guard"):
+            with mock.patch.object(dg, "GUARD_FILE", p):
+                result = dg._load_unlocked()
         assert "recap:2026-04-14" in result, "must recover intact keys from corruption"
         assert "premium_card:2026-04-14" in result
-        captured = capsys.readouterr()
-        assert "corrupt" in captured.err.lower() or "corrupt" in captured.out.lower()
+        assert "corrupt" in caplog.text.lower()
 
     def test_corrupt_file_does_not_return_empty(self, tmp_path):
         """Critical: corrupt guard must NOT silently return {}.

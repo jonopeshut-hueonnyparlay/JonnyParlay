@@ -37,12 +37,12 @@ Public API:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
@@ -73,6 +73,8 @@ LOCK_FILE: str = str(GUARD_FILE) + ".lock"
 GUARD_TTL_DAYS: int = 90
 LOCK_TIMEOUT_S: int = 30
 
+log = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Regex for corruption recovery (C2 / audit F3.2)
 # ---------------------------------------------------------------------------
@@ -92,7 +94,7 @@ _GUARD_KEY_RE = re.compile(
 def prune_guard(guard: dict) -> dict:
     """Drop guard keys whose embedded YYYY-MM-DD date exceeds the TTL."""
     cutoff = (
-        datetime.now(ZoneInfo("America/New_York")).replace(tzinfo=None)
+        datetime.now(timezone.utc).replace(tzinfo=None)
         - timedelta(days=GUARD_TTL_DAYS)
     )
     pruned: dict = {}
@@ -156,10 +158,9 @@ def _load_unlocked() -> dict:
     except FileNotFoundError:
         return {}
     except OSError:
-        print(
-            "  [discord_guard] CORRUPT guard file AND failed to read "
-            "raw bytes -- returning {} (re-post risk). Restore from backup.",
-            file=sys.stderr,
+        log.error(
+            "[discord_guard] CORRUPT guard file AND failed to read "
+            "raw bytes -- returning {} (re-post risk). Restore from backup."
         )
         return {}
     try:
@@ -169,12 +170,11 @@ def _load_unlocked() -> dict:
         recovered = _rebuild_from_raw_bytes(raw)
         preview = list(recovered)[:10]
         ellipsis = "..." if len(recovered) > 10 else ""
-        print(
-            f"  [discord_guard] guard file is corrupt (JSONDecodeError). "
-            f"Recovered {len(recovered)} key(s) from raw bytes via regex scan. "
-            f"Keys: {preview}{ellipsis}. "
-            "Backup the file and investigate.",
-            file=sys.stderr,
+        log.error(
+            "[discord_guard] guard file is corrupt (JSONDecodeError). "
+            "Recovered %d key(s) from raw bytes via regex scan. "
+            "Keys: %s%s. Backup the file and investigate.",
+            len(recovered), preview, ellipsis,
         )
         return recovered
 
@@ -194,9 +194,9 @@ def load_guard() -> dict:
         with FileLock(LOCK_FILE, timeout=LOCK_TIMEOUT_S):
             return _load_unlocked()
     except _FileLockTimeout:
-        print(
-            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on load "
-            "-- reading without lock (stale-read risk)"
+        log.warning(
+            "[discord_guard] lock timeout after %ds on load -- reading without lock (stale-read risk)",
+            LOCK_TIMEOUT_S,
         )
         return _load_unlocked()
 
@@ -207,9 +207,9 @@ def save_guard(guard: dict) -> None:
         with FileLock(LOCK_FILE, timeout=LOCK_TIMEOUT_S):
             _save_unlocked(guard)
     except _FileLockTimeout:
-        print(
-            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on save "
-            "-- writing without lock (clobber risk)"
+        log.warning(
+            "[discord_guard] lock timeout after %ds on save -- writing without lock (clobber risk)",
+            LOCK_TIMEOUT_S,
         )
         _save_unlocked(guard)
 
@@ -227,9 +227,9 @@ def mark_posted(key: str) -> None:
             g[key] = True
             _save_unlocked(g)
     except _FileLockTimeout:
-        print(
-            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
-            f"mark_posted({key!r}) -- writing without lock (clobber risk)"
+        log.warning(
+            "[discord_guard] lock timeout after %ds on mark_posted(%r) -- writing without lock (clobber risk)",
+            LOCK_TIMEOUT_S, key,
         )
         g = _load_unlocked()
         g[key] = True
@@ -254,9 +254,9 @@ def claim_post(key: str) -> bool:
             _save_unlocked(g)
             return True
     except _FileLockTimeout:
-        print(
-            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
-            f"claim_post({key!r}) -- falling back to unlocked claim (duplicate-post risk)"
+        log.warning(
+            "[discord_guard] lock timeout after %ds on claim_post(%r) -- falling back to unlocked claim (duplicate-post risk)",
+            LOCK_TIMEOUT_S, key,
         )
         g = _load_unlocked()
         if g.get(key):
@@ -277,9 +277,9 @@ def release_post(key: str) -> None:
                 del g[key]
                 _save_unlocked(g)
     except _FileLockTimeout:
-        print(
-            f"  [discord_guard] lock timeout after {LOCK_TIMEOUT_S}s on "
-            f"release_post({key!r}) -- releasing without lock (clobber risk)"
+        log.warning(
+            "[discord_guard] lock timeout after %ds on release_post(%r) -- releasing without lock (clobber risk)",
+            LOCK_TIMEOUT_S, key,
         )
         g = _load_unlocked()
         if key in g:
