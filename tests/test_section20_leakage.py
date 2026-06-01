@@ -121,13 +121,9 @@ def test_post_nrfi_bonus_routes_mlb_to_shadow_log(tmp_path, monkeypatch):
     monkeypatch.setattr(sc, "DISCORD_BONUS_WEBHOOK", "https://fake/webhook",
                         raising=False)
 
-    # MLB is live — Discord posting is expected; stub urlopen to succeed silently.
-    import urllib.request
-    class _FakeResp:
-        def read(self): return b""
-        def __enter__(self): return self
-        def __exit__(self, *a): pass
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
+    # MLB is live — Discord posting is expected; stub requests.post to succeed silently.
+    import requests as _requests_mod
+    monkeypatch.setattr(_requests_mod, "post", lambda *a, **kw: None)
 
     spec_path = Path(__file__).resolve().parent.parent / "post_nrfi_bonus.py"
     src = spec_path.read_text(encoding="utf-8")
@@ -135,8 +131,10 @@ def test_post_nrfi_bonus_routes_mlb_to_shadow_log(tmp_path, monkeypatch):
         'DATA_DIR = Path(__file__).parent / "data"',
         f'DATA_DIR = Path(r"{data_dir}")',
     )
+    # Standard guard means exec() won't auto-call main(); invoke it explicitly.
     ns: dict = {"__name__": "post_nrfi_bonus_test_shim", "__file__": str(spec_path)}
     exec(compile(shimmed, str(spec_path), "exec"), ns)
+    ns["main"]([])
 
     main_log = data_dir / "pick_log.csv"
     shadow_log = data_dir / "pick_log_mlb.csv"

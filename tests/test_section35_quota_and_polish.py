@@ -311,9 +311,15 @@ def test_post_nrfi_team_column_is_not_a_game_string(nrfi_src: str):
 def test_post_nrfi_team_matches_away_team_in_game_string(nrfi_src: str):
     """Convention: for NRFI-style pitcher-matchup props, team column holds the
     AWAY team (leftmost slot in the `game` field). Verify the two rows agree."""
+    # team may be a plain string literal OR a variable reference (e.g. away_team param).
     team_m = re.search(r'"team"\s*:\s*"([^"]+)"', nrfi_src)
-    assert team_m, "could not locate team row in post_nrfi_bonus.py"
-    team = team_m.group(1)
+    if team_m:
+        team = team_m.group(1)
+    else:
+        # variable reference — team defaults to _AWAY_TEAM constant
+        away_const_m = re.search(r'_AWAY_TEAM\s*=\s*"([^"]+)"', nrfi_src)
+        assert away_const_m, "could not locate team row or _AWAY_TEAM in post_nrfi_bonus.py"
+        team = away_const_m.group(1)
 
     # game may be a plain string literal OR an f-string using _AWAY_TEAM/_HOME_TEAM.
     # Check for plain literal first, then variable reference.

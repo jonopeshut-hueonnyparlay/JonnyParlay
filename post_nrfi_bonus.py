@@ -10,11 +10,13 @@ Audit fixes applied:
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
-import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+import requests
 
 # ── Engine imports ────────────────────────────────────────────────────────────
 _ENGINE_DIR = Path(__file__).parent / "engine"
@@ -22,6 +24,7 @@ if str(_ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(_ENGINE_DIR))
 
 from brand import BRAND_TAGLINE  # noqa: E402  (L-7)
+from http_utils import default_headers  # noqa: E402  (H-3)
 from pick_log_schema import (  # noqa: E402
     CANONICAL_HEADER,
     normalize_american_odds,
@@ -85,7 +88,18 @@ _PICK_SCORE = "85.0"
 _BOOK       = "fanduel"
 
 
-def _build_row() -> dict:
+def _build_row(
+    away_team: str = _AWAY_TEAM,
+    home_team: str = _HOME_TEAM,
+    raw_odds: str = _RAW_ODDS,
+    stat: str = _STAT,
+    line: str = _LINE,
+    direction: str = _DIRECTION,
+    win_prob: str = _WIN_PROB,
+    edge_raw: str = _EDGE_RAW,
+    book: str = _BOOK,
+    size_raw: str = _SIZE_RAW,
+) -> dict:
     """Construct a canonical-shaped pick row, running every numeric field
     through the Section-24 normalizers (audit M-20)."""
     now = datetime.now()
@@ -95,25 +109,25 @@ def _build_row() -> dict:
         "run_type":         "bonus",
         "sport":            _SPORT,
         "player":           "NRFI",
-        "team":             "Toronto Blue Jays",   # L-9: single team name (away side)
-        "stat":             _STAT,
-        "line":             _LINE,
-        "direction":        _DIRECTION,
+        "team":             away_team,             # L-9: single team name (away side)
+        "stat":             stat,
+        "line":             line,
+        "direction":        direction,
         "proj":             normalize_proj(_PROJ_RAW),
-        "win_prob":         _WIN_PROB,
-        "edge":             normalize_edge(_EDGE_RAW),
-        "odds":             normalize_american_odds(_RAW_ODDS),
-        "book":             _BOOK,
+        "win_prob":         win_prob,
+        "edge":             normalize_edge(edge_raw),
+        "odds":             normalize_american_odds(raw_odds),
+        "book":             book,
         "tier":             _TIER,
         "pick_score":       _PICK_SCORE,
-        "size":             normalize_size(_SIZE_RAW),
-        "game":             f"{_AWAY_TEAM} @ {_HOME_TEAM}",
+        "size":             normalize_size(size_raw),
+        "game":             f"{away_team} @ {home_team}",
         "mode":             "",
         "result":           "",
         "closing_odds":     "",
         "clv":              "",
         "card_slot":        "",
-        "is_home":          normalize_is_home("", _STAT),
+        "is_home":          normalize_is_home("", stat),
         "context_verdict":  "",
         "context_reason":   "",
         "context_score":    "",
@@ -130,7 +144,6 @@ def _post_to_discord(row: dict) -> None:
     """
     if not _BONUS_WEBHOOK:
         return
-    import json as _json
     direction = row.get("direction", "").upper()
     line      = row.get("line", "")
     stat      = row.get("stat", "")
@@ -144,18 +157,40 @@ def _post_to_discord(row: dict) -> None:
         f"{game}\n"
         f"Size: {size}u  |  {BRAND_TAGLINE}"
     )
-    payload = _json.dumps({"content": content}).encode("utf-8")
-    req = urllib.request.Request(
+    requests.post(
         _BONUS_WEBHOOK,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
+        json={"content": content},
+        headers=default_headers({"Content-Type": "application/json"}),
+        timeout=10,
     )
-    urllib.request.urlopen(req, timeout=10)
 
 
-def main() -> None:
-    row      = _build_row()
+def main(argv: list[str] | None = None) -> None:
+    p = argparse.ArgumentParser(description="Post a one-shot NRFI/pitcher-matchup bonus pick.")
+    p.add_argument("--away-team",  default=_AWAY_TEAM,  help="Away team name")
+    p.add_argument("--home-team",  default=_HOME_TEAM,  help="Home team name")
+    p.add_argument("--odds",       default=_RAW_ODDS,   help="American odds (e.g. +108)")
+    p.add_argument("--stat",       default=_STAT,       help="Stat key (e.g. NRFI)")
+    p.add_argument("--line",       default=_LINE,       help="Line (e.g. 0.5)")
+    p.add_argument("--direction",  default=_DIRECTION,  help="over or under")
+    p.add_argument("--win-prob",   default=_WIN_PROB,   help="Win probability (e.g. 0.684)")
+    p.add_argument("--edge",       default=_EDGE_RAW,   help="Edge (e.g. 0.213)")
+    p.add_argument("--book",       default=_BOOK,       help="Book key (e.g. fanduel)")
+    p.add_argument("--size",       default=_SIZE_RAW,   help="Unit size (e.g. 0.50)")
+    a = p.parse_args(argv)
+
+    row = _build_row(
+        away_team=a.away_team,
+        home_team=a.home_team,
+        raw_odds=a.odds,
+        stat=a.stat,
+        line=a.line,
+        direction=a.direction,
+        win_prob=a.win_prob,
+        edge_raw=a.edge,
+        book=a.book,
+        size_raw=a.size,
+    )
     sport    = row["sport"].upper()
     log_path = _log_path_for(sport)
 
@@ -182,8 +217,6 @@ def main() -> None:
         _post_to_discord(row)
 
 
-if __name__ != "post_nrfi_bonus":
-    # Called when run as a script (`python post_nrfi_bonus.py`) or exec'd
-    # directly by the test harness. Importing the module normally (for its
-    # helper functions) skips this block.
+# exec()-based tests must call main([]) explicitly after exec().
+if __name__ == "__main__":
     main()
