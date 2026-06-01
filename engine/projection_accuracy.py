@@ -42,6 +42,7 @@ STAT_COLS = [
     ("3PM",  "fg3m", "proj_fg3m", "actual_fg3m"),
     ("BLK",  "blk",  "proj_blk",  "actual_blk"),
     ("STL",  "stl",  "proj_stl",  "actual_stl"),
+    ("TOV",  "tov",  "proj_tov",  "actual_tov"),
 ]
 ROLE_ORDER = ["starter", "sixth_man", "rotation", "spot", "cold_start"]
 

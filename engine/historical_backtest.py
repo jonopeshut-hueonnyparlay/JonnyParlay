@@ -120,10 +120,11 @@ STAT_KEYS = [
 def run_historical_backtest(
     n_dates: int = 30,
     seed: int = 42,
-    season: str = "2024-25",
+    season: str = CURRENT_SEASON,
     db_path: Path = DB_PATH,
     verbose: bool = False,
     explicit_dates: list[str] | None = None,
+    show_benchmark: bool = False,
 ):
     if explicit_dates:
         sampled_dates = sorted(explicit_dates)
@@ -148,7 +149,7 @@ def run_historical_backtest(
             # Stratified: divide into n_dates buckets, pick one from each
             bucket_size = len(all_dates) / n_dates
             sampled_dates = sorted(
-                all_dates[int(rng.uniform(i * bucket_size, (i + 1) * bucket_size))]
+                all_dates[min(int(rng.uniform(i * bucket_size, (i + 1) * bucket_size)), len(all_dates) - 1)]
                 for i in range(n_dates)
             )
 
@@ -169,9 +170,10 @@ def run_historical_backtest(
 
     for date_idx, game_date in enumerate(sampled_dates):
         games = get_games_on_date(game_date, db_path)
-        print(f"[{date_idx+1}/{len(sampled_dates)}] {game_date}: {len(games)} games", flush=True)
         if verbose:
             print(f"\n[{date_idx+1}/{len(sampled_dates)}] {game_date}: {len(games)} games")
+        else:
+            print(f"[{date_idx+1}/{len(sampled_dates)}] {game_date}: {len(games)} games", flush=True)
 
         for game in games:
             game_id   = game["game_id"]
@@ -407,12 +409,12 @@ def run_historical_backtest(
             new_sc   = round(curr_sc * ratio, 4)
             print(f"  {role:15s}  {len(recs):5d}  {mean_proj_min:8.2f}  {mean_act_min:8.2f}  {ratio:7.4f}  {curr_sc:10.4f}  {new_sc:9.4f}  {r_bias:+7.3f}")
 
-    # Comparison to known playoff benchmark
-    print("\n" + "-" * 65)
-    print("Reference benchmarks (from playoff backtest Apr 18-29 2026):")
-    print("  Custom adj MAE: 3.436  |  SaberSim raw MAE: 3.254")
-    print("  Bias: -0.108  |  Cold-start: 34% of projections")
-    print("-" * 65)
+    if show_benchmark:
+        print("\n" + "-" * 65)
+        print("Reference benchmarks (from playoff backtest Apr 18-29 2026):")
+        print("  Custom adj MAE: 3.436  |  SaberSim raw MAE: 3.254")
+        print("  Bias: -0.108  |  Cold-start: 34% of projections")
+        print("-" * 65)
 
 
 if __name__ == "__main__":
@@ -420,7 +422,9 @@ if __name__ == "__main__":
     parser.add_argument("--n-dates", type=int, default=30)
     parser.add_argument("--seed",    type=int, default=42)
     parser.add_argument("--season",  default=CURRENT_SEASON)
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--verbose",        action="store_true")
+    parser.add_argument("--show-benchmark", action="store_true",
+                        help="Print hardcoded April 2026 playoff benchmark at end of output")
     parser.add_argument("--db",      default=None)
     parser.add_argument("--dates",   default=None,
                         help="Comma-separated explicit dates (YYYY-MM-DD). "
@@ -434,6 +438,7 @@ if __name__ == "__main__":
         seed=args.seed,
         season=args.season,
         verbose=args.verbose,
+        show_benchmark=args.show_benchmark,
         db_path=Path(args.db) if args.db else DB_PATH,
         explicit_dates=explicit,
     )
