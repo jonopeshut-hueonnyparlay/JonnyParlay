@@ -22,6 +22,9 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from name_utils import name_key
+from http_utils import default_headers
+
 log = logging.getLogger("mlb_starter_fetcher")
 
 _MLB_SCHEDULE_URL = (
@@ -80,16 +83,6 @@ def _norm_name(name: str) -> str:
         return n.strip()
 
 
-def _name_key(name: str) -> str:
-    """Last name + first 3 chars of first name, e.g. 'Gerrit Cole' → 'cole_ger'."""
-    parts = _norm_name(name).split()
-    if len(parts) < 2:
-        return _norm_name(name)
-    suffixes = {"jr", "sr", "ii", "iii", "iv", "v"}
-    while len(parts) >= 2 and parts[-1] in suffixes:
-        parts.pop()
-    return f"{parts[-1]}_{parts[0][:3]}"
-
 
 def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, list[str]]:
     """Return {team_abbrev: [pitcher_full_name, ...]} for today's probable starters.
@@ -112,7 +105,7 @@ def fetch_confirmed_starters(game_date: str | None = None) -> dict[str, list[str
 
     try:
         url = _MLB_SCHEDULE_URL.format(date=date_str)
-        resp = _req.get(url, timeout=10)
+        resp = _req.get(url, timeout=10, headers=default_headers())
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
@@ -157,5 +150,5 @@ def is_confirmed(pitcher_name: str, team_abbrev: str,
     api_names = confirmed_starters.get(team_abbrev.upper(), [])
     if not api_names:
         return False
-    pitcher_key = _name_key(pitcher_name)
-    return any(pitcher_key == _name_key(n) for n in api_names)
+    pitcher_key = name_key(pitcher_name)
+    return any(pitcher_key == name_key(n) for n in api_names)
