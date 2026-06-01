@@ -5,6 +5,22 @@ All audits below are fully closed — no open items.
 
 ---
 
+## Research Audit Module 5 — 2026-05-31 — Coverage gap audit (0C/4H/21M/13I) — FINDINGS ONLY
+
+Full report: `docs/audits/research_audit_module5.md`
+
+Covered every .py file in JonnyParlay + EdgeModel not audited in Modules 1-4. Key new files inventoried: pick_log_io.py, discord_guard.py, webhook_fallback.py, http_utils.py, mlb_starter_fetcher.py, pick_labels.py, name_utils.py (JonnyParlay copy), projection_accuracy.py, historical_backtest.py, evaluate_projector.py, sabersim_backtest.py, post_nrfi_bonus.py, secrets_config.py, engine/tools/* (8 files).
+
+**HIGH (4) — open:**
+- H1: evaluate_projector._pos_to_group() uses stale G/F/C; DB migrated to SG/SF/PF/C on 2026-05-10 — matchup lookups silently return 1.0
+- H2: project_3pm(alpha=0.50) hardcoded; run_alpha_grid_search only searches PTS — no calibration path for 3PM
+- H3: post_nrfi_bonus.py Discord POST uses no UA header; CLAUDE.md + http_utils both document Mozilla UA needed to bypass Cloudflare 1010
+- H4: discord_guard.prune_guard() uses ZoneInfo("America/New_York") — crashes on Linux/Docker without tzdata, breaking all guard saves
+
+**MEDIUM (21) — open:** See full report. Top items: pick_labels._SUFFIXES mismatch, pick_log_lock timeout to stdout, mlb_starter_fetcher missing UA, sabersim_backtest hardcoded season, historical_backtest stale default season.
+
+---
+
 ## Session 5 — 2026-05-30 — EdgeModel calibration outputs (0C/2H/2M/1confirm) — commit 23cfa46
 
 Applied EdgeModel calibrate_distributions.py outputs (game-level within-player fit, 582 players / 69773 NBA game-logs) to `engine/run_picks.py` NB_R dict. Game-level calibration supersedes prior player-season aggregates.

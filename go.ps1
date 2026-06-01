@@ -23,6 +23,16 @@ function Write-Hdr([string]$msg) {
 }
 
 function Find-CSV([string]$sport) {
+    # Check sport-specific archive first (no time limit — latest file wins)
+    $archiveDir = "$env:USERPROFILE\Documents\Data\SaberSim\$($sport.ToUpper())"
+    if (Test-Path $archiveDir) {
+        $archived = Get-ChildItem "$archiveDir\*.csv" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -imatch "\b$sport\b" } |
+                    Sort-Object LastWriteTime -Descending |
+                    Select-Object -First 1
+        if ($archived) { return $archived }
+    }
+    # Fall back to Downloads (fresh files only — last 12h)
     $dirs = @("$env:USERPROFILE\Downloads\projections", "$env:USERPROFILE\Downloads") |
             Where-Object { Test-Path $_ }
     $csvs = $dirs | ForEach-Object {
