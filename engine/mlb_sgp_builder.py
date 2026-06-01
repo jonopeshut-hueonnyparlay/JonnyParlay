@@ -536,7 +536,14 @@ def _generate_mlb_thesis(legs):
         return f"{p['player'].split()[-1]} deep + {b_team} hits"
     if batters:
         team = Counter(l["team"] for l in batters).most_common(1)[0][0]
-        return f"{team} hitting barrage"
+        n_over  = sum(1 for l in batters if l["direction"] == "over")
+        n_under = sum(1 for l in batters if l["direction"] == "under")
+        if n_under > n_over:
+            return f"pitcher suppresses {team} bats"
+        elif n_over > n_under:
+            return f"{team} hitting barrage"
+        else:
+            return f"{team} mixed batter stack"
     return "MLB game-script stack"
 
 

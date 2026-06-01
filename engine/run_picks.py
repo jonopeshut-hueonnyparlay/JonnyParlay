@@ -6517,7 +6517,7 @@ def main():
                       not in _card_keys]
     _n_excluded = len(qualified) - len(_longshot_pool)
     if _n_excluded:
-        log.debug(f"Excluded {_n_excluded} premium picks from longshot pool")
+        logger.debug(f"Excluded {_n_excluded} premium picks from longshot pool")
     safest6_parlay = build_safest6_parlay(_longshot_pool)
     sport_sigmas = {}
     for sport in all_players:
