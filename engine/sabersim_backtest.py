@@ -102,7 +102,7 @@ def _get_actuals_for_date(game_date: str, db_path: str) -> Dict[str, dict]:
         FROM player_game_stats pgs
         JOIN players p  ON p.player_id  = pgs.player_id
         JOIN games   g  ON g.game_id    = pgs.game_id
-        WHERE g.game_date = ? AND pgs.min >= 1
+        WHERE g.game_date = ? AND pgs.min >= 5
         """,
         (game_date,)
     ).fetchall()
@@ -159,6 +159,24 @@ def _bias(errs):
 
 
 # ---------------------------------------------------------------------------
+# Season inference
+# ---------------------------------------------------------------------------
+
+def _infer_season(dates: List[str]) -> Optional[str]:
+    """Infer NBA season string (e.g. '2025-26') from a list of YYYY-MM-DD dates."""
+    if not dates:
+        return None
+    first = sorted(dates)[0]
+    try:
+        dt = datetime.date.fromisoformat(first)
+    except ValueError:
+        return None
+    if dt.month >= 10:
+        return f"{dt.year}-{str(dt.year + 1)[-2:]}"
+    return f"{dt.year - 1}-{str(dt.year)[-2:]}"
+
+
+# ---------------------------------------------------------------------------
 # Main comparison
 # ---------------------------------------------------------------------------
 
@@ -170,6 +188,8 @@ def run_comparison(
     verbose: bool = False,
     date_after: Optional[str] = None,
     date_before: Optional[str] = None,
+    season: Optional[str] = None,
+    detail: bool = False,
 ) -> dict:
     csv_dir = Path(csv_dir)
     csvs = sorted(csv_dir.glob("NBA_*.csv"))
@@ -186,6 +206,18 @@ def run_comparison(
                 if date_before and d > date_before: continue
             filtered.append(p)
         csvs = filtered
+
+    # Resolve season: explicit arg > inferred from CSV filenames > error
+    if season is None:
+        candidate_dates = [_extract_date(p.name) for p in csvs]
+        candidate_dates = [d for d in candidate_dates if d]
+        season = _infer_season(candidate_dates)
+        if season is None:
+            raise SystemExit(
+                "ERROR: Could not infer season from CSV filenames. "
+                "Pass --season YYYY-YY explicitly."
+            )
+        log.info("Inferred season: %s", season)
 
     log.info("Found %d SaberSim CSVs in %s", len(csvs), csv_dir)
 
@@ -212,7 +244,7 @@ def run_comparison(
             log.info("  Regenerating custom projections for %s ...", game_date)
             try:
                 projs = run_projections(
-                    game_date=game_date, season="2025-26",
+                    game_date=game_date, season=season,
                     implied_totals={}, spreads={},
                     injury_statuses={}, injury_minutes_overrides={},
                     db_path=db_path, persist=True,  # H8: persist=True so projections are cached in DB
@@ -311,6 +343,9 @@ def run_comparison(
         "cus_bias": round(_bias(all_c),  3),
     }
 
+    if detail:
+        result["detail"] = detail_rows
+
     return result
 
 
@@ -334,6 +369,10 @@ def _main():
                         help="Only include dates >= YYYY-MM-DD")
     parser.add_argument("--before", default=None,
                         help="Only include dates <= YYYY-MM-DD")
+    parser.add_argument("--season", default=None,
+                        help="NBA season string, e.g. 2025-26 (inferred from CSV dates if omitted)")
+    parser.add_argument("--detail", action="store_true",
+                        help="Include per-player error rows in JSON output under 'detail' key")
     args = parser.parse_args()
 
     result = run_comparison(
@@ -344,6 +383,8 @@ def _main():
         verbose=args.verbose,
         date_after=args.after,
         date_before=args.before,
+        season=args.season,
+        detail=args.detail,
     )
 
     if args.json:
