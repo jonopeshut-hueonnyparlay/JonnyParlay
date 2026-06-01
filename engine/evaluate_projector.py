@@ -42,7 +42,7 @@ from nba_projector import (
 # P17 — archetype strata for stratified MAE breakdown.
 # Order determines print order in the report.
 ROLE_ORDER = ["starter", "sixth_man", "rotation", "spot", "cold_start"]
-POS_ORDER  = ["G", "F", "C"]
+POS_ORDER  = ["SG", "SF", "PF", "C"]
 
 log = logging.getLogger("evaluate")
 if not log.handlers:
@@ -228,18 +228,26 @@ def project_pts(player_id: int, team_id: int, opp_team_id: int,
 
 
 def _pos_to_group(position: str) -> str:
-    """Map raw position string to position group key.
+    """Map raw position string to 5-group key matching nba_projector._pos_group().
 
-    Returns 'G', 'F', or 'C' — matches team_def_splits.position_group and
-    the _REB_POS_*_PRIOR dict keys in nba_projector.py.
-    Mirrors nba_projector._pos_group exactly so DvP lookups hit the right rows.
+    NBA API returns G/F/C + combos (never PG); effective mapping per CLAUDE.md:
+      G→SG, F→SF, G-F→SF, F-C→PF, C→C
+    Matches team_def_splits.position_group (migrated G/F/C→PG/SG/SF/PF/C 2026-05-10).
     """
     p = (position or "").upper().strip()
-    if p.startswith("G"):
-        return "G"
+    _MAP = {
+        "G": "SG", "PG": "SG", "SG": "SG",
+        "F": "SF", "G-F": "SF", "GF": "SF", "SF": "SF",
+        "F-C": "PF", "FC": "PF", "PF": "PF",
+        "C": "C",
+    }
+    if p in _MAP:
+        return _MAP[p]
     if p.startswith("C"):
         return "C"
-    return "F"
+    if p.startswith("G"):
+        return "SG"
+    return "SF"
 
 
 def project_per_min(player_id: int, game_date: str, season: str,
@@ -306,9 +314,8 @@ def project_stl(player_id: int, team_id: int, opp_team_id: int,
     Projection: stl_rate * proj_poss * matchup_stl
     """
     df = get_player_recent_games(player_id, game_date, n_games=30,
-                                  season_filter=season, db_path=db_path)
-    min_min = 8.0
-    df = df[df["min"] >= min_min].copy() if not df.empty else df
+                                  db_path=db_path)
+    df = df[df["min"] >= RATE_MIN_MIN].copy() if not df.empty else df
     pos_group  = _pos_to_group(position)
     team_pace  = get_team_pace(team_id, season, db_path=db_path)
     opp_pace   = get_team_pace(opp_team_id, season, db_path=db_path)
@@ -328,9 +335,8 @@ def project_blk(player_id: int, team_id: int, opp_team_id: int,
     P5: compute_stl_blk_rates now takes team_pace and returns per-possession rates.
     """
     df = get_player_recent_games(player_id, game_date, n_games=30,
-                                  season_filter=season, db_path=db_path)
-    min_min = 8.0
-    df = df[df["min"] >= min_min].copy() if not df.empty else df
+                                  db_path=db_path)
+    df = df[df["min"] >= RATE_MIN_MIN].copy() if not df.empty else df
     pos_group  = _pos_to_group(position)
     team_pace  = get_team_pace(team_id, season, db_path=db_path)
     opp_pace   = get_team_pace(opp_team_id, season, db_path=db_path)
@@ -573,15 +579,26 @@ def _print_stratified(out: dict) -> None:
 
 def run_alpha_grid_search(season: str, n: int, min_min: float,
                           db_path: Path, seed: int | None = None,
-                          use_actual_min: bool = False) -> None:
-    """Grid-search PTS_BLEND_ALPHA over [0.25, 0.70] to find MAE-optimal weight.
+                          use_actual_min: bool = False,
+                          stat: str = "PTS") -> None:
+    """Grid-search blend alpha over [0.25, 0.70] for PTS or 3PM.
 
-    Runs on the same sample (seed-fixed) so results are directly comparable.
+    stat="PTS": optimises PTS_BLEND_ALPHA (fga_pts/baseline_pts).
+    stat="3PM": optimises project_3pm alpha (fga_3pm/baseline_3pm).
     Bias correction is NOT applied during grid search so alpha absorbs it;
-    re-fit BLEND_BIAS_CORRECTION against residuals AFTER locking alpha.
+    re-fit BLEND_BIAS_CORRECTION against residuals AFTER locking alpha (PTS only).
     P12: use projected minutes by default (use_actual_min=False).
     """
-    log.info("Alpha grid search: sampling %d games from %s ...", n, season)
+    stat = stat.upper()
+    if stat not in ("PTS", "3PM"):
+        log.error("--grid-search-alpha supports stat=PTS or stat=3PM only (got %s)", stat)
+        return
+
+    actual_col  = "pts"  if stat == "PTS" else "fg3m"
+    fga_key     = "fga_pts"      if stat == "PTS" else "fga_3pm"
+    base_key    = "baseline_pts" if stat == "PTS" else "baseline_3pm"
+
+    log.info("Alpha grid search (%s): sampling %d games from %s ...", stat, n, season)
     sample = sample_games(season, n, min_min, db_path, seed=seed)
     log.info("Got %d rows  [minutes_mode=%s]", len(sample),
              "actual" if use_actual_min else "projected")
@@ -616,7 +633,7 @@ def run_alpha_grid_search(season: str, n: int, min_min: float,
             if comps is None:
                 continue
             comps_cache.append(comps)
-            actuals.append(float(row["pts"]))
+            actuals.append(float(row[actual_col]))
         except Exception:
             continue
 
@@ -625,11 +642,11 @@ def run_alpha_grid_search(season: str, n: int, min_min: float,
         return
 
     actuals_arr = np.array(actuals)
-    fga_arr  = np.array([c["fga_pts"]      for c in comps_cache])
-    base_arr = np.array([c["baseline_pts"] for c in comps_cache])
+    fga_arr  = np.array([c[fga_key]  for c in comps_cache])
+    base_arr = np.array([c[base_key] for c in comps_cache])
 
     print(f"\n{'='*60}")
-    print(f"Alpha grid search | {season} | n={len(actuals_arr)}")
+    print(f"Alpha grid search ({stat}) | {season} | n={len(actuals_arr)}")
     print(f"{'='*60}")
     print(f"  {'alpha':>6}  {'MAE':>7}  {'bias':>7}  {'RMSE':>7}")
     print(f"  {'-'*35}")
@@ -649,14 +666,16 @@ def run_alpha_grid_search(season: str, n: int, min_min: float,
             best_alpha = float(alpha)
         print(f"  {alpha:>6.2f}  {mae:>7.3f}  {bias:>+7.3f}  {rmse:>7.3f}{flag}")
 
-    # Compute recommended bias correction at optimal alpha
     preds_best = best_alpha * fga_arr + (1.0 - best_alpha) * base_arr
     bias_best  = float((preds_best - actuals_arr).mean())
 
     print(f"\n  Optimal alpha:               {best_alpha:.2f}")
     print(f"  Residual bias at alpha={best_alpha:.2f}: {bias_best:+.3f}")
-    print(f"  => Set PTS_BLEND_ALPHA = {best_alpha:.2f} in nba_projector.py")
-    print(f"  => Set BLEND_BIAS_CORRECTION = {-bias_best:+.3f} in nba_projector.py")
+    if stat == "PTS":
+        print(f"  => Set PTS_BLEND_ALPHA = {best_alpha:.2f} in nba_projector.py")
+        print(f"  => Set BLEND_BIAS_CORRECTION = {-bias_best:+.3f} in nba_projector.py")
+    else:
+        print(f"  => Set project_3pm(alpha={best_alpha:.2f}) default in evaluate_projector.py")
     print(f"{'='*60}\n")
 
 
@@ -672,7 +691,7 @@ def _main():
                         help="Random seed for reproducible sampling (default: 42)")
     parser.add_argument("--verbose",   action="store_true")
     parser.add_argument("--grid-search-alpha", action="store_true",
-                        help="Grid-search optimal PTS blend alpha and print recommended constants")
+                        help="Grid-search optimal blend alpha for --stat (PTS or 3PM) and print recommended constants")
     parser.add_argument("--use-actual-min", action="store_true",
                         help="Use actual minutes (old behaviour). Default: projected minutes (P12)")
     args = parser.parse_args()
@@ -685,6 +704,7 @@ def _main():
             db_path=Path(args.db),
             seed=args.seed,
             use_actual_min=args.use_actual_min,
+            stat=args.stat,
         )
         return
 
