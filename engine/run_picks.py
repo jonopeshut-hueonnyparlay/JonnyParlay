@@ -325,7 +325,7 @@ SIGMA = {
     # NBA / NHL — Normal distribution sigma: σ = max(proj * mult, min)
     # NOTE: SOG/HITS removed — POISSON_STATS takes priority.
     # REB and AST kept here for combo path (_combo_mu_sigma) only:
-    #   single-stat REB → NB_STATS (r=10.18); single-stat AST → NB_STATS (r=9.68).
+    #   single-stat REB → NB_STATS (r=14.7); single-stat AST → NB_STATS (r=12.16).
     # Calibrated 2026-05-25 from 84k+ player-games (3 seasons), within-player CV at min>=20.
     "REB": {"mult": 0.48, "min": 2.0},  # was 0.58/2.5 — empirical median CV=0.483 (3-season stable)
     "AST": {"mult": 0.53, "min": 2.0},  # NEW — combo path only; 3-season median CV=0.507; fallback was 0.40/2.0
@@ -463,6 +463,7 @@ MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 # Brier improvement: 6.0% (in-sample). H3 gate: 100 native over_p_raw rows.
 PLATT_A = 1.4988   # slope  — raw-probability space (not logit-space)
 PLATT_B = -0.8102  # intercept — raw-probability space (not logit-space)
+PLATT_SPACE = "raw"  # "raw"=sigmoid(A*p+B); "logit"=sigmoid(A*logit(p)+B). Change SIMULTANEOUSLY with formula+A/B at H3.
 
 GAME_SIGMA = {
     # "ml" sigma is separate from "spread" sigma — used only for moneyline win probability.
@@ -749,6 +750,10 @@ def _platt_calibrate_prop(over_p: float) -> float:
         raw = PLATT_A * math.log(over_p / (1.0 - over_p)) + PLATT_B
     AND paste the new logit-space A/B simultaneously. Doing one without the other is wrong.
     """
+    assert PLATT_SPACE == "raw", (
+        "PLATT_SPACE='logit' set but formula still uses raw-space. "
+        "Update the formula to logit-space before deploying logit A/B."
+    )
     raw = PLATT_A * over_p + PLATT_B
     raw = max(-30.0, min(30.0, raw))   # numerical stability
     return 1.0 / (1.0 + math.exp(-raw))
