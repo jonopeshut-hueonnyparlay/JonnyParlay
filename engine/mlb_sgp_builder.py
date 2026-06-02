@@ -277,7 +277,7 @@ def _size_mlb_sgp(legs):
     corr_mat = _build_corr_matrix_mlb(legs)
     cj = _copula_joint_prob(probs, corr_mat)
     parlay_implied = _implied_prob(_parlay_american(legs))
-    if cj <= parlay_implied:
+    if cj - parlay_implied < 0.10:
         return SGP_SIZE_DEFAULT
     no_vig_indep = 1.0
     for p in probs:

@@ -515,7 +515,7 @@ TIERS = {
     # T4 (GOLF_WIN) removed — see archived_golf_code.py
 }
 
-VAKE_BASE = [(0.03, 0.05, 0.50), (0.05, 0.07, 0.75), (0.07, 0.09, 1.00), (0.09, 9.99, 1.25)]
+KELLY_FRACTION = 6.0  # fractional Kelly multiplier; calibrated 2026-06-01 on 207 primary/bonus picks (mid-band median implied-F ≈ 5.9)
 VAKE_MULT = {
     "variance":    {"T1": 1.00, "T1B": 1.00, "T2": 0.85, "T3": 0.65},
     "tier":        {"T1": 1.00, "T1B": 1.00, "T2": 0.90, "T3": 0.60},
@@ -941,17 +941,28 @@ def pick_score(win_prob, edge, mode="Default", tier=None,
         score += INJURY_TRIGGER_BONUS.get(stat, INJURY_TRIGGER_BONUS_DEFAULT) if stat else INJURY_TRIGGER_BONUS_DEFAULT
     return score
 
-def base_units(edge):
-    """VAKE base unit from edge.
-    FIX M4: Safety floor — if edge < 3% somehow slips past G9, return minimum
-    instead of falling through to max 1.25u.
+def kelly_units(win_prob, odds):
+    """Continuous Kelly base sizing: f* = (b*p - q) / b, scaled by KELLY_FRACTION.
+
+    Returns 0.0 for negative or zero Kelly (no edge) so callers' floor logic fires.
+    FIX M4 equivalent: safety is handled by the floor in each caller.
     """
-    if edge < 0.03:
-        return 0.50  # safety floor
-    for lo, hi, size in VAKE_BASE:
-        if lo <= edge < hi:
-            return size
-    return 1.25
+    try:
+        o = float(odds)
+    except (ValueError, TypeError):
+        return 0.0
+    if o > 0:
+        b = o / 100.0
+    elif o < 0:
+        b = 100.0 / abs(o)
+    else:
+        return 0.0
+    p = float(win_prob)
+    q = 1.0 - p
+    f_star = (b * p - q) / b
+    if f_star <= 0:
+        return 0.0
+    return f_star * KELLY_FRACTION
 
 def round_units(u):
     """Round to nearest 0.25u."""
@@ -1483,8 +1494,7 @@ def size_picks_base(picks):
     """Apply BASE sizing to all qualifying picks (Full Card). No VAKE multipliers.
     Sub-50% win probability bets get capped at 0.75u max (high variance)."""
     for p in picks:
-        edge = p["adj_edge"]
-        base = base_units(edge)
+        base = kelly_units(p["win_prob"], p["odds"])
         # FIX L3: T3 picks (3PM, NRFI) get 0.25u floor instead of 0.50u
         tier = p.get("tier", "T2")
         floor = 0.25 if tier == "T3" else 0.50
@@ -1507,16 +1517,15 @@ def size_bonus_pick(pick):
     Floor mirrors size_picks_base (0.25u for T3, 0.50u otherwise). Cap stays
     at 1.25u. High-variance (<50% win prob) bets cap at 0.75u.
 
-    Audit H-9: returns ``None`` when the raw VAKE math rounds below the
+    Audit H-9: returns ``None`` when the Kelly math rounds below the
     tier floor. Previously we clamped up to the floor and shipped a dust
     bet; the clamp was hiding an upstream edge miscalculation. If the math
     says the pick isn't worth the floor, the right move is to drop it (and
     log a warning) rather than size up to a "sure it'll fit" number. The
     caller must treat ``None`` as "do not post / do not log".
     """
-    edge = pick.get("adj_edge", 0)
     tier = pick.get("tier", "T2")
-    base = base_units(edge)
+    base = kelly_units(pick.get("win_prob", 0), pick.get("odds", 0))
     var_m  = VAKE_MULT["variance"].get(tier, 0.85)
     tier_m = VAKE_MULT["tier"].get(tier, 0.90)
     raw = base * var_m * tier_m
@@ -1550,12 +1559,11 @@ def size_picks_vake(premium):
     pitcher_game_seen = defaultdict(int)  # R13: track pitcher props per game
 
     for p in premium_sorted:
-        edge = p["adj_edge"]
         tier = p["tier"]
         game = p.get("game", "")
         stat = p["stat"]
 
-        base = base_units(edge)
+        base = kelly_units(p["win_prob"], p["odds"])
 
         # Variance multiplier
         var_m = VAKE_MULT["variance"].get(tier, 0.85)
