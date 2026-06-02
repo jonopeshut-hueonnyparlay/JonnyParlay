@@ -12,7 +12,7 @@ Design rationale (Apr 2026 redesign + L8 copula update May 2026):
   - BetMGM is preferred book (independently measured 2-3% better SGP pricing).
   - L8 (May 2026): Gaussian copula joint probability replaces independence-based
     scoring and the raw avg_wp >= 0.70 sizing gate.  Fast equicorrelation approx
-    used during 91k search; full 4000-sample MC used once for the final SGP.
+    Full 300-sample MC used during the combo ranking pass; 4000-sample MC used once for final sizing/display.
     Embed now shows "Copula joint: X% | Implied: Y% (+Zpp)" for transparency.
 """
 from __future__ import annotations
@@ -667,7 +667,7 @@ def _score_sgp(legs):
     Weight rationale (L8 update, May 2026):
       copula    0.30 — replaces avg_wp juice_score; accounts for inter-leg
                         correlation when estimating the true joint hit rate.
-                        Uses fast equicorrelation approx (microseconds per combo).
+                        Uses full 300-sample MC copula (ranking pass).
       edge      0.25 — per-leg model edge; still the sharpest signal
       cohesion  0.25 — tag-sharing narrative coherence (kept for readability signal;
                         copula already captures the quantitative correlation benefit)
@@ -689,14 +689,11 @@ def _score_sgp(legs):
 
     cohesion = _correlation_cohesion(legs)
 
-    # L8: fast copula approx for combo scoring — avg ρ across all leg pairs.
-    # Benchmark: 3-leg at 0.70 avg WP, avg_rho=0.30 → copula_joint ≈ 0.385
-    # (vs independence 0.343); ideal thresholds: 3-leg=0.38, 4-leg=0.25.
-    pairs = list(combinations(range(n), 2))
-    avg_rho = (sum(_pairwise_rho(legs[i], legs[j]) for i, j in pairs) / len(pairs)
-               if pairs else 0.0)
+    # Full MC copula for ranking — n_samples=300 gives SE≈2.5% at joint≈0.40,
+    # tighter than the 15-20% relative error of the equicorrelation approx.
     probs = [l["fair_prob"] for l in legs]
-    copula_joint = _copula_joint_approx(probs, max(avg_rho, 0.0))
+    corr_mat = _build_corr_matrix(legs)
+    copula_joint = _copula_joint_prob(probs, corr_mat, n_samples=300)
     copula_ideal = 0.38 if n <= 3 else 0.25
     copula_score = min(copula_joint / copula_ideal, 1.0)
 
