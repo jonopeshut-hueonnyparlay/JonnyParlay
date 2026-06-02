@@ -50,7 +50,6 @@ from secrets_config import require_odds_api_key, DISCORD_BONUS_WEBHOOK
 from sgp_builder import (
     _cholesky,
     _copula_joint_prob,
-    _copula_joint_approx,
     _american_to_decimal,
     _decimal_to_american,
     _parlay_american,
@@ -238,7 +237,7 @@ def _score_mlb_sgp(legs):
     """Score an MLB SGP.
 
     Weights:
-      copula  0.35 — primary EV signal (correlation-adjusted joint hit rate)
+      copula  0.35 — primary EV signal (correlation-adjusted joint hit rate; full 300-sample MC)
       edge    0.30 — per-leg model edge
       odds    0.20 — Gaussian reward around target odds
       stat_div 0.15 — reward for mixing pitcher + batter legs
@@ -254,11 +253,9 @@ def _score_mlb_sgp(legs):
     else:
         odds_score = math.exp(-((parlay_odds - target) ** 2) / (2 * sigma_odds ** 2))
 
-    pairs = list(combinations(range(n), 2))
-    avg_rho = (sum(_pairwise_rho_mlb(legs[i], legs[j]) for i, j in pairs) / len(pairs)
-               if pairs else 0.0)
     probs = [l["fair_prob"] for l in legs]
-    copula_joint = _copula_joint_approx(probs, max(avg_rho, 0.0))
+    corr_mat = _build_corr_matrix_mlb(legs)
+    copula_joint = _copula_joint_prob(probs, corr_mat, n_samples=300)
     copula_ideal = 0.38 if n <= 3 else 0.25
     copula_score = min(copula_joint / copula_ideal, 1.0)
 
