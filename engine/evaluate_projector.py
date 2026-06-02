@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,24 @@ import pandas as pd
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
+
+# EdgeModel path discovery — nba_projector and projections_db live in EdgeModel/engine/.
+# Discovery: EDGEMODEL_ROOT env var → sibling repo → Windows home.
+# Mirrors the JONNYPARLAY_ROOT pattern used by historical_backtest.py.
+_EM_ROOT = Path(os.environ.get("EDGEMODEL_ROOT", "")).resolve()
+if not _EM_ROOT or not (_EM_ROOT / "engine" / "nba_projector.py").exists():
+    for _candidate in [
+        _HERE.parent.parent / "EdgeModel",       # sibling to JonnyParlay
+        Path.home() / "Documents" / "EdgeModel",
+    ]:
+        if (_candidate / "engine" / "nba_projector.py").exists():
+            _EM_ROOT = _candidate
+            break
+    else:
+        sys.exit("ERROR: Cannot find EdgeModel root. Set EDGEMODEL_ROOT env var.")
+_EM_ENGINE = _EM_ROOT / "engine"
+if str(_EM_ENGINE) not in sys.path:
+    sys.path.insert(0, str(_EM_ENGINE))
 
 from projections_db import (
     DB_PATH, get_conn, get_player_recent_games, get_team_avg_fga,

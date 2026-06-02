@@ -735,10 +735,9 @@ def size_sgp(legs, cohesion_score, _copula_joint=None):
         probs = [l["fair_prob"] for l in legs]
         corr_mat = _build_corr_matrix(legs)
         _copula_joint = _copula_joint_prob(probs, corr_mat)
-    # M8: Two-gate approach — separates vig removal from genuine correlation signal.
-    # Gate 1: positive EV vs book's vigged parlay price (basic profitability check).
+    # Gate 1: copula joint exceeds book-implied by ≥ 10pp (documented threshold).
     parlay_implied = _implied_prob(_parlay_american(legs))
-    if _copula_joint <= parlay_implied:
+    if _copula_joint - parlay_implied < 0.10:
         return SGP_SIZE_DEFAULT
     # Gate 2: correlation adds >= 1.5pp lift above no-vig independence baseline.
     # no_vig_independent = product of fair (no-vig) probs — what the parlay is worth
