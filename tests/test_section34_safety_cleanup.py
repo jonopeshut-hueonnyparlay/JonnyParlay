@@ -25,9 +25,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEST_CONTEXT = REPO_ROOT / "tests" / "test_context.py"
-PREFLIGHT_BAT = REPO_ROOT / "preflight.bat"
-MORNING_PREVIEW = REPO_ROOT / "engine" / "morning_preview.py"
-MORNING_PREVIEW_ROOT = REPO_ROOT / "morning_preview.py"
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 
 
@@ -155,59 +152,5 @@ def test_claude_md_still_mentions_run_picks_as_source_of_truth():
     assert "source of truth" in src.lower()
     assert "no sync step needed" in src.lower()  # L16: shims eliminate drift
 
-
-# ── L-13: preflight stale-lock cleanup covers all three locks ───────────────
-
-@pytest.fixture(scope="module")
-def preflight_src() -> str:
-    return PREFLIGHT_BAT.read_text(encoding="utf-8", errors="replace")
-
-
-def test_preflight_cleans_pick_log_lock(preflight_src: str):
-    """The original single-lock cleanup must still be intact."""
-    assert "pick_log.csv.lock" in preflight_src
-
-
-def test_preflight_cleans_clv_daemon_lock(preflight_src: str):
-    """L-13: add clv_daemon.lock to the cleanup sweep. A hard-kill of the
-    daemon process (power loss, taskkill /F /T) leaves this lockfile behind
-    and the next scheduled run can't acquire filelock → silent skip."""
-    assert "clv_daemon.lock" in preflight_src, (
-        "preflight.bat must also clean data\\clv_daemon.lock"
-    )
-
-
-def test_preflight_cleans_discord_posted_lock(preflight_src: str):
-    """L-13: also clean the discord guard lock. Same crash-survival concern."""
-    assert "discord_posted.json.lock" in preflight_src, (
-        "preflight.bat must also clean data\\discord_posted.json.lock"
-    )
-
-
-def test_preflight_lock_cleanup_uses_single_loop(preflight_src: str):
-    """Stylistic: rather than three separate `if exist` blocks, the fix uses
-    a single `for %%L in (...)` loop. Check that a loop construct is present
-    in the stale-lock section — protects against someone "fixing" it by
-    copy-pasting three near-identical blocks."""
-    # Slice the file around the "stale lockfiles" comment; verify a `for` loop
-    # appears between that header and the next REM header.
-    m = re.search(
-        r"REM.{0,10}stale lockfiles.*?(?=REM\s+\xe2\x94|REM\s+\xe2\x94\x80\xe2\x94\x80|\Z)",
-        preflight_src,
-        re.DOTALL | re.IGNORECASE,
-    )
-    if not m:
-        # Fallback: just find the block by content markers.
-        start = preflight_src.lower().find("stale lockfile")
-        nxt = preflight_src.lower().find("show today", start)
-        if start == -1:
-            pytest.fail("'stale lockfiles' header missing from preflight.bat")
-        block = preflight_src[start:nxt] if nxt != -1 else preflight_src[start:]
-    else:
-        block = m.group(0)
-    assert re.search(r"for\s+%%\w\s+in\s*\(", block), (
-        "stale-lock cleanup should be a single `for %%L in (...)` loop, "
-        "not three repeated `if exist` blocks"
-    )
 
 

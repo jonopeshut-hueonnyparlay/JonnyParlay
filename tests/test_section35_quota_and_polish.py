@@ -29,7 +29,6 @@ CAPTURE_CLV = REPO_ROOT / "engine" / "capture_clv.py"
 CAPTURE_CLV_ROOT = REPO_ROOT / "capture_clv.py"
 WEEKLY_RECAP = REPO_ROOT / "engine" / "weekly_recap.py"
 WEEKLY_RECAP_ROOT = REPO_ROOT / "weekly_recap.py"
-PREFLIGHT_BAT = REPO_ROOT / "preflight.bat"
 POST_NRFI = REPO_ROOT / "post_nrfi_bonus.py"
 
 
@@ -184,39 +183,6 @@ def test_capture_clv_root_mirror_matches_engine():
         src = root.read_text(encoding="utf-8", errors="replace")
         assert "runpy.run_module" in src, "root capture_clv.py must be a runpy shim (L16)"
 
-
-# ── L-5: preflight.bat actively enforces Python >= 3.10 ─────────────────────
-
-@pytest.fixture(scope="module")
-def preflight_src() -> str:
-    return PREFLIGHT_BAT.read_text(encoding="utf-8", errors="replace")
-
-
-def test_preflight_runs_version_check(preflight_src: str):
-    """L-5: the file must invoke `sys.version_info >= (3, 10)` somewhere in
-    the Python-presence section. The subprocess exits 1 on older interpreters,
-    which trips errorlevel and lets the batch file FAIL the preflight."""
-    assert re.search(
-        r"sys\.version_info\s*>=\s*\(\s*3\s*,\s*10\s*\)",
-        preflight_src,
-    ), "preflight.bat must enforce Python >= 3.10 via sys.version_info check"
-
-
-def test_preflight_fails_on_old_python(preflight_src: str):
-    """After the version check, there must be an errorlevel branch that
-    prints FAIL and jumps to :end — not just a WARN."""
-    # Find the version check line and capture everything up to the first
-    # lone `)` at column 0 (which closes the `if errorlevel 1 (` block).
-    m = re.search(
-        r"python\s+-c\s+\"import sys;\s*sys\.exit\(0 if sys\.version_info[^\n]*\n"
-        r"(if errorlevel 1 \(.*?\n\))",
-        preflight_src,
-        re.DOTALL,
-    )
-    assert m, "could not locate the version-check failure branch"
-    branch = m.group(1)
-    assert "[FAIL]" in branch, "old-python branch must print [FAIL], not [WARN]"
-    assert "goto :end" in branch, "old-python branch must jump to :end"
 
 
 # ── L-16: weekly_recap compute_pl no longer rounds internally ───────────────

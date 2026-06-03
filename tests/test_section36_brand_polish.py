@@ -28,7 +28,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE = REPO_ROOT / "engine"
 BRAND = ENGINE / "brand.py"
 BRAND_ROOT = REPO_ROOT / "brand.py"
-GO_PS1 = REPO_ROOT / "go.ps1"
 WEEKLY_RECAP = ENGINE / "weekly_recap.py"
 MORNING_PREVIEW = ENGINE / "morning_preview.py"
 RUN_PICKS = ENGINE / "run_picks.py"
@@ -125,44 +124,6 @@ def test_caller_has_no_hardcoded_tagline_in_code(path: Path, label: str):
         f"code — replace with BRAND_TAGLINE"
     )
 
-
-# ── L-6: go.ps1 sets PYTHONIOENCODING to utf-8 ──────────────────────────────
-
-@pytest.fixture(scope="module")
-def go_src() -> str:
-    return GO_PS1.read_text(encoding="utf-8", errors="replace")
-
-
-def test_go_ps1_sets_pythonioencoding(go_src: str):
-    """L-6: matches start_clv_daemon.bat so emoji/box-drawing chars in
-    Python tracebacks don't crash with UnicodeEncodeError under PowerShell."""
-    assert re.search(
-        r'\$env:PYTHONIOENCODING\s*=\s*"utf-8"',
-        go_src,
-    ), r'go.ps1 must set $env:PYTHONIOENCODING = "utf-8" (audit L-6)'
-
-
-def test_go_ps1_pythonioencoding_is_before_any_python_call(go_src: str):
-    """Env assignment must happen BEFORE the script invokes python.exe —
-    otherwise the first child process inherits the wrong encoding."""
-    env_idx = go_src.find('$env:PYTHONIOENCODING')
-    assert env_idx != -1
-    # Find the first actual `python` / `python.exe` invocation (not a
-    # comment or string reference).
-    py_idx = -1
-    for m in re.finditer(r"\bpython(?:\.exe)?\s+", go_src):
-        # Cheap comment filter: is this line's leading non-space a `#`?
-        line_start = go_src.rfind("\n", 0, m.start()) + 1
-        line_head = go_src[line_start:m.start()].lstrip()
-        if line_head.startswith("#"):
-            continue
-        py_idx = m.start()
-        break
-    if py_idx == -1:
-        pytest.skip("no python invocation found in go.ps1 — nothing to order")
-    assert env_idx < py_idx, (
-        "PYTHONIOENCODING assignment must precede the first python invocation"
-    )
 
 
 # ── M-17: weekly_recap clock format is non-zero-padded and locale-safe ──────

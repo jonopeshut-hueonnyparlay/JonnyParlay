@@ -21,8 +21,7 @@ Semantics
   renames silently fall back to copy+delete, which is not atomic).
 * Tmp file naming: ``<basename>.<random>.tmp``. Matches the existing
   ``mkstemp(prefix=basename + ".", suffix=".tmp")`` convention every caller
-  was already using, so the ``preflight.bat`` stale-tmp cleanup keeps
-  catching these.
+  was already using.
 * On success: ``os.replace(tmp, path)`` — atomic rename, no partial-write
   window.
 * On failure: the tmp file is unlinked (best-effort) and the exception is
@@ -88,8 +87,7 @@ def atomic_write_json(
     except Exception:
         # Best-effort cleanup of the orphaned tmp file. We swallow OSError
         # here because a failed unlink is strictly less important than
-        # reporting the original write failure — and preflight.bat sweeps
-        # any stray ``*.tmp`` on the next run.
+        # reporting the original write failure.
         try:
             os.unlink(tmp_path)
         except OSError:
