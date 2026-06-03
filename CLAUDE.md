@@ -20,15 +20,16 @@
 - `MLB_PARK_FACTORS` dict added to run_picks.py (keyed by home team abbrev, source: Baseball Savant 2022-2025). Not currently applied to projections (park effects already embedded in SaberSim inputs). Available for future park-neutral input paths.
 
 ## Data-gated / Open
-*Current gate counts: see `memory/project_backlog.md`.*
-- **H3 (Platt refit)**: gated on 100 post-v4 `over_p_raw` rows. Check: count non-empty `over_p_raw` in pick_log.csv. Use `python engine/calibrate_platt.py --native-only --force` to test; deploy only if OOS Brier improvement > 0.
-- **Combo Platt refit gate**: need 100 scored combo picks (RA/PRA/PR/PA). Check: `python analyze_picks.py --stat RA` (and PRA/PR/PA). Win_prob currently inflated ~5pp vs individual stats — no Platt applied at run_picks.py:2413. Refit only after gate reached and with combo-only Brier improvement check.
-- **MLB Platt refit gate**: need 100 MLB `over_p_raw` rows. Check: count non-empty `over_p_raw` in pick_log.csv where sport=MLB. Exclusion documented at run_picks.py:2407. Until gate: MLB win_probs are uncalibrated (unknown inflation direction).
-- **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv`. Daemon stable post-2026-05-09 MAX_UPTIME fix.
-- **SGP Platt calibration gate**: need 100 scored SGP slips. Current Platt (A=1.4988, B=−0.8102) built on NBA props; applying to SGP leg probs over-corrects (model→58% vs 69% actual win rate). Gate: 100 scored SGP slips before any Platt refit on SGP data.
-- **PICK_SCORE_TIER_MULT T1=0.90×**: Re-evaluate at n=30 T1 picks post-2026-05-23 gates (G8B/G8C/G8D). Raise to 0.95× if post-gate T1 WR ≥ 55%; remove T1 reserved slots if WR < 50%.
+*Current gate counts: see `memory/project_backlog.md`. Quick snapshot: run `python engine/gate_check.py`.*
+- **H3 (Platt refit)**: gated on 100 post-v4 `over_p_raw` rows — **69/100** as of 2026-06-03. Check: count non-empty `over_p_raw` in pick_log.csv. Use `python engine/calibrate_platt.py --native-only --force` to test; deploy only if OOS Brier improvement > 0.
+- **Combo Platt refit gate**: need 100 scored combo picks (RA/PRA/PR/PA) — **11/100** as of 2026-06-03. Check: `python analyze_picks.py --stat RA` (and PRA/PR/PA). Win_prob currently inflated ~5pp vs individual stats — no Platt applied at run_picks.py:2413. Refit only after gate reached and with combo-only Brier improvement check.
+- **MLB Platt refit gate**: need 100 MLB `over_p_raw` rows — **16/100** as of 2026-06-03. Check: count non-empty `over_p_raw` in pick_log.csv where sport=MLB. Exclusion documented at run_picks.py:2407. Until gate: MLB win_probs are uncalibrated (unknown inflation direction).
+- **Shadow CLV go-live**: need ~100 CLV rows in `pick_log_custom.csv` — **63/100** as of 2026-06-03. Daemon stable post-2026-05-09 MAX_UPTIME fix.
+- **SGP Platt calibration gate**: need 100 scored SGP slips — **52/100** as of 2026-06-03. Current Platt (A=1.4988, B=−0.8102) built on NBA props; applying to SGP leg probs over-corrects (model→58% vs 69% actual win rate). Gate: 100 scored SGP slips before any Platt refit on SGP data.
+- **PICK_SCORE_TIER_MULT T1=0.90×**: Re-evaluate at n=30 T1 picks post-2026-05-23 gates (G8B/G8C/G8D) — **1/30** as of 2026-06-03. Raise to 0.95× if post-gate T1 WR ≥ 55%; remove T1 reserved slots if WR < 50%.
 - **NBA TEAM_TOTAL over block**: maintained. Remove when n=30 TEAM_TOTAL over picks (check via `analyze_picks.py --stat TEAM_TOTAL`).
 - **Gate recalibration checkpoints** (2026-05-26 gate audit): G8B (AST over ≤4.5) at n=30 post-gate AST picks; G8C (SOG under ≤3.5) at n=30 SOG picks; G8D (3PM over ≤1.5) at n=30 3PM picks. Blocked picks not logged — requires shadow run with gates disabled or accumulated "top filtered" output review.
+- **WNBA go-live gate**: need 100 graded picks post-dampener (Jun 3+) — **0/100** as of 2026-06-03. Log: pick_log_wnba.csv.
 - **WNBA COMBO ρ**: n=9 players, near-zero values unreliable. Refit at n=500+ WNBA player-games in shadow DB.
 - **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`): refit 2026-05-09 on 76,604 trailing-10-game snapshots. MPG threshold confirmed at 26 (24-26 MPG players project like sixth_man regardless of sr; +6.9% PO bias with starter scalar vs -4.6% with sixth_man). 20/12/5 MPG and 0.60 sr unchanged.
 - **Position model** (2026-05-10): all position groupings expanded from G/F/C → PG/SG/SF/PF/C. `_pos_group()` in nba_projector, `_position_group()` in projections_db, and `_normalise_position()` in injury_parser all consistent. NBA API only returns G/F/C + combos → effective mapping: G→SG, F→SF, G-F→SF, F-C→PF, C→C. PG tier ready for finer data. Injury redistribution `_POS_FLOW` expanded to 5-position flows. All Bayesian priors (REB/AST/STL/BLK/TOV/archetypes) split using StatMuse 2024-25 per-36 ratios; weighted averages preserved. DB migrated: 587 players re-pulled, team_def_splits recomputed (2880 rows, SG/SF/PF/C groups). PF_high BLK tier added (≥0.020 BLK/min, ~Turner/JJJ). C/PF classification threshold raised 5→10 games.
@@ -89,6 +90,7 @@ Discord bot display name: **PicksByJonny**
 | `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
 | `setup_clv_task.ps1` | Registers CLV daemon scheduled task. S4U logon + WakeToRun. `ExecutionTimeLimit=22h`. Re-run as admin to reset. |
 | `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. Restored 2026-05-27. |
+| `engine/gate_check.py` | Single-shot CLI reporting all open gate counts. Run: `python engine/gate_check.py`. Added 2026-06-03. |
 
 ## Discord Structure (Target)
 ```
