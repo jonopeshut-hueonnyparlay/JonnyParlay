@@ -66,7 +66,6 @@ MIN_PARLAY_ODDS = 200
 MAX_PARLAY_ODDS = 450
 MIN_LEG_EDGE = 0.010
 MIN_LEG_WIN_PROB = 0.65
-MAX_LEG_ODDS = -115
 MAX_SGPS_PER_DAY = 3   # MLB has 15 games/night vs NBA's ~5 — cap to top 3 by score
 
 ODDS_BASE = "https://api.the-odds-api.com/v4"
@@ -411,8 +410,6 @@ def build_candidate_legs_mlb(projections, odds_data, event):
         if edge < MIN_LEG_EDGE:
             continue
         if fair < MIN_LEG_WIN_PROB:
-            continue
-        if odds > MAX_LEG_ODDS:
             continue
         if odds < -300:
             continue
