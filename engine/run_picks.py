@@ -185,6 +185,7 @@ MIN_DAILY_LAY_MARGIN = 4.0      # Minimum projected margin (pts) for a team to q
 MIN_LEG_EDGE_DAILY = 0.025      # Minimum per-leg edge for daily lay legs (screens out noise)
 MIN_LEG_COVER_PROB_DAILY = 0.58 # Minimum per-leg cover probability for daily lay legs
 LONGSHOT_SIZE = 0.25            # Unit size for longshot parlay (high variance, small stake)
+VALUE_PARLAY_SIZE = 0.25        # Unit size for 5-leg value parlay fallback; tune separately after data
 LONGSHOT_MAX_PER_GAME = 2       # F2.20: moved from inside build_safest6_parlay to top-level constant
 SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_builder.SGP_SIZE)
 
@@ -3844,6 +3845,52 @@ def build_safest6_parlay(qualified):
     best_book = max(book_counts, key=book_counts.get) if book_counts else ""
     return {"legs": safest, "combined_prob": combined_prob, "parlay_odds": parlay_odds, "book": best_book}
 
+
+def build_value_parlay(qualified):
+    """5-leg fallback parlay — fires only when 6-leg longshot cannot be built.
+    Same per-game (LONGSHOT_MAX_PER_GAME) and per-player (1) caps as longshot.
+    Returns None if fewer than 5 legs pass all caps.
+    """
+    ranked = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
+    game_counts: dict = {}
+    player_counts: dict = {}
+    safest = []
+    for p in ranked:
+        g = p.get("game", "")
+        player = p.get("player", "")
+        if game_counts.get(g, 0) >= LONGSHOT_MAX_PER_GAME:
+            continue
+        if player and player_counts.get(player, 0) >= 1:
+            continue
+        game_counts[g] = game_counts.get(g, 0) + 1
+        if player:
+            player_counts[player] = player_counts.get(player, 0) + 1
+        safest.append(p)
+        if len(safest) == 5:
+            break
+    if len(safest) < 5:
+        return None
+    combined_prob = 1.0
+    combined_dec  = 1.0
+    book_counts: dict = {}
+    for p in safest:
+        combined_prob *= p["win_prob"]
+        o = p.get("odds", -110)
+        if o > 0:
+            combined_dec *= 1.0 + o / 100.0
+        else:
+            combined_dec *= 1.0 + 100.0 / abs(o)
+        bk = _norm_book(p.get("book", ""))
+        if bk:
+            book_counts[bk] = book_counts.get(bk, 0) + 1
+    if combined_dec >= 2.0:
+        parlay_odds = int(round((combined_dec - 1.0) * 100.0))
+    else:
+        parlay_odds = int(round(-100.0 / (combined_dec - 1.0)))
+    best_book = max(book_counts, key=book_counts.get) if book_counts else ""
+    return {"legs": safest, "combined_prob": combined_prob, "parlay_odds": parlay_odds, "book": best_book}
+
+
 def build_alt_spread_parlay(game_lines, team_proj_map, sport_sigmas, alt_spread_data=None, debug=False):
     """
     Build alt spread parlay (NBA ONLY).
@@ -5107,6 +5154,157 @@ def _log_longshot(safest6_parlay, today_str, save=True):
             logger.warning(f"M-13 sidecar write failed: {_se}")
     except Exception as e:
         logger.error(f"Longshot log failed: {e}")
+
+
+def post_value_parlay(value_parlay, today, suppress_ping=False, save=True):
+    """Post the 5-leg value parlay to #bonus-drops (fires only when longshot cannot build)."""
+    if not value_parlay:
+        return
+    legs = value_parlay.get("legs", [])
+    if len(legs) < 5:
+        return
+
+    webhook = DISCORD_BONUS_WEBHOOK
+    if not webhook:
+        print("  [Discord] DISCORD_BONUS_WEBHOOK not configured — skipping value parlay post.")
+        return
+
+    guard_key = f"value_parlay:{today}"
+    if not _discord_claim_post(guard_key):
+        print(f"  [Discord] ⏭️  Value parlay already posted for {today} — skipping")
+        return
+
+    now_et = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
+    combined_prob = value_parlay.get("combined_prob", 0)
+    parlay_odds   = fmt_odds(value_parlay.get("parlay_odds", 0))
+    book_display  = display_book(value_parlay.get("book", "")) or "N/A"
+
+    _GL_STAT_CODES = {
+        "ML_FAV", "ML_DOG", "SPREAD", "TOTAL", "TEAM_TOTAL",
+        "F5_ML", "F5_SPREAD", "F5_TOTAL", "NRFI", "YRFI",
+    }
+    leg_lines = [f"5-leg value parlay — safest model picks\n"]
+    for i, leg in enumerate(legs, 1):
+        dir_word  = "Over" if str(leg.get("direction", "")).lower() == "over" else "Under"
+        wp_pct    = f"{leg.get('win_prob', 0)*100:.0f}%"
+        stat      = leg.get("stat", "")
+        stat_suffix = "" if stat in _GL_STAT_CODES else f" {stat}"
+        leg_lines.append(
+            f"**Leg {i}** | {leg.get('player','')} {dir_word} {leg.get('line','')}"
+            f"{stat_suffix} | {wp_pct}"
+        )
+    leg_lines.append(f"\n━━━━━━━━━━━━━━━━")
+    leg_lines.append(f"**{parlay_odds}** combined | **{VALUE_PARLAY_SIZE:.2f}u** | {combined_prob*100:.1f}% model prob | 📍 {book_display}")
+
+    payload = {
+        "username": "PicksByJonny",
+        "content": "" if suppress_ping else "@everyone",
+        "embeds": [{
+            "title": f"💎 Value Parlay — {today}",
+            "description": "\n".join(leg_lines),
+            "color": 0x2ECC71,
+            "footer": {"text": f"{BRAND_TAGLINE} · {now_et}"}
+        }]
+    }
+    if _webhook_post(webhook, payload, label=f"value parlay (5-leg @ {parlay_odds})"):
+        print(f"  [Discord] ✅ Value parlay posted ({parlay_odds})")
+        if save:
+            _log_value_parlay(value_parlay, today)
+    else:
+        _discord_release_post(guard_key)
+
+
+def _log_value_parlay(value_parlay, today_str, save=True):
+    """Append the value parlay to pick_log.csv as run_type='value_parlay'."""
+    if not save:
+        return
+    log_path = Path(PICK_LOG_PATH)
+    if not log_path.exists():
+        return
+    legs = value_parlay.get("legs", [])
+    if not legs:
+        return
+
+    run_time    = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M")
+    parlay_odds = value_parlay.get("parlay_odds", 0)
+    legs_json   = _legs_json(legs)
+
+    sports_seen = sorted({p.get("sport", "") for p in legs if p.get("sport", "")})
+    def _value_parlay_leg_label(p):
+        direction = str(p.get("direction", "")).lower()
+        stat      = p.get("stat", "")
+        line      = p.get("line", "")
+        short     = p.get("player", "").split()[-1]
+        if direction == "win":
+            team_short = " ".join(p.get("player", "").split()[:-1]) or short
+            return f"{team_short} WIN"
+        if direction == "cover":
+            sign = "+" if float(line or 0) > 0 else ""
+            return f"{short} {sign}{line} {stat}"
+        if stat in ("NRFI", "YRFI"):
+            matchup = p.get("team_abbrev", "")
+            return f"{matchup} {stat}" if matchup else stat
+        dir_char = "O" if direction == "over" else "U"
+        return f"{short} {dir_char}{line} {stat}"
+
+    player_desc = " / ".join(_value_parlay_leg_label(p) for p in legs)
+
+    row = {
+        "date":            today_str,
+        "run_time":        run_time,
+        "run_type":        "value_parlay",
+        "sport":           ",".join(sports_seen),
+        "player":          f"Value Parlay {len(legs)}-leg",
+        "team":            "",
+        "stat":            "PARLAY",
+        "line":            "",
+        "direction":       "",
+        "proj":            "",
+        "win_prob":        f"{value_parlay.get('combined_prob', 0):.4f}",
+        "edge":            "",
+        "odds":            _normalize_odds(int(round(parlay_odds))) if parlay_odds else "",
+        "book":            _norm_book(value_parlay.get("book", "")),
+        "tier":            "LONGSHOT",
+        "pick_score":      "",
+        "size":            _normalize_size(VALUE_PARLAY_SIZE),
+        "game":            player_desc,
+        "mode":            "",
+        "result":          "",
+        "closing_odds":    "",
+        "clv":             "",
+        "card_slot":       "",
+        "is_home":         "",
+        "context_verdict": "",
+        "context_reason":  "",
+        "context_score":   "",
+        "legs":            legs_json,
+        "over_p_raw":      "",
+    }
+
+    try:
+        with _pick_log_lock(log_path):
+            with open(log_path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+            already = any(
+                r.get("date") == today_str and r.get("run_type") == "value_parlay"
+                for r in rows
+            )
+            if already:
+                print("  [pick_log] Value parlay already logged today — skipping.")
+                return
+            with open(log_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore", restval="")
+                writer.writerow(row)
+                f.flush()
+                os.fsync(f.fileno())
+        print(f"  📝 Value parlay logged ({len(legs)} legs)")
+        try:
+            _write_schema_sidecar(log_path)
+        except Exception as _se:
+            logger.warning(f"M-13 sidecar write failed: {_se}")
+    except Exception as e:
+        logger.error(f"Value parlay log failed: {e}")
 
 
 def _card_guard_should_block_logging(card_was_up: bool, no_discord: bool, force_card: bool) -> bool:
@@ -6507,6 +6705,10 @@ def main():
     if _n_excluded:
         logger.debug(f"Excluded {_n_excluded} premium picks from longshot pool")
     safest6_parlay = build_safest6_parlay(_longshot_pool)
+    # 5-leg fallback: only builds if 6-leg longshot cannot be assembled
+    value_parlay = build_value_parlay(_longshot_pool) if safest6_parlay is None else None
+    if value_parlay:
+        print(f"  [Value Parlay] Built 5-leg value parlay ({fmt_odds(value_parlay['parlay_odds'])} combined).")
     sport_sigmas = {}
     for sport in all_players:
         sport_sigmas[sport] = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])
@@ -6774,6 +6976,7 @@ def main():
             # Daily lay and longshot post silently -- no @everyone ping
             post_daily_lay(alt_spread_parlay, today_str, suppress_ping=True, save=_save)
             post_longshot(safest6_parlay, today_str, suppress_ping=True, save=_save)
+            post_value_parlay(value_parlay, today_str, suppress_ping=True, save=_save)
 
             # -- KILLSHOT posts -> #killshot
             post_killshots_to_discord(killshots, today, today_str, suppress_ping=suppress_ping)

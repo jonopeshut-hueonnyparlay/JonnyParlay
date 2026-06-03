@@ -1416,7 +1416,7 @@ def daily_stats(picks):
 # Manual picks discontinued.
 COUNTED_RUN_TYPES = {"primary", "bonus"}
 PROP_RUN_TYPES    = {"primary", "bonus"}          # model props — used for W-L record / week / month
-PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot"}  # shown in recap for entertainment — not counted in W-L
+PARLAY_RUN_TYPES  = {"daily_lay", "sgp", "longshot", "value_parlay"}  # shown in recap for entertainment — not counted in W-L
 
 def get_graded_primary(all_rows):
     """Return graded picks (primary + bonus) grouped by date."""
@@ -2219,7 +2219,7 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
                 pass
         _scores_dict = _raw_scores if isinstance(_raw_scores, dict) else {}
 
-        if row.get("run_type", "").lower() in ("longshot", "sgp"):
+        if row.get("run_type", "").lower() in ("longshot", "sgp", "value_parlay"):
             result = grade_parlay_legs(row, all_player_stats, all_scores, all_linescores=all_linescores)
         elif row.get("run_type", "").lower() == "daily_lay":
             result = grade_daily_lay(row, all_scores)
