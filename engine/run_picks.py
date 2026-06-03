@@ -6169,6 +6169,7 @@ def main():
                         help="R7 override: max picks per game (default 2). Use on thin-slate nights e.g. --max-per-game 5")
     parser.add_argument("--no-sgp", action="store_true", help="Skip SGP builder (same-game parlay suggestions)")
     parser.add_argument("--sgp-only", action="store_true", help="Run SGP builder only — skip everything else (premium card, bonus, daily lay, longshot, killshots)")
+    parser.add_argument("--sgp-debug", action="store_true", help="Verbose per-game debug output for MLB SGP builder")
     parser.add_argument("--bonus-only", action="store_true", help="Run bonus drop + SGP only; skip premium card, daily lay, longshot, killshots, preview")
     parser.add_argument("--log-candidates", action="store_true",
                         help="Log all gate-passing picks (full candidate pool) to data/pick_log_candidates.csv "
@@ -7017,6 +7018,7 @@ def main():
                 confirm=_CONFIRM_MODE,
                 test=getattr(args, 'test', False),
                 save=not args.no_save,
+                debug=getattr(args, 'sgp_debug', False),
             )
         except Exception as e:
             print(f'  [MLB SGP] Error: {e} — skipping.')

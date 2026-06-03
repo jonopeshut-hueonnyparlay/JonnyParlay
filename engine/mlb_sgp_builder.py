@@ -438,13 +438,23 @@ def build_candidate_legs_mlb(projections, odds_data, event):
     return candidates
 
 
-def build_mlb_sgp(projections, odds_data, event):
+def build_mlb_sgp(projections, odds_data, event, _debug=False):
     """Build the best 3-4 leg MLB SGP for a given game."""
     candidates = build_candidate_legs_mlb(projections, odds_data, event)
+    if _debug:
+        game = f"{event.get('away_team','?')} @ {event.get('home_team','?')}"
+        print(f"    [DBG] {game}: {len(candidates)} candidates | odds_data keys: {len(odds_data)}")
+        for c in candidates[:6]:
+            print(f"      {c['player']} {c['stat']} {c['direction']} {c['line']} "
+                  f"wp={c['fair_prob']:.2f} edge={c['edge']:.3f} odds={c['odds']} "
+                  f"books={list(c.get('book_odds',{}).keys())}")
     if len(candidates) < MIN_LEGS:
+        if _debug:
+            print(f"    [DBG] SKIP: only {len(candidates)} candidates < MIN_LEGS={MIN_LEGS}")
         return None
 
     pool = candidates[:40]
+    n_no_common_book = n_odds_range = n_corr = 0
     for n_legs in range(min(MAX_LEGS, len(pool)), MIN_LEGS - 1, -1):
         leg_best_score = -1
         leg_best = None
@@ -455,6 +465,7 @@ def build_mlb_sgp(projections, odds_data, event):
             if len(set(l["player"] for l in legs)) < min_players:
                 continue
             if not _check_parlay_correlations_mlb(legs):
+                n_corr += 1
                 continue
             # All legs must be available on a single allowed book
             book_sets = [
@@ -464,6 +475,7 @@ def build_mlb_sgp(projections, odds_data, event):
             ]
             common_books = book_sets[0].intersection(*book_sets[1:])
             if not common_books:
+                n_no_common_book += 1
                 continue
             chosen_book = _pick_best_book(common_books)
             locked = []
@@ -473,6 +485,7 @@ def build_mlb_sgp(projections, odds_data, event):
                                 "book": chosen_book})
             parlay_odds = _parlay_american(locked)
             if parlay_odds < MIN_PARLAY_ODDS or parlay_odds > MAX_PARLAY_ODDS:
+                n_odds_range += 1
                 continue
             score = _score_mlb_sgp(locked)
             if score > leg_best_score:
@@ -480,6 +493,9 @@ def build_mlb_sgp(projections, odds_data, event):
                 leg_best = (locked, parlay_odds, score)
         if leg_best is not None:
             return leg_best
+    if _debug:
+        print(f"    [DBG] no SGP built: no_common_book={n_no_common_book} "
+              f"odds_range={n_odds_range} corr_kill={n_corr}")
     return None
 
 
@@ -728,7 +744,7 @@ def post_mlb_sgp(legs, parlay_odds, game, suppress_ping=False, today_str=None, s
 # -- Orchestrator --------------------------------------------------------------
 
 def run_mlb_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
-                        save=True):
+                        save=True, debug=False):
     today_str   = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     projections = {}
     for csv_path in csv_paths:
@@ -753,7 +769,7 @@ def run_mlb_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
         odds_data = fetch_mlb_event_props(eid)
         if not odds_data:
             continue
-        result = build_mlb_sgp(projections, odds_data, event)
+        result = build_mlb_sgp(projections, odds_data, event, _debug=debug)
         if result is None:
             continue
         legs, parlay_odds, score = result
