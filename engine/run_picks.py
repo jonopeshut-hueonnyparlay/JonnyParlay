@@ -5885,7 +5885,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
 
     checks = [
         (f"Premium card: {n_prem} picks generated", n_prem == MAX_PREMIUM_PICKS or n_prem == 0),
-        (f"Safest picks generated", len(safest5) > 0 or not qualified),
+        (f"Safest picks generated", len(safest5) > 0 or not all_qualified),
         (f"R9 directional balance: {n_overs_prem} overs on Premium", n_overs_prem >= 1 if n_overs_all >= 3 else True),
         (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 1),
         (f"R11 enforced: No U2.5 AST", not has_u25_ast),
