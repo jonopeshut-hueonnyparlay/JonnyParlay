@@ -6362,15 +6362,9 @@ def main():
             game_str = p.get("game", "")
             print(f"  {p['player']:<25} {p['stat']:<6} {p['line']:>5} {p['direction']:<6} {p['win_prob']*100:>5.1f}% {p['adj_edge']*100:>5.1f}% {p['odds']:>6} {p.get('gate_result','?'):<8} {game_str}")
 
-    if not qualified:
-        if shadow_picks:
-            print("\n  [!] No live-sport qualifying picks (shadow picks logged separately).")
-        else:
-            print("\n  [!] No qualifying picks found. Check CSV data and odds availability.")
-        return
-
-    # Log shadow picks to their own CSVs (never touches main pick_log)
-    # Apply base sizing first so shadow logs have real unit sizes (not 0)
+    # Log shadow picks to their own CSVs (never touches main pick_log).
+    # Must run BEFORE the early-return below so solo-WNBA runs still log
+    # even when qualified is empty (WNBA is always stripped into shadow_picks).
     if shadow_picks:
         shadow_picks = size_picks_base(shadow_picks)
     if not args.no_save:
@@ -6378,6 +6372,13 @@ def main():
             sport_shadow = [p for p in shadow_picks if p.get("sport") == sport]
             if sport_shadow:
                 log_picks(sport_shadow, args.mode, log_path_override=Path(path))
+
+    if not qualified:
+        if shadow_picks:
+            print("\n  [!] No live-sport qualifying picks (shadow picks logged separately).")
+        else:
+            print("\n  [!] No qualifying picks found. Check CSV data and odds availability.")
+        return
 
     # Base sizing for qualifying picks (Full Card)
     qualified = size_picks_base(qualified) if qualified else []
