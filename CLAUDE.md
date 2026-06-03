@@ -28,7 +28,6 @@
 - **SGP Platt calibration gate**: need 100 scored SGP slips. Current Platt (A=1.4988, B=−0.8102) built on NBA props; applying to SGP leg probs over-corrects (model→58% vs 69% actual win rate). Gate: 100 scored SGP slips before any Platt refit on SGP data.
 - **PICK_SCORE_TIER_MULT T1=0.90×**: Re-evaluate at n=30 T1 picks post-2026-05-23 gates (G8B/G8C/G8D). Raise to 0.95× if post-gate T1 WR ≥ 55%; remove T1 reserved slots if WR < 50%.
 - **NBA TEAM_TOTAL over block**: maintained. Remove when n=30 TEAM_TOTAL over picks (check via `analyze_picks.py --stat TEAM_TOTAL`).
-- **K distribution**: CLOSED 2026-05-26. Within-player var/mu=1.031 from 69k pitcher game-logs → Poisson confirmed. Moved from NB_STATS to POISSON_STATS. K unders still banned (G_K_NO_UNDERS), K overs still require line ≥6.0 (G_K_MIN_LINE) — directional biases are structural, not distribution-related.
 - **Gate recalibration checkpoints** (2026-05-26 gate audit): G8B (AST over ≤4.5) at n=30 post-gate AST picks; G8C (SOG under ≤3.5) at n=30 SOG picks; G8D (3PM over ≤1.5) at n=30 3PM picks. Blocked picks not logged — requires shadow run with gates disabled or accumulated "top filtered" output review.
 - **WNBA COMBO ρ**: n=9 players, near-zero values unreliable. Refit at n=500+ WNBA player-games in shadow DB.
 - **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`): refit 2026-05-09 on 76,604 trailing-10-game snapshots. MPG threshold confirmed at 26 (24-26 MPG players project like sixth_man regardless of sr; +6.9% PO bias with starter scalar vs -4.6% with sixth_man). 20/12/5 MPG and 0.60 sr unchanged.
@@ -45,6 +44,7 @@ Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
 | 2026-05-27 full system | 2C/11H/10M | ALL CLOSED. Shadow-stats system (10 new markets), NRFI pitcher fix, card filter relaxation. |
 | 2026-05-26 gate/rule/filter | 2C/5H/6M | ALL CLOSED (commit 89c9605). Full detail: `docs/audits/gate_audit_2026-05-26.md`. |
 | 2026-05-25 full system (12-track) | 2C/10H/23M | ALL CLOSED (18 commits). REB→NB(r=10.18) post-audit. |
+| 2026-06-02 K retirement | Retire K from eligible universe | CLOSED (commit 88a6e41). K permanently removed from all sport pipelines. mlb_sgp_builder K stat dropped. G_K_NO_UNDERS + G_K_MIN_LINE gates retired. |
 | Pre-2026-05-25 | multiple audits | All C/H/M closed. See `docs/audits/AUDIT_HISTORY.md`. |
 
 ---
@@ -85,7 +85,7 @@ Discord bot display name: **PicksByJonny**
 | `data/pick_log_mlb.csv` | Historical MLB shadow log (pre-go-live, Apr 12–May 19). MLB now posts to main `pick_log.csv`. |
 | `data/pick_log_wnba.csv` | WNBA shadow log — separate from pick_log.csv. Go-live gate: 100 graded picks post-dampener (Jun 3+). Current count: see project_wnba_shadow.md. |
 | `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. NBA SGP builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
-| `engine/mlb_sgp_builder.py` | MLB SGP builder (added 2026-05-29). 3-4 legs, +200–+450. Stats: K (over ≥5.5), OUTS (pitchers); HITS (batters). Hard kills: same-pitcher K+OUTS (r≈0.70), K over + opp HITS over (ρ≈−0.30). Gaussian copula with MLB-calibrated ρ table. Fires automatically when MLB CSV is present. Logs to pick_log.csv: `sport=MLB, tier=SGP`. |
+| `engine/mlb_sgp_builder.py` | MLB SGP builder (added 2026-05-29). 3-4 legs, +200–+450. Stats: OUTS (pitchers); HITS (batters). Gaussian copula with MLB-calibrated ρ table. Fires automatically when MLB CSV is present. Logs to pick_log.csv: `sport=MLB, tier=SGP`. |
 | `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
 | `setup_clv_task.ps1` | Registers CLV daemon scheduled task. S4U logon + WakeToRun. `ExecutionTimeLimit=22h`. Re-run as admin to reset. |
 | `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. Restored 2026-05-27. |
@@ -162,7 +162,6 @@ Two functions in run_picks.py run before `build_safest6_parlay()` to prevent ant
 
 **`filter_cross_type_correlations()`** — Prop vs GL pairs *(added 2026-05-29)*:
 - X1 (HARD): Pitcher HA/ER UNDER + opposing TEAM_TOTAL OVER same game (ρ≈−0.65–0.75 — fewer hits/ER = fewer runs)
-- X2 (HARD): Pitcher K OVER + opposing batter HITS OVER same game (ρ≈−0.30 — more Ks = fewer balls in play)
 
 **SGP hard kills** (in sgp_builder.py and mlb_sgp_builder.py) are separate — they operate within a single SGP slip, not the main card/longshot pool.
 
