@@ -4,15 +4,13 @@ Sizing: 0.25u default, 0.50u when copula EV margin >= 0.10 + avg edge >= 0.035.
 Usage: python mlb_sgp_builder.py <csv> [--dry-run] [--confirm]
 
 Stats available in SGP pool:
-  Pitchers: K (strikeouts, over >= 5.5 only), OUTS (recorded outs)
+  Pitchers: OUTS (recorded outs)
   Batters:  HITS
   Shadow stats (HRR/RBI/RUNS/ER) excluded until they graduate to live status.
 
-Hard kill rules (R0-R3):
+Hard kill rules (R0-R1):
   R0: Same player, same stat, same direction (dedup)
   R1: Same player, same stat, opposite direction (contradiction)
-  R2: Same pitcher, both K and OUTS (r ~ 0.70 — both driven by IP/dominance)
-  R3: Pitcher K over + opposing batter HITS over (rho ~ -0.30 — more K = fewer balls in play)
 
 Correlation table:
   Two pitchers same game (same direction):  rho = 0.10
@@ -76,28 +74,23 @@ ODDS_REGIONS = "us,us2,us_ex"
 API_SLEEP = 1.3
 
 # Stats and their API market keys
-MLB_SGP_MARKETS = "pitcher_strikeouts,pitcher_outs,batter_hits"
+MLB_SGP_MARKETS = "pitcher_outs,batter_hits"
 
 MLB_SGP_STAT_MAP = {
-    "pitcher_strikeouts": "K",
-    "pitcher_outs":       "OUTS",
-    "batter_hits":        "HITS",
+    "pitcher_outs":  "OUTS",
+    "batter_hits":   "HITS",
 }
 
 # Stat families for correlation and kill rules
-_PITCHER_STATS = {"K", "OUTS"}   # All come from pitchers — same pitcher R2 kill
-_BATTER_STATS  = {"HITS"}        # Come from batters
+_PITCHER_STATS = {"OUTS"}   # Pitcher output stats
+_BATTER_STATS  = {"HITS"}   # Come from batters
 
 # Stat distribution parameters (mirrors run_picks.py / sgp_builder.py)
-# K: Poisson confirmed (within-player var/mu = 1.031, 69k pitcher games, 2026-05-26)
 # HITS: Poisson (within-batter var/mu ~ 1.0, confirmed Poisson for low-mean counts)
-_POISSON_STATS_MLB = {"K", "HITS"}
+_POISSON_STATS_MLB = {"HITS"}
 
 # OUTS: Normal (SIGMA from run_picks.py — mult=0.311, min=1.0)
 _OUTS_SIGMA = {"mult": 0.311, "min": 1.0}
-
-# K line gate: K overs < 5.5 are structurally biased (G_K_MIN_LINE gate in run_picks.py)
-_K_MIN_LINE_OVER = 5.5
 
 
 # -- Math helpers (self-contained; Poisson/Normal CDF) -------------------------
@@ -167,20 +160,6 @@ def _is_negatively_correlated_mlb(leg_a, leg_b):
             and leg_a["stat"] == leg_b["stat"]
             and leg_a["direction"] != leg_b["direction"]):
         return True
-
-    # R2: Same pitcher, K + OUTS (both driven by IP/dominance, r ~ 0.70)
-    if (leg_a["player"] == leg_b["player"]
-            and leg_a["stat"] in _PITCHER_STATS
-            and leg_b["stat"] in _PITCHER_STATS):
-        return True
-
-    # R3: Pitcher K over + opposing batter HITS over (rho ~ -0.30)
-    # More Ks = fewer balls in play = fewer hits for opposing team
-    for k_leg, hits_leg in ((leg_a, leg_b), (leg_b, leg_a)):
-        if (k_leg["stat"] == "K" and k_leg["direction"] == "over"
-                and hits_leg["stat"] == "HITS" and hits_leg["direction"] == "over"
-                and k_leg.get("team") != hits_leg.get("team")):
-            return True
 
     return False
 
@@ -302,10 +281,7 @@ def load_mlb_projections(csv_path):
             is_pitcher = pos == "P"
             try:
                 if is_pitcher:
-                    k   = float(clean.get("K",  0) or 0)
                     ip  = float(clean.get("IP", 0) or 0)
-                    if k > 0:
-                        proj["K"] = k
                     if ip > 0:
                         proj["OUTS"] = ip * 3.0
                 else:
@@ -378,12 +354,6 @@ def fetch_mlb_event_props(event_id):
                 line      = o.get("point")
                 odds      = o.get("price")
                 if not player or line is None or odds is None:
-                    continue
-                # K unders structurally biased — exclude from SGP pool
-                if stat == "K" and direction == "under":
-                    continue
-                # K overs below min line excluded
-                if stat == "K" and direction == "over" and line < _K_MIN_LINE_OVER:
                     continue
                 side_key = (player, stat, line)
                 if side_key not in all_outcomes:
@@ -528,8 +498,6 @@ def _generate_mlb_thesis(legs):
     if pitchers and batters:
         p = pitchers[0]
         b_team = batters[0]["team"]
-        if p["stat"] == "K" and p["direction"] == "over":
-            return f"{p['player'].split()[-1]} dominates + {b_team} bats"
         return f"{p['player'].split()[-1]} deep + {b_team} hits"
     if batters:
         team = Counter(l["team"] for l in batters).most_common(1)[0][0]

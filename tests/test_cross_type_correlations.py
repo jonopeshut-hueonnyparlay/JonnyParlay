@@ -63,34 +63,6 @@ class TestCrossTypeX1:
 
 
 # ---------------------------------------------------------------------------
-# filter_cross_type_correlations — X2 (K over + opp HITS over)
-# ---------------------------------------------------------------------------
-
-class TestCrossTypeX2:
-    def test_k_over_plus_opp_hits_over_drops_lower(self):
-        """Pitcher K OVER + opposing batter HITS OVER → drop lower-score leg."""
-        k_pick   = _pick("K",    "over", "BOS",  score=70)
-        hit_pick = _pick("HITS", "over", "NYY",  score=45)
-        result   = rp.filter_cross_type_correlations([k_pick, hit_pick])
-        assert len(result) == 1
-        assert result[0]["stat"] == "K"
-
-    def test_k_under_hits_over_no_kill(self):
-        """K UNDER (not over) + opp HITS OVER → no kill (K under is a different signal)."""
-        k_pick   = _pick("K",    "under", "BOS", score=70)
-        hit_pick = _pick("HITS", "over",  "NYY", score=45)
-        result   = rp.filter_cross_type_correlations([k_pick, hit_pick])
-        assert len(result) == 2
-
-    def test_k_over_same_team_hits_over_no_kill(self):
-        """K OVER + SAME team HITS OVER → no kill (different sides of the ball)."""
-        k_pick   = _pick("K",    "over", "BOS", score=70)
-        hit_pick = _pick("HITS", "over", "BOS", score=45)
-        result   = rp.filter_cross_type_correlations([k_pick, hit_pick])
-        assert len(result) == 2
-
-
-# ---------------------------------------------------------------------------
 # filter_cross_type_correlations — unrelated picks pass through untouched
 # ---------------------------------------------------------------------------
 

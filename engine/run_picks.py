@@ -239,8 +239,6 @@ SHADOW_GATE_CODES = {
     "G8B",           # AST over ≤4.5 (0-5 NBA record; ≥5.5 is live)
     "G8C",           # SOG under ≤3.5 (42-52% WR; >3.5 is live)
     "G8D",           # 3PM over ≤1.5 (50% actual vs 70% model; >1.5 is live)
-    "G_K_NO_UNDERS", # K under (structural ace-start bias; K over is live)
-    "G_K_MIN_LINE",  # K over <6.0 (unpredictable at low lines; ≥6.0 is live)
     "G_TT_OVER_NBA", # TEAM_TOTAL over NBA (45.5% WR n=11; under is live; NBA-only block)
     "R4_REB_OVER",   # REB over (structural over-projection; under is live)
     "R4_REB_U25",    # REB under ≤2.5 (volatile at low lines; >2.5 under is live)
@@ -276,7 +274,7 @@ PROP_MARKETS = {
         "player_goals", "player_points", "player_blocked_shots",
     ],
     "MLB": [
-        "pitcher_strikeouts", "pitcher_outs", "pitcher_hits_allowed",
+        "pitcher_outs", "pitcher_hits_allowed",
         "batter_hits", "batter_hits_runs_rbis",
         "batter_rbis", "batter_runs_scored", "pitcher_earned_runs",
     ],
@@ -298,7 +296,7 @@ MARKET_TO_STAT = {
     "goalie_goals_against": "GA",
     # player_points for NHL → NHLPTS (G+A) via MARKET_TO_STAT_OVERRIDE below
     # MLB pitcher
-    "pitcher_strikeouts": "K", "pitcher_outs": "OUTS",
+    "pitcher_outs": "OUTS",
     "pitcher_hits_allowed": "HA",
     "pitcher_earned_runs": "ER",
     "pitcher_walks": "BB",
@@ -333,7 +331,6 @@ SIGMA = {
     "PTS": {"mult": 0.35, "min": 5.0},  # mult confirmed by MAE backtest (σ≈6.74 at proj=20 → CV=0.337); min raised 4.5→5.0 (MAE by role: spot=5.15, rotation=5.98)
     # "3PM" not here — NB_STATS/NB_R (Negative Binomial, r=9.15). Do NOT add.
     # MLB — calibrated 2026-05-26 from 69k pitcher / 169k batter game logs (2023-2026).
-    # "K" not here — POISSON_STATS (within-player var/mu=1.031; Poisson confirmed).
     # "HA" not here — NB_STATS (NB r=13.41; within-player var/mu=1.204, overdispersed).
     # "HRR" not here — NB_STATS (Negative Binomial, r=1.5).
     # "TB" not here — G_TB_DISABLED (structural kill A2 2026-05-22).
@@ -346,12 +343,11 @@ SIGMA = {
 }
 
 # HA removed from Poisson — overdispersed at typical lines; moved to NB_STATS (within-player var/mu=1.204, r=13.41)
-# K moved FROM NB_STATS to Poisson — within-player var/mu=1.031 across 69k pitcher game-logs; Poisson confirmed
 # GOALS, NHLPTS, NHLBLK: NHL skater stats — perfect Poisson (var/mu=0.989, 0.983, 1.081 from 141k skater games)
 # RUNS: MLB batter runs — Poisson (var/mu=0.969 from 169k batter games)
 # GA: NHL goalie goals against — Poisson (within-player var/mu=0.830 from 15k goalie game-logs; sub-Poisson is fine)
 # BB: MLB pitcher walks — Poisson (within-player var/mu=0.992 from 69k pitcher game-logs; Poisson confirmed)
-POISSON_STATS = {"SOG", "REC", "HITS", "K", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB"}  # AST/REB moved to NB_STATS; REC here makes SIGMA["REC"] unreachable (removed from SIGMA)
+POISSON_STATS = {"SOG", "REC", "HITS", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB"}  # AST/REB moved to NB_STATS; REC here makes SIGMA["REC"] unreachable (removed from SIGMA)
 POISSON_CUTOFF = 8.5
 
 # P16 — Negative binomial distribution for overdispersed count stats.
@@ -366,8 +362,6 @@ POISSON_CUTOFF = 8.5
 #        Normal was giving 63% for same projection — structural zero-inflation (batter 0-H/R/RBI ~37% of games).
 #   HA:  r=13.41 — calibrated 2026-05-26 from 69k pitcher game-logs (2023-2026); within-player var/mu=1.204.
 #        Confirmed 2026-05-30 by EdgeModel (56280 game-logs, var/mu=1.2037); no change.
-#   K:   MOVED TO POISSON_STATS — within-player var/mu=1.031 (69k game-logs); Poisson confirmed.
-#        Bimodal "early hook vs deep start" was population-level thinking, not within-player.
 #   RBI: r=0.87 — calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535.
 #        Low r means heavy zero-inflation (batters go 0-RBI in ~74% of games) with long right tail.
 #   ER:  r=2.62 — calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700.
@@ -442,7 +436,7 @@ WNBA_EDGE_FLOOR = 0.035                 # compensates for wider WNBA vig (~-115/
 
 # MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
 # G11/G11b: max 1 prop per player within each correlated group
-PITCHER_STATS = {"K", "OUTS", "HA", "ER", "BB", "PC"}  # All functions of IP — r ≈ 0.70+ between K/OUTS; ER/BB/PC added 2026-05-26
+PITCHER_STATS = {"OUTS", "HA", "ER", "BB", "PC"}  # All functions of IP — r ≈ 0.70+ between OUTS/HA; ER/BB/PC added 2026-05-26
 BATTER_CORR_STATS = {"HITS", "TB", "HRR"}           # HITS is component of TB and HRR — r ≈ 0.70+
 MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 
@@ -508,7 +502,7 @@ BLEND_ALPHA = 0.25
 TIERS = {
     # Prop stats only — game lines (SPREAD, TOTAL, TEAM_TOTAL, ML_*, F5_*) are NOT routed
     # through get_tier(); their tier is set directly at pick creation (sport-aware).
-    "T1":  {"stats": {"AST", "SOG", "REC", "K", "HRR"}, "min_edge": 0.03},
+    "T1":  {"stats": {"AST", "SOG", "REC", "HRR"}, "min_edge": 0.03},
     "T1B": {"stats": {"REB", "HITS", "HA"},              "min_edge": 0.03},  # unders 3.5+ only / low volume
     "T2":  {"stats": {"PTS", "PRA", "PR", "PA", "RA", "YARDS", "TB", "OUTS",
                       "NHLBLK", "SV", "RBI", "RUNS", "ER", "GA", "BB", "PC"}, "min_edge": 0.05},
@@ -551,7 +545,6 @@ INJURY_TRIGGER_BONUS = {   # redistribution-bump picks — stat-keyed score bonu
     "PTS":   8,  # scorer absent → role bump, moderate lag
     "SOG":   8,  # NHL SOG replacement, similar lag profile to PTS
     "REB":   7,  # rebounder absent, default
-    "K":     5,  # MLB SP scratch → replacement K (new market, smaller lag)
 }
 INJURY_TRIGGER_BONUS_DEFAULT = 7  # fallback for stats not in the dict above
 
@@ -1035,7 +1028,7 @@ def check_prop_gates(pick):
         return False, "G7b"
 
     # G8: binary fragility (FIX M3: extended to MLB low-count stats)
-    if stat in ("AST", "REB", "SOG", "K", "HA", "HITS") and line <= 1.5:
+    if stat in ("AST", "REB", "SOG", "HA", "HITS") and line <= 1.5:
         return False, "G8"
 
     # G8B: AST over at line ≤ 4.5 — 0-5 record vs 2-1 at line ≥ 5.5 (n=8).
@@ -1082,12 +1075,6 @@ def check_prop_gates(pick):
             return False, "G_WNBA_EDGE"
 
     # G_MLB_STRUCT: MLB structural direction gates based on known SaberSim biases.
-    # K: SaberSim projects conservative median IP; market prices to mode IP → K unders always lose.
-    #    Only bet K overs, and only at meaningful lines where ace throughput is predictable.
-    if stat == "K" and direction == "under":
-        return False, "G_K_NO_UNDERS"
-    if stat == "K" and direction == "over" and line < 6.0:
-        return False, "G_K_MIN_LINE"
     # OUTS: Conservative IP bias makes unders lose structurally (actual IP > SaberSim median).
     # Hard kill softened to WP≥0.60 gate: extreme model conviction can overcome bias when
     # SaberSim projects a very short outing and market line is set high.
@@ -3602,14 +3589,11 @@ def filter_cross_type_correlations(picks):
 
       X1 (HARD): Pitcher HA/ER UNDER + opposing team TEAM_TOTAL OVER (same game)
                  ρ ≈ −0.65–0.75 — mechanically anti-correlated (fewer hits/ER = fewer runs)
-      X2 (HARD): Pitcher K OVER + opposing batter HITS OVER (same game)
-                 ρ ≈ −0.25–0.35 — more strikeouts = fewer balls in play = fewer hits
 
     Both picks could independently qualify and land in the longshot pool.
     Drop the lower pick_score leg on conflict.
     """
     _PITCHER_KILL = {("HA", "under"), ("ER", "under")}   # X1 triggers
-    _K_OVER       = {("K",  "over")}                      # X2 trigger
 
     game_groups: dict = {}
     for p in picks:
@@ -3643,16 +3627,6 @@ def filter_cross_type_correlations(picks):
                     # X1: pitcher HA/ER under + opposing TEAM_TOTAL over
                     if (pp_key in _PITCHER_KILL and
                             op_stat == "TEAM_TOTAL" and op_dir == "over" and
-                            same_game_opp):
-                        conflict = True
-                        score_pp = pitcher_pick.get("pick_score") or 0
-                        score_op = other_pick.get("pick_score") or 0
-                        loser = other_pick if score_pp >= score_op else pitcher_pick
-                        break
-
-                    # X2: pitcher K over + opposing batter HITS over
-                    if (pp_key in _K_OVER and
-                            (op_stat, op_dir) == ("HITS", "over") and
                             same_game_opp):
                         conflict = True
                         score_pp = pitcher_pick.get("pick_score") or 0
@@ -6315,7 +6289,7 @@ def main():
     # CHANGE 1 / FIX 5: Full GLC matrix — drop hard-conflict game-line pairs
     qualified_pre_glc = list(qualified)  # snapshot for thesis block
     qualified = filter_game_line_correlations(qualified)
-    # Drop prop ↔ game-line anti-correlations (pitcher HA/ER under + opp TT over; K over + HITS over)
+    # Drop prop ↔ game-line anti-correlations (pitcher HA/ER under + opp TT over)
     qualified = filter_cross_type_correlations(qualified)
 
     # CHANGE 3: Thesis block — show pre vs post GLC per game (multi-pick games only)
