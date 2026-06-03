@@ -66,6 +66,7 @@ MIN_PARLAY_ODDS = 200
 MAX_PARLAY_ODDS = 450
 MIN_LEG_EDGE = 0.010
 MIN_LEG_WIN_PROB = 0.65
+MIN_LEG_WIN_PROB_OUTS = 0.62   # OUTS-specific floor (Gaussian sigma=0.311 makes 0.65 too tight)
 MAX_SGPS_PER_DAY = 3   # MLB has 15 games/night vs NBA's ~5 — cap to top 3 by score
 
 ODDS_BASE = "https://api.the-odds-api.com/v4"
@@ -160,6 +161,16 @@ def _is_negatively_correlated_mlb(leg_a, leg_b):
             and leg_a["direction"] != leg_b["direction"]):
         return True
 
+    # R2_MLB: OUTS under + HITS under, same game — pitcher knocked out early ⇒
+    # opposing batters are getting hits; HITS under is structurally contradicted
+    game_a = leg_a.get("game", "")
+    game_b = leg_b.get("game", "")
+    if game_a and game_b and game_a == game_b:
+        stats = {leg_a["stat"], leg_b["stat"]}
+        dirs  = (leg_a["direction"], leg_b["direction"])
+        if stats == {"OUTS", "HITS"} and dirs[0] == "under" and dirs[1] == "under":
+            return True
+
     return False
 
 
@@ -191,6 +202,17 @@ def _pairwise_rho_mlb(leg_a, leg_b):
     # Cross-team batters — weaker game environment link
     if stat_a in _BATTER_STATS and stat_b in _BATTER_STATS and not same_team:
         return 0.08 if same_dir else 0.02
+
+    # OUTS over + opposing HITS under — pitcher dominance ⇒ fewer opposing hits (ρ≈0.30)
+    is_outs_over_hits_under = (
+        (stat_a in _PITCHER_STATS and stat_b in _BATTER_STATS
+         and dir_a == "over" and dir_b == "under" and not same_team)
+        or
+        (stat_b in _PITCHER_STATS and stat_a in _BATTER_STATS
+         and dir_b == "over" and dir_a == "under" and not same_team)
+    )
+    if is_outs_over_hits_under:
+        return 0.30
 
     # Pitcher + batter (same or different teams, same game) — defense != offense
     return 0.02
@@ -409,12 +431,13 @@ def build_candidate_legs_mlb(projections, odds_data, event):
 
         if edge < MIN_LEG_EDGE:
             continue
-        if fair < MIN_LEG_WIN_PROB:
+        _wp_floor = MIN_LEG_WIN_PROB_OUTS if stat == "OUTS" else MIN_LEG_WIN_PROB
+        if fair < _wp_floor:
             continue
         if odds < -300:
             continue
 
-        wp_excess  = max(0.0, fair - MIN_LEG_WIN_PROB)
+        wp_excess  = max(0.0, fair - _wp_floor)
         pool_score = edge * 0.40 + wp_excess * 0.60
         candidates.append({
             "player":    player,
