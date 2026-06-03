@@ -243,7 +243,7 @@ SHADOW_GATE_CODES = {
     "G_TT_OVER_NBA", # TEAM_TOTAL over NBA (45.5% WR n=11; under is live; NBA-only block)
     "R4_REB_OVER",   # REB over (structural over-projection; under is live)
     "R4_REB_U25",    # REB under ≤2.5 (volatile at low lines; >2.5 under is live)
-    "R11_AST_U25",   # AST under ≤2.5 (sub-elite lines; >2.5 under is live)
+    "R11_AST_U25",   # AST under 1.5 and 2.5 (sub-elite lines; 0.5 and >2.5 are live)
 }
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
@@ -1206,7 +1206,7 @@ def check_game_gates(pick):
 # ============================================================
 
 def apply_hard_rules(picks, shadow_dest=None):
-    """Apply R4 (REB bans), R11 (U2.5 AST ban) before anything else.
+    """Apply R4 (REB bans), R11 (AST under 1.5/2.5 ban) before anything else.
 
     shadow_dest: if provided, killed picks are appended here (for shadow logging)
     instead of being silently dropped.
@@ -1227,8 +1227,8 @@ def apply_hard_rules(picks, shadow_dest=None):
                 p.setdefault("pick_score", None)
                 shadow_dest.append(p)
             continue
-        # R11: U2.5 AST — sub-elite lines; routed to shadow
-        if p["stat"] == "AST" and p["direction"] == "under" and p["line"] <= 2.5:
+        # R11: AST under 1.5/2.5 — sub-elite lines; 0.5 and >2.5 are live
+        if p["stat"] == "AST" and p["direction"] == "under" and p["line"] in (1.5, 2.5):
             if shadow_dest is not None:
                 p["gate_result"] = "R11_AST_U25"
                 p.setdefault("pick_score", None)
@@ -5988,7 +5988,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     for p in premium:
         stat_counts_chk[p["stat"]] += 1
     max_same = max(stat_counts_chk.values()) if stat_counts_chk else 0
-    has_u25_ast = any(p["stat"] == "AST" and p["direction"] == "under" and p["line"] <= 2.5 for p in all_qualified)
+    has_u25_ast = any(p["stat"] == "AST" and p["direction"] == "under" and p["line"] in (1.5, 2.5) for p in all_qualified)
     has_u25_reb = any(p["stat"] == "REB" and p["direction"] == "under" and p["line"] <= 2.5 for p in all_qualified)
     has_reb_over = any(p["stat"] == "REB" and p["direction"] == "over" for p in all_qualified)
     has_g8_fail = any(
@@ -6060,7 +6060,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"Safest picks generated", len(safest5) > 0 or not all_qualified),
         (f"R9 directional balance: {n_overs_prem} overs on Premium", n_overs_prem >= 1 if n_overs_all >= 3 else True),
         (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 1),
-        (f"R11 enforced: No U2.5 AST", not has_u25_ast),
+        (f"R11 enforced: No AST under 1.5 or 2.5", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
         (f"G8/G8B/G8C/G8D enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over ≤ 4.5; no SOG under ≤ 3.5; no 3PM over ≤ 1.5", not has_g8_fail),
         (f"G13B enforced: TB killed (G_TB_DISABLED), HRR fully killed (G_HRR_DISABLED)", not has_g13b_fail),

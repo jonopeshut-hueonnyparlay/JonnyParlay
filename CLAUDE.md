@@ -29,6 +29,8 @@
 - **PICK_SCORE_TIER_MULT T1=0.90×**: Re-evaluate at n=30 T1 picks post-2026-05-23 gates (G8B/G8C/G8D) — **1/30** as of 2026-06-03. Raise to 0.95× if post-gate T1 WR ≥ 55%; remove T1 reserved slots if WR < 50%.
 - **NBA TEAM_TOTAL over block**: maintained. Remove when n=30 TEAM_TOTAL over picks (check via `analyze_picks.py --stat TEAM_TOTAL`).
 - **Gate recalibration checkpoints** (2026-05-26 gate audit): G8B (AST over ≤4.5) at n=30 post-gate AST picks; G8C (SOG under ≤3.5) at n=30 SOG picks; G8D (3PM over ≤1.5) at n=30 3PM picks. Blocked picks not logged — requires shadow run with gates disabled or accumulated "top filtered" output review.
+- **HRR go-live gate**: HRR is in SHADOW_STATS (accumulating fresh data; G_HRR_DISABLED removed 2026-05-27). Was 57.4% WR at line=0.5 under Normal path; NB r=1.5 corrects distribution. Re-evaluate go-live at n=50 graded HRR shadow picks; G13B win_prob thresholds still active (≥0.58 at line ≤0.5, ≥0.65 at line >0.5).
+- **AST under 0.5 activated** (R11 narrowed 2026-06-03): 32W/12L 72.7% WR. R11 now blocks only lines 1.5 and 2.5; line 0.5 is live.
 - **WNBA go-live gate**: need 100 graded picks post-dampener (Jun 3+) — **0/100** as of 2026-06-03. Log: pick_log_wnba.csv.
 - **WNBA COMBO ρ**: n=9 players, near-zero values unreliable. Refit at n=500+ WNBA player-games in shadow DB.
 - **Role-tier thresholds** (26/20/12/5 MPG, 0.60 starter_rate in `classify_role()`): refit 2026-05-09 on 76,604 trailing-10-game snapshots. MPG threshold confirmed at 26 (24-26 MPG players project like sixth_man regardless of sr; +6.9% PO bias with starter scalar vs -4.6% with sixth_man). 20/12/5 MPG and 0.60 sr unchanged.
