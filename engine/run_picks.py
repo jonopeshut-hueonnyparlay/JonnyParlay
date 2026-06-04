@@ -413,16 +413,14 @@ SIGMA_WNBA = {
     "3PM": {"mult": 0.48, "min": 0.70},  # Normal model; NB_R not used for WNBA
 }
 
-# WNBA combo correlations — calibrated from 9 players / 336 games (2024 season).
-# WARNING: n=9 players is too small for reliable correlation estimation. SE ≈ 0.055
-# per pair, so the near-zero values (AST pairs) could be noise or real WNBA structure.
-# Near-zero correlation means combos are treated as nearly additive (independent).
-# Refit gate: 1000+ WNBA player-games (approx one full season of box scores).
-# Until then these values are directionally plausible but statistically uncertain.
+# WNBA combo correlations — calibrated 2026-06-04 from 202 players / 13,322 games
+# (2023–2026 Regular Season, min>=8, n>=10 per player). Within-player weighted
+# Pearson; SE≈0.009. All three pairs ~0.04–0.05 below NBA equivalents, consistent
+# with slightly lower WNBA pace/usage variance.
 COMBO_RHO_WNBA = {
-    ("PTS", "REB"): 0.13,
-    ("PTS", "AST"): 0.04,
-    ("REB", "AST"): 0.05,
+    ("PTS", "REB"): 0.294,
+    ("PTS", "AST"): 0.188,
+    ("REB", "AST"): 0.200,
 }
 
 # WNBA early-season gate — opening-day extreme variance is structural (SaberSim cannot
@@ -874,7 +872,7 @@ def _combo_mu_sigma(proj_player: dict, stat: str, sport: str = "") -> tuple:
 
     Var(X+Y) = Var(X) + Var(Y) + 2·ρ·σ(X)·σ(Y).
     Individual σ from SIGMA dict (SIGMA_WNBA for WNBA); pairwise ρ from COMBO_RHO
-    (COMBO_RHO_WNBA for WNBA — all pairs ~0.20 lower than NBA).
+    (COMBO_RHO_WNBA for WNBA — all pairs ~0.04–0.05 below NBA equivalents).
     """
     components = COMBO_COMPONENTS[stat]
     rho_table = COMBO_RHO_WNBA if sport == "WNBA" else COMBO_RHO

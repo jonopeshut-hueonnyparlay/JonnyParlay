@@ -6,7 +6,7 @@ Normal via SIGMA_WNBA, matching the existing WNBA 3PM treatment.
 """
 
 import pytest
-from run_picks import calc_prop_prob, normal_cdf, negbinom_cdf, check_prop_gates
+from run_picks import calc_prop_prob, normal_cdf, negbinom_cdf, check_prop_gates, _combo_mu_sigma
 
 
 # ---------------------------------------------------------------------------
@@ -107,3 +107,52 @@ def test_wnba_reb_g14_blocks_borderline():
     passed, gate = check_prop_gates(pick)
     assert not passed
     assert gate == "G14"
+
+
+# ---------------------------------------------------------------------------
+# COMBO_RHO_WNBA: _combo_mu_sigma uses 2026-06-04 calibrated rho values
+# ---------------------------------------------------------------------------
+
+def test_wnba_pra_combo_mu_sigma():
+    """WNBA PRA mu=sum(components), sigma computed with new rho (0.294/0.188/0.200)."""
+    proj = {"PTS": 15.0, "REB": 7.0, "AST": 4.0}
+    mu, sigma = _combo_mu_sigma(proj, "PRA", sport="WNBA")
+
+    assert mu == pytest.approx(26.0)
+
+    sig_pts = max(15.0 * 0.38, 3.5)   # 5.7
+    sig_reb = max(7.0  * 0.45, 2.0)   # 3.15
+    sig_ast = max(4.0  * 0.55, 1.1)   # 2.2
+    var = sig_pts**2 + sig_reb**2 + sig_ast**2
+    var += 2 * 0.294 * sig_pts * sig_reb
+    var += 2 * 0.188 * sig_pts * sig_ast
+    var += 2 * 0.200 * sig_reb * sig_ast
+    assert sigma == pytest.approx(max(var**0.5, 2.0), rel=1e-6)
+
+    # New rho is larger on all pairs — sigma must be wider than provisional values
+    var_old = sig_pts**2 + sig_reb**2 + sig_ast**2
+    var_old += 2 * 0.13 * sig_pts * sig_reb
+    var_old += 2 * 0.04 * sig_pts * sig_ast
+    var_old += 2 * 0.05 * sig_reb * sig_ast
+    assert sigma > max(var_old**0.5, 2.0), "New rho should widen WNBA PRA sigma"
+
+
+def test_wnba_pr_combo_mu_sigma():
+    """WNBA PR uses PTS-REB rho=0.294."""
+    proj = {"PTS": 20.0, "REB": 8.0}
+    mu, sigma = _combo_mu_sigma(proj, "PR", sport="WNBA")
+
+    assert mu == pytest.approx(28.0)
+
+    sig_pts = max(20.0 * 0.38, 3.5)   # 7.6
+    sig_reb = max(8.0  * 0.45, 2.0)   # 3.6
+    var = sig_pts**2 + sig_reb**2 + 2 * 0.294 * sig_pts * sig_reb
+    assert sigma == pytest.approx(max(var**0.5, 2.0), rel=1e-6)
+
+
+def test_wnba_combo_sigma_differs_from_nba():
+    """WNBA and NBA combo sigma differ — separate rho tables are applied."""
+    proj = {"PTS": 15.0, "REB": 7.0, "AST": 4.0}
+    _, sigma_wnba = _combo_mu_sigma(proj, "PRA", sport="WNBA")
+    _, sigma_nba  = _combo_mu_sigma(proj, "PRA", sport="NBA")
+    assert abs(sigma_wnba - sigma_nba) > 0.05, "WNBA and NBA PRA sigma should differ"
