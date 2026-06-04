@@ -380,6 +380,11 @@ NB_R = {
     "TB":  1.3,    # calibrated 2026-05-26: 169k batter game-logs, within-player var/mu=2.117. Fallback only — calc_tb_prob() uses component Poisson convolution (1B/2B/3B/HR) when TB_1B available, which is more accurate.
 }
 
+NB_R_WNBA = {
+    "AST": 11.37,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
+    "REB": 10.74,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
+}
+
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
 # Projection = sum of individual components. Probability via correlated Normal.
 COMBO_STATS = {"PRA", "PR", "PA", "RA"}
@@ -410,7 +415,7 @@ SIGMA_WNBA = {
     "PTS": {"mult": 0.38, "min": 3.5},
     "AST": {"mult": 0.55, "min": 1.1},
     "REB": {"mult": 0.45, "min": 2.0},
-    "3PM": {"mult": 0.48, "min": 0.70},  # Normal model; NB_R not used for WNBA
+    "3PM": {"mult": 0.48, "min": 0.70},  # Normal model; NB_R not used for WNBA 3PM
 }
 
 # WNBA combo correlations — calibrated 2026-06-04 from 202 players / 13,322 games
@@ -761,8 +766,8 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
     P16: NB_STATS use negative binomial CDF instead of Normal.
     NB_R[stat] is the within-player conditional dispersion parameter r,
     calibrated from per-player avg(var/mu) over the 2024-25 DB sample.
-    Exception: WNBA 3PM/AST/REB are under- or not-over-dispersed (var/mean ≤1.21)
-    — all three route to Normal via SIGMA_WNBA instead of NB.
+    Exception: WNBA 3PM (var/mu=1.21 borderline) routes to Normal via SIGMA_WNBA.
+    WNBA AST/REB are genuinely overdispersed (var/mu=1.21/1.40) — NB via NB_R_WNBA.
 
     H3: sigma_override — when > 0, replaces the default SIGMA[stat] formula for
     Normal-distribution stats (PTS etc.). Used to pass dk_std from the custom
@@ -784,11 +789,11 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
         else:  # Half-integer line — no push possible
             under_p = poisson_cdf(k, proj)
             over_p = 1.0 - poisson_cdf(k, proj)
-    elif stat in NB_STATS and not (sport == "WNBA" and stat in ("3PM", "AST", "REB")):
+    elif stat in NB_STATS and not (sport == "WNBA" and stat == "3PM"):
         # P16 — Negative binomial path for overdispersed count stats.
-        # WNBA 3PM/AST/REB are under- or not-over-dispersed (var/mean ≤1.21) and
-        # fall through to Normal below using SIGMA_WNBA.
-        r = NB_R[stat]
+        # WNBA 3PM (borderline var/mu=1.21) falls through to Normal via SIGMA_WNBA.
+        # WNBA AST/REB use NB_R_WNBA (sport-specific r); all other sports use NB_R.
+        r = NB_R_WNBA.get(stat, NB_R[stat]) if sport == "WNBA" else NB_R[stat]
         k = math.floor(line)
         if line == k:  # Integer line — push-adjusted
             push = negbinom_pmf(k, proj, r)
@@ -1103,7 +1108,8 @@ def check_prop_gates(pick):
     # slightly crosses the line (e.g. AST 4.5 under with proj=4.6 still gives ~51%
     # under probability). G13 (prob≥0.50) already handles true direction failures.
     # All NB_STATS are exempt for non-WNBA — NB distribution handles boundary cases correctly.
-    # WNBA 3PM/AST/REB use Normal (SIGMA_WNBA), so they get G14 via the block below.
+    # WNBA 3PM/AST/REB all get G14 via the block below (SIGMA_WNBA as z-score proxy).
+    # AST/REB use NB_R_WNBA for probability but SIGMA_WNBA sigma is still used here.
     if stat in SIGMA and stat not in POISSON_STATS and stat not in NB_STATS:
         _s = (SIGMA_WNBA.get(stat) if sport == "WNBA" else None) or SIGMA[stat]
         _sigma = max(proj * _s["mult"], _s["min"])

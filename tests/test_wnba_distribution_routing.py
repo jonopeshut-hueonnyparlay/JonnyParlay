@@ -13,28 +13,30 @@ from run_picks import calc_prop_prob, normal_cdf, negbinom_cdf, check_prop_gates
 # Distribution routing: calc_prop_prob
 # ---------------------------------------------------------------------------
 
-def test_wnba_ast_routes_to_normal():
+def test_wnba_ast_routes_to_nb():
+    """WNBA AST uses NB with WNBA-specific r=11.37, not NBA r=12.16 and not Normal."""
     proj, line = 5.0, 4.5
-    sigma = max(proj * 0.55, 1.1)  # SIGMA_WNBA["AST"]
-    expected_over = 1.0 - normal_cdf(line, proj, sigma)
-    nb_over = 1.0 - negbinom_cdf(int(line), proj, 12.16)  # NB_R["AST"]
+    expected_over = 1.0 - negbinom_cdf(int(line), proj, 11.37)  # NB_R_WNBA["AST"]
+    normal_sigma = max(proj * 0.55, 1.1)
+    normal_over = 1.0 - normal_cdf(line, proj, normal_sigma)
 
     over_p, _ = calc_prop_prob(proj, line, "AST", sport="WNBA")
 
-    assert abs(over_p - expected_over) < 1e-9, f"WNBA AST should use Normal; got {over_p}, expected {expected_over}"
-    assert abs(over_p - nb_over) > 0.001, "WNBA AST result should differ from NBA NB result"
+    assert abs(over_p - expected_over) < 1e-9, f"WNBA AST should use NB r=11.37; got {over_p}"
+    assert abs(over_p - normal_over) > 0.001, "WNBA AST should differ from Normal"
 
 
-def test_wnba_reb_routes_to_normal():
+def test_wnba_reb_routes_to_nb():
+    """WNBA REB uses NB with WNBA-specific r=10.74, not NBA r=14.7 and not Normal."""
     proj, line = 6.0, 5.5
-    sigma = max(proj * 0.45, 2.0)  # SIGMA_WNBA["REB"]
-    expected_over = 1.0 - normal_cdf(line, proj, sigma)
-    nb_over = 1.0 - negbinom_cdf(int(line), proj, 14.7)  # NB_R["REB"]
+    expected_over = 1.0 - negbinom_cdf(int(line), proj, 10.74)  # NB_R_WNBA["REB"]
+    normal_sigma = max(proj * 0.45, 2.0)
+    normal_over = 1.0 - normal_cdf(line, proj, normal_sigma)
 
     over_p, _ = calc_prop_prob(proj, line, "REB", sport="WNBA")
 
-    assert abs(over_p - expected_over) < 1e-9, f"WNBA REB should use Normal; got {over_p}, expected {expected_over}"
-    assert abs(over_p - nb_over) > 0.001, "WNBA REB result should differ from NBA NB result"
+    assert abs(over_p - expected_over) < 1e-9, f"WNBA REB should use NB r=10.74; got {over_p}"
+    assert abs(over_p - normal_over) > 0.001, "WNBA REB should differ from Normal"
 
 
 def test_wnba_3pm_routes_to_normal_regression():
