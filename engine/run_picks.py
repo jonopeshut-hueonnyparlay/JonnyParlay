@@ -412,8 +412,9 @@ COMBO_RHO = {
 # Calibrated 2026-06-04 from 202 players / 13,322 games (2023–2026,
 # min>=8, n>=10 per player). Within-player CV from projections.db.
 # AST/REB use NB for probability (NB_R_WNBA) but Normal sigma here.
+# PTS mult refit 2026-06-04: 0.618 (202 players/13,322 games; prior 0.38 was 9-player sample).
 SIGMA_WNBA = {
-    "PTS": {"mult": 0.38, "min": 3.5},
+    "PTS": {"mult": 0.618, "min": 3.5},
     "AST": {"mult": 0.779, "min": 1.0},
     "REB": {"mult": 0.633, "min": 1.0},
     "3PM": {"mult": 0.48, "min": 0.70},  # Normal model; NB_R not used for WNBA 3PM

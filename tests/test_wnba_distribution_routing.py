@@ -123,7 +123,7 @@ def test_wnba_pra_combo_mu_sigma():
 
     assert mu == pytest.approx(26.0)
 
-    sig_pts = max(15.0 * 0.38, 3.5)    # 5.7
+    sig_pts = max(15.0 * 0.618, 3.5)   # 9.27
     sig_reb = max(7.0  * 0.633, 1.0)  # 4.431
     sig_ast = max(4.0  * 0.779, 1.0)  # 3.116
     var = sig_pts**2 + sig_reb**2 + sig_ast**2
@@ -147,7 +147,7 @@ def test_wnba_pr_combo_mu_sigma():
 
     assert mu == pytest.approx(28.0)
 
-    sig_pts = max(20.0 * 0.38, 3.5)    # 7.6
+    sig_pts = max(20.0 * 0.618, 3.5)   # 12.36
     sig_reb = max(8.0  * 0.633, 1.0)  # 5.064
     var = sig_pts**2 + sig_reb**2 + 2 * 0.294 * sig_pts * sig_reb
     assert sigma == pytest.approx(max(var**0.5, 2.0), rel=1e-6)
