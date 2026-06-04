@@ -408,13 +408,14 @@ COMBO_RHO = {
     ("REB", "AST"): 0.251,
 }
 
-# WNBA-specific sigma fallback (used when dk_std=0 from SaberSim CSV).
-# Research §2: WNBA PTS CV ~0.36 (+44% vs NBA ~0.25); AST CV ~0.56 (+12%);
-# REB CV ~0.43 (-9%); 3PM var/mean ~0.70 (underdispersed — use Normal not NB).
+# WNBA-specific sigma (used for G14 z-score proxy and combo sigma).
+# Calibrated 2026-06-04 from 202 players / 13,322 games (2023–2026,
+# min>=8, n>=10 per player). Within-player CV from projections.db.
+# AST/REB use NB for probability (NB_R_WNBA) but Normal sigma here.
 SIGMA_WNBA = {
     "PTS": {"mult": 0.38, "min": 3.5},
-    "AST": {"mult": 0.55, "min": 1.1},
-    "REB": {"mult": 0.45, "min": 2.0},
+    "AST": {"mult": 0.779, "min": 1.0},
+    "REB": {"mult": 0.633, "min": 1.0},
     "3PM": {"mult": 0.48, "min": 0.70},  # Normal model; NB_R not used for WNBA 3PM
 }
 
