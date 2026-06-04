@@ -88,7 +88,7 @@ Discord bot display name: **PicksByJonny**
 | `data/pick_log_mlb.csv` | Historical MLB shadow log (pre-go-live, Apr 12–May 19). MLB now posts to main `pick_log.csv`. |
 | `data/pick_log_wnba.csv` | WNBA shadow log — separate from pick_log.csv. Go-live gate: 100 graded picks post-dampener (Jun 3+). Current count: see project_wnba_shadow.md. |
 | `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. NBA SGP builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
-| `engine/mlb_sgp_builder.py` | MLB SGP builder (added 2026-05-29). 3-4 legs, +200–+450. Stats: OUTS (pitchers); HITS (batters). Gaussian copula with MLB-calibrated ρ table. Fires automatically when MLB CSV is present. Logs to pick_log.csv: `sport=MLB, tier=SGP`. |
+| `engine/mlb_sgp_builder.py` | MLB SGP builder (added 2026-05-29). 3-4 legs, +200–+450. Stats: OUTS (pitchers); HITS (batters). Gaussian copula with MLB-calibrated ρ table. Fires automatically when MLB CSV is present. Logs to pick_log.csv: `sport=MLB, tier=SGP`. ρ table: OUTS-over + opposing HITS-under = 0.30 (pitcher-dominant script); all other cross-type pairs = 0.02. Kill R2_MLB: OUTS-under + HITS-under same game → killed (opposite scripts). `MIN_LEG_WIN_PROB_OUTS=0.62` (lower than global 0.65 — OUTS Gaussian sigma=0.311 makes 0.65 too tight for pitcher legs). |
 | `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
 | `setup_clv_task.ps1` | Registers CLV daemon scheduled task. S4U logon + WakeToRun. `ExecutionTimeLimit=22h`. Re-run as admin to reset. |
 | `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. Restored 2026-05-27. |
@@ -169,7 +169,8 @@ Two functions in run_picks.py run before `build_safest6_parlay()` to prevent ant
 **`filter_cross_type_correlations()`** — Prop vs GL pairs *(added 2026-05-29)*:
 - X1 (HARD): Pitcher HA/ER UNDER + opposing TEAM_TOTAL OVER same game (ρ≈−0.65–0.75 — fewer hits/ER = fewer runs)
 
-**SGP hard kills** (in sgp_builder.py and mlb_sgp_builder.py) are separate — they operate within a single SGP slip, not the main card/longshot pool.
+**SGP hard kills** (in sgp_builder.py and mlb_sgp_builder.py) are separate — they operate within a single SGP slip, not the main card/longshot pool. MLB-specific kills:
+- R2_MLB: OUTS-under + HITS-under same game → kill (pitcher struggles = more hits; negative correlation).
 
 ## Context Sanity System
 **DELETED 2026-05-23.** All context system code removed from run_picks.py. The `context_verdict` column in pick_log.csv remains (existing rows carry "disabled" value). The `--context` flag no longer exists.

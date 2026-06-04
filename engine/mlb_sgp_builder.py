@@ -43,11 +43,13 @@ if str(_ENGINE_DIR) not in sys.path:
 from brand import BRAND_TAGLINE
 from book_names import display_book
 from secrets_config import require_odds_api_key, DISCORD_BONUS_WEBHOOK
+from mlb_starter_fetcher import fetch_confirmed_starters, is_confirmed
 
 # Reuse pure-math helpers from NBA SGP builder to avoid duplication
 from sgp_builder import (
     _cholesky,
     _copula_joint_prob,
+    _copula_joint_approx,
     _american_to_decimal,
     _decimal_to_american,
     _parlay_american,
@@ -231,16 +233,50 @@ def _check_parlay_correlations_mlb(legs):
     return True
 
 
+# -- Cohesion -----------------------------------------------------------------
+
+def _correlation_tags_mlb(leg):
+    """Return game-script narrative tags for an MLB SGP leg.
+
+    Game-key scope (not team scope) so that OUTS over (pitcher team) and opposing
+    HITS under (batter team) share the pitcher_dom tag and receive cohesion credit.
+    """
+    tags = set()
+    stat = leg["stat"]
+    direction = leg["direction"]
+    game_key = leg.get("game", "").lower().replace(" @ ", "_at_").replace(" ", "_")
+    # Pitcher dominance: pitcher OUTS over OR any batter HITS under (being suppressed)
+    if (stat == "OUTS" and direction == "over") or (stat == "HITS" and direction == "under"):
+        if game_key:
+            tags.add(f"pitcher_dom_{game_key}")
+    # Batter explosion thesis: HITS over
+    if stat == "HITS" and direction == "over":
+        if game_key:
+            tags.add(f"batter_hot_{game_key}")
+    return tags
+
+
+def _correlation_cohesion_mlb(legs):
+    """Fraction of leg pairs that share a game-script narrative tag."""
+    total_pairs = linked_pairs = 0
+    for a, b in combinations(legs, 2):
+        total_pairs += 1
+        if _correlation_tags_mlb(a) & _correlation_tags_mlb(b):
+            linked_pairs += 1
+    return linked_pairs / total_pairs if total_pairs > 0 else 0.0
+
+
 # -- Scoring -------------------------------------------------------------------
 
 def _score_mlb_sgp(legs):
     """Score an MLB SGP.
 
-    Weights:
-      copula  0.35 — primary EV signal (correlation-adjusted joint hit rate; full 300-sample MC)
-      edge    0.30 — per-leg model edge
-      odds    0.20 — Gaussian reward around target odds
-      stat_div 0.15 — reward for mixing pitcher + batter legs
+    Weights (matches NBA SGP builder):
+      edge      0.25 — per-leg model edge
+      copula    0.30 — correlation-adjusted joint hit rate (fast equicorr approx for ranking)
+      odds      0.15 — Gaussian reward around target odds
+      cohesion  0.25 — game-script narrative coherence (pitcher_dom / batter_hot tag overlap)
+      stat_div  0.05 — tiebreaker for stat diversity (OUTS vs HITS)
     """
     n = len(legs)
     avg_edge = sum(l["edge"] for l in legs) / n
@@ -255,14 +291,16 @@ def _score_mlb_sgp(legs):
 
     probs = [l["fair_prob"] for l in legs]
     corr_mat = _build_corr_matrix_mlb(legs)
-    copula_joint = _copula_joint_prob(probs, corr_mat, n_samples=300)
+    off_diag = [corr_mat[i][j] for i in range(n) for j in range(n) if i != j]
+    avg_rho = sum(off_diag) / len(off_diag) if off_diag else 0.0
+    copula_joint = _copula_joint_approx(probs, avg_rho)
     copula_ideal = 0.38 if n <= 3 else 0.25
     copula_score = min(copula_joint / copula_ideal, 1.0)
 
-    # Reward pitcher + batter mix (more stat diversity = better game-script narrative)
+    cohesion = _correlation_cohesion_mlb(legs)
     stat_div = len(set(l["stat"] for l in legs)) / n
 
-    return copula_score * 0.35 + avg_edge * 0.30 + odds_score * 0.20 + stat_div * 0.15
+    return avg_edge * 0.25 + copula_score * 0.30 + odds_score * 0.15 + cohesion * 0.25 + stat_div * 0.05
 
 
 def _size_mlb_sgp(legs):
@@ -326,9 +364,15 @@ def _api_get(url, params):
     import requests
     from http_utils import default_headers
     params["apiKey"] = require_odds_api_key()
-    r = requests.get(url, params=params, headers=default_headers(), timeout=15)
-    r.raise_for_status()
-    return r.json()
+    last_r = None
+    for _attempt in range(3):
+        last_r = requests.get(url, params=params, headers=default_headers(), timeout=15)
+        if last_r.status_code != 429:
+            break
+        retry_after = int(last_r.headers.get("Retry-After", 5))
+        time.sleep(min(retry_after, 30))
+    last_r.raise_for_status()
+    return last_r.json()
 
 
 def fetch_mlb_events():
@@ -461,9 +505,15 @@ def build_candidate_legs_mlb(projections, odds_data, event):
     return candidates
 
 
-def build_mlb_sgp(projections, odds_data, event, _debug=False):
+def build_mlb_sgp(projections, odds_data, event, _debug=False, confirmed_starters=None):
     """Build the best 3-4 leg MLB SGP for a given game."""
+    game = f"{event.get('away_team','?')} @ {event.get('home_team','?')}"
     candidates = build_candidate_legs_mlb(projections, odds_data, event)
+    if confirmed_starters:
+        for cand in candidates:
+            if cand.get("is_pitcher") and not is_confirmed(cand["player"], cand["team"], confirmed_starters):
+                print(f"  [MLB SGP] WARNING: {cand['player']} ({cand['team']}) not confirmed starter — skipping {game}")
+                return None
     if _debug:
         game = f"{event.get('away_team','?')} @ {event.get('home_team','?')}"
         print(f"    [DBG] {game}: {len(candidates)} candidates | odds_data keys: {len(odds_data)}")
@@ -784,6 +834,12 @@ def run_mlb_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
     events = fetch_mlb_events()
     print(f"  [MLB SGP] Fetched {len(events)} MLB games — building candidates...")
 
+    confirmed_starters = fetch_confirmed_starters()
+    if confirmed_starters:
+        print(f"  [MLB SGP] Confirmed starters fetched: {len(confirmed_starters)} teams")
+    else:
+        print("  [MLB SGP] WARNING: No confirmed starters returned — SP scratch check disabled")
+
     # Phase 1: build SGPs for every game, collect scored candidates
     candidates = []  # list of (score, legs, parlay_odds, game)
     for event in events:
@@ -792,7 +848,8 @@ def run_mlb_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
         odds_data = fetch_mlb_event_props(eid)
         if not odds_data:
             continue
-        result = build_mlb_sgp(projections, odds_data, event, _debug=debug)
+        result = build_mlb_sgp(projections, odds_data, event, _debug=debug,
+                                confirmed_starters=confirmed_starters)
         if result is None:
             continue
         legs, parlay_odds, score = result
