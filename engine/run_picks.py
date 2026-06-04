@@ -760,11 +760,11 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
     so redistribute: over_p and under_p should sum to ~1.0 after
     removing push mass.
 
-    P16: NB_STATS (3PM) use negative binomial CDF instead of Normal.
+    P16: NB_STATS use negative binomial CDF instead of Normal.
     NB_R[stat] is the within-player conditional dispersion parameter r,
     calibrated from per-player avg(var/mu) over the 2024-25 DB sample.
-    Exception: WNBA 3PM is underdispersed (var/mean ~0.70) — routes to
-    Normal via SIGMA_WNBA["3PM"] instead of NB.
+    Exception: WNBA 3PM/AST/REB are under- or not-over-dispersed (var/mean ≤1.21)
+    — all three route to Normal via SIGMA_WNBA instead of NB.
 
     H3: sigma_override — when > 0, replaces the default SIGMA[stat] formula for
     Normal-distribution stats (PTS etc.). Used to pass dk_std from the custom
@@ -786,9 +786,10 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
         else:  # Half-integer line — no push possible
             under_p = poisson_cdf(k, proj)
             over_p = 1.0 - poisson_cdf(k, proj)
-    elif stat in NB_STATS and not (sport == "WNBA" and stat == "3PM"):
-        # P16 — Negative binomial path for overdispersed count stats (3PM, HRR, K).
-        # WNBA 3PM is underdispersed (var/mean ~0.70) and falls through to Normal below.
+    elif stat in NB_STATS and not (sport == "WNBA" and stat in ("3PM", "AST", "REB")):
+        # P16 — Negative binomial path for overdispersed count stats.
+        # WNBA 3PM/AST/REB are under- or not-over-dispersed (var/mean ≤1.21) and
+        # fall through to Normal below using SIGMA_WNBA.
         r = NB_R[stat]
         k = math.floor(line)
         if line == k:  # Integer line — push-adjusted
@@ -1103,16 +1104,16 @@ def check_prop_gates(pick):
     # handles cases where the discrete distribution favors the pick even when proj
     # slightly crosses the line (e.g. AST 4.5 under with proj=4.6 still gives ~51%
     # under probability). G13 (prob≥0.50) already handles true direction failures.
-    # All NB_STATS are exempt — NB distribution handles boundary cases correctly (discrete overdispersion accounts for near-line projections).
-    # WNBA 3PM uses Normal (underdispersed), so it gets G14 like other Normal stats.
+    # All NB_STATS are exempt for non-WNBA — NB distribution handles boundary cases correctly.
+    # WNBA 3PM/AST/REB use Normal (SIGMA_WNBA), so they get G14 via the block below.
     if stat in SIGMA and stat not in POISSON_STATS and stat not in NB_STATS:
         _s = (SIGMA_WNBA.get(stat) if sport == "WNBA" else None) or SIGMA[stat]
         _sigma = max(proj * _s["mult"], _s["min"])
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
         if _z < 0.10:
             return False, "G14"
-    if stat == "3PM" and sport == "WNBA":
-        _s = SIGMA_WNBA["3PM"]
+    if stat in ("3PM", "AST", "REB") and sport == "WNBA":
+        _s = SIGMA_WNBA[stat]
         _sigma = max(proj * _s["mult"], _s["min"])
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
         if _z < 0.10:
