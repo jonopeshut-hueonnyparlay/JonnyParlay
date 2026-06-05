@@ -517,6 +517,26 @@ TIERS = {
 }
 
 KELLY_FRACTION = 6.0  # fractional Kelly multiplier; calibrated 2026-06-01 on 207 primary/bonus picks (mid-band median implied-F ≈ 5.9)
+
+# Per-market Kelly multipliers applied BEFORE rounding and floor/cap.
+# Lookup: (sport, stat, direction) → (sport, stat, None) → DEFAULT_MARKET_MULT.
+# Only applied to straight prop sizing (not SGP/parlay/daily_lay).
+KELLY_MARKET_MULT = {
+    ("NBA", "PTS", "over"):      0.50,
+    ("NBA", "PTS", "under"):     1.00,
+    ("NBA", "PTS", None):        1.00,
+    ("NBA", "3PM", "under"):     0.75,
+    ("NBA", "3PM", "over"):      0.10,
+    ("NBA", "REB", "under"):     0.50,
+    ("MLB", "OUTS", "under"):    0.50,
+    ("MLB", "TEAM_TOTAL", None): 0.75,
+    ("NHL", "SOG", None):        0.50,
+    ("WNBA", "PTS", None):       1.00,
+    ("WNBA", "AST", "over"):     0.10,
+    ("WNBA", "REB", "under"):    0.25,
+}
+DEFAULT_MARKET_MULT = 0.75
+
 VAKE_MULT = {
     "variance":    {"T1": 1.00, "T1B": 1.00, "T2": 0.85, "T3": 0.65},
     "tier":        {"T1": 1.00, "T1B": 1.00, "T2": 0.90, "T3": 0.60},
@@ -929,7 +949,7 @@ def pick_score(win_prob, edge, mode="Default", tier=None,
     NOTE: Score is NOT capped at 100. At wp=0.666 (Platt ceiling) + edge=0.15 (ceiling),
     max score is ~87 (T2, no bonuses) or ~97 (T2 + max injury bonus +7 + tier at 1.0×).
     Scores above 100 are theoretically possible but don't occur in practice given the
-    Platt calibration ceiling (~66.6%) and G2 edge cap (20%).
+    Platt calibration ceiling (~66.6%).
 
     R11 NOTE: Game line picks (totals, spreads, ML) intentionally score lower than
     props. Win probs for game lines cluster near 50-55% (well-priced markets),
@@ -972,6 +992,16 @@ def kelly_units(win_prob, odds):
 def round_units(u):
     """Round to nearest 0.25u."""
     return round(u * 4) / 4
+
+def get_market_mult(sport, stat, direction):
+    """Return Kelly market multiplier for (sport, stat, direction).
+
+    Lookup order: exact (sport,stat,direction) → (sport,stat,None) → DEFAULT_MARKET_MULT.
+    """
+    m = KELLY_MARKET_MULT.get((sport, stat, direction))
+    if m is None:
+        m = KELLY_MARKET_MULT.get((sport, stat, None))
+    return m if m is not None else DEFAULT_MARKET_MULT
 
 def get_tier(stat, direction="over", sport="NBA"):
     """Determine tier for a stat + direction.
@@ -1035,8 +1065,11 @@ def check_prop_gates(pick):
         return False, "G7b"
 
     # G8: binary fragility (FIX M3: extended to MLB low-count stats)
+    # NHL AST 0.5 under is exempt — Bernoulli T3 market, activated 2026-06-05
     if stat in ("AST", "REB", "SOG", "HA", "HITS") and line <= 1.5:
-        return False, "G8"
+        if not (stat == "AST" and pick.get("sport", "NBA") == "NHL"
+                and line == 0.5 and direction == "under"):
+            return False, "G8"
 
     # G8B: AST over at line ≤ 4.5 — 0-5 record vs 2-1 at line ≥ 5.5 (n=8).
     # NBA-only: WNBA line 4.5 is elite-playmaker territory, not sub-elite.
@@ -1044,6 +1077,11 @@ def check_prop_gates(pick):
     sport = pick.get("sport", "NBA")
     if stat == "AST" and direction == "over" and line <= 4.5 and sport != "WNBA":
         return False, "G8B"
+
+    # G_NHL_AST: NHL AST active only at line==0.5 under (Bernoulli T3, min_edge=0.06).
+    # Block all other NHL AST lines/directions.
+    if stat == "AST" and sport == "NHL" and not (line == 0.5 and direction == "under"):
+        return False, "G_NHL_AST"
 
     # G_SOG_SUSPENDED: full SOG suspension pending distribution investigation (2026-06-05).
     # Remove gate and re-evaluate G8C scope when investigation is complete.
@@ -1111,6 +1149,10 @@ def check_prop_gates(pick):
     # G_HRR_DISABLED removed 2026-05-27 — NB r=1.5 is the correct distribution; routing to SHADOW_STATS for fresh data accumulation.
     # G_TB_DISABLED removed 2026-05-27 — calc_tb_prob (Poisson convolution) was already the rebuild; routing to SHADOW_STATS.
 
+    # G_RA_DISABLED: RA (REB+AST combo) disabled 2026-06-05 — 0W/7L (0% actual WR vs 56.7% model, n=11 live picks).
+    if stat == "RA":
+        return False, "G_RA_DISABLED"
+
     # G14: projection clearance gate — ensures model has directional conviction.
     # Normal/SIGMA stats (PTS, OUTS, HA, TB): proj must clear line by ≥0.10σ.
     # HRR is in NB_STATS (not SIGMA), so it is exempt from G14.
@@ -1153,13 +1195,8 @@ def check_prop_gates(pick):
     if prob >= 0.70 and odds > -200 and edge < 0.05:
         return False, "G1"
 
-    # G2: model error — but HITS O0.5 is a soft market with legitimately large edges
+    # G4: low line + extreme prob — exempt HITS O0.5 soft market
     _is_soft_o05 = (stat == "HITS" and line <= 0.5 and direction == "over")
-    g2_threshold = 0.28 if _is_soft_o05 else 0.20
-    if edge >= g2_threshold:
-        return False, "G2"
-
-    # G4: low line + extreme prob — exempt O0.5 soft markets (HRR/TB/HITS)
     if line <= 2.5 and prob > 0.75 and not _is_soft_o05:
         return False, "G4"
 
@@ -1504,6 +1541,7 @@ def size_picks_base(picks):
     Sub-50% win probability bets get capped at 0.75u max (high variance)."""
     for p in picks:
         base = kelly_units(p["win_prob"], p["odds"])
+        base *= get_market_mult(p.get("sport", "NBA"), p["stat"], p.get("direction"))
         # FIX L3: T3 picks (3PM, NRFI) get 0.25u floor instead of 0.50u
         tier = p.get("tier", "T2")
         floor = 0.25 if tier == "T3" else 0.50
@@ -1535,6 +1573,7 @@ def size_bonus_pick(pick):
     """
     tier = pick.get("tier", "T2")
     base = kelly_units(pick.get("win_prob", 0), pick.get("odds", 0))
+    base *= get_market_mult(pick.get("sport", "NBA"), pick.get("stat", ""), pick.get("direction"))
     var_m  = VAKE_MULT["variance"].get(tier, 0.85)
     tier_m = VAKE_MULT["tier"].get(tier, 0.90)
     raw = base * var_m * tier_m
@@ -1573,6 +1612,7 @@ def size_picks_vake(premium):
         stat = p["stat"]
 
         base = kelly_units(p["win_prob"], p["odds"])
+        market_m = get_market_mult(p.get("sport", "NBA"), p["stat"], p.get("direction"))
 
         # Variance multiplier
         var_m = VAKE_MULT["variance"].get(tier, 0.85)
@@ -1598,13 +1638,13 @@ def size_picks_vake(premium):
         stat_seen[stat] += 1
         exp_m = 1.00 if stat_seen[stat] == 1 else 0.70
 
-        raw = base * var_m * tier_m * corr_m * exp_m
+        raw = base * market_m * var_m * tier_m * corr_m * exp_m
         final = min(round_units(raw), 1.25)
         final = max(final, 0.50)  # minimum 0.50u, never 0.25u
 
         p["size"] = final
         p["size_detail"] = {
-            "base": base, "var": var_m, "tier": tier_m,
+            "base": base, "market": market_m, "var": var_m, "tier": tier_m,
             "corr": corr_m, "exp": exp_m, "raw": raw
         }
 
@@ -6008,7 +6048,9 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
     has_u25_reb = any(p["stat"] == "REB" and p["direction"] == "under" and p["line"] <= 2.5 for p in all_qualified)
     has_reb_over = any(p["stat"] == "REB" and p["direction"] == "over" for p in all_qualified)
     has_g8_fail = any(
-        (p["stat"] in ("AST","REB","SOG","K","HA","HITS") and p["line"] <= 1.5) or
+        (p["stat"] in ("AST","REB","SOG","K","HA","HITS") and p["line"] <= 1.5
+         and not (p["stat"] == "AST" and p.get("sport") == "NHL"
+                  and p["line"] == 0.5 and p["direction"] == "under")) or
         (p["stat"] == "AST" and p["direction"] == "over" and p["line"] <= 4.5
          and p.get("sport") != "WNBA") or
         (p["stat"] == "SOG" and p["direction"] == "under" and p["line"] <= 3.5) or
@@ -6022,6 +6064,7 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (p.get("stat") in _STAT_MIN_WIN_PROB and p.get("win_prob", 0) < _STAT_MIN_WIN_PROB[p["stat"]])
         or (p.get("stat") == "HRR" and p.get("line", 0) <= 0.5 and p.get("win_prob", 0) < 0.58)
         or (p.get("stat") == "HRR" and p.get("line", 0) > 0.5 and p.get("win_prob", 0) < 0.65)
+        or p.get("stat") == "RA"
         for p in all_qualified
     )
     def _g14_fail(p):
@@ -6078,8 +6121,8 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         (f"R10 same-stat cap: max {max_same} picks of same stat (any direction)", max_same <= 1),
         (f"R11 enforced: No AST under 1.5 or 2.5", not has_u25_ast),
         (f"R4 enforced: No REB Overs, no U2.5 REB", not has_reb_over and not has_u25_reb),
-        (f"G8/G8B/G8C/G8D enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5; no AST over ≤ 4.5; no SOG under ≤ 3.5; no 3PM over ≤ 1.5", not has_g8_fail),
-        (f"G13B enforced: TB killed (G_TB_DISABLED), HRR fully killed (G_HRR_DISABLED)", not has_g13b_fail),
+        (f"G8/G8B/G8C/G8D enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5 (exc. NHL AST 0.5u); no AST over ≤ 4.5; no SOG under ≤ 3.5; no 3PM over ≤ 1.5", not has_g8_fail),
+        (f"G13B enforced: TB killed (G_TB_DISABLED), HRR fully killed (G_HRR_DISABLED), RA killed (G_RA_DISABLED)", not has_g13b_fail),
         (f"G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)", not has_g14_fail),
         (f"G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)", not has_g15_fail),
         (f"G7 enforced: No odds ≤ -150", not has_heavy_juice),
