@@ -1045,6 +1045,11 @@ def check_prop_gates(pick):
     if stat == "AST" and direction == "over" and line <= 4.5 and sport != "WNBA":
         return False, "G8B"
 
+    # G_SOG_SUSPENDED: full SOG suspension pending distribution investigation (2026-06-05).
+    # Remove gate and re-evaluate G8C scope when investigation is complete.
+    if stat == "SOG":
+        return False, "G_SOG_SUSPENDED"
+
     # G8C: SOG under at line ≤ 3.5 — extended from ≤2.5 (2026-05-23).
     # ≤2.5 was 51.9% WR (losing at juice). 3.1–3.5 added: 42.9% WR, model 63.7% (n=14).
     # Both ranges show systematic model over-prediction; Poisson underestimates elite shot volume.
@@ -1087,6 +1092,10 @@ def check_prop_gates(pick):
     # SaberSim projects a very short outing and market line is set high.
     if stat == "OUTS" and direction == "under" and prob < 0.60:
         return False, "G_OUTS_UNDER"
+    # G_HA_SUSPENDED: full HA suspension pending model investigation (2026-06-05).
+    # Remove gate and re-evaluate G_HA_DIR scope when investigation is complete.
+    if stat == "HA":
+        return False, "G_HA_SUSPENDED"
     # HA / HITS: T1B tier definition is unders 3.5+ only. Block overs — they fall to T2 with no research basis.
     if stat in ("HA", "HITS") and direction == "over":
         return False, "G_HA_DIR"
