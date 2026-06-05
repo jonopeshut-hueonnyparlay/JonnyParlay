@@ -84,6 +84,7 @@ from paths import (  # noqa: E402
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
     PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
     PICK_LOG_SHADOW_STATS_PATH as _PICK_LOG_SHADOW_STATS_PATH_P,
+    PICK_LOG_BLOCKED_PATH as _PICK_LOG_BLOCKED_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
     LOG_FILE_PATH as _LOG_FILE_PATH_P,
     project_path as _project_path,
@@ -105,6 +106,7 @@ PICK_LOG_PATH = str(_PICK_LOG_PATH_P)
 PICK_LOG_MANUAL_PATH = str(_PICK_LOG_MANUAL_PATH_P)
 LOG_FILE_PATH = str(_LOG_FILE_PATH_P)
 DISCORD_GUARD_FILE = str(_DISCORD_GUARD_FILE_P)
+PICK_LOG_BLOCKED_PATH = str(_PICK_LOG_BLOCKED_PATH_P)
 
 # ── File logger setup (file only — console output stays as print()) ───────────
 # Rotation is wired through engine/log_setup.attach_rotating_handler so
@@ -245,6 +247,18 @@ SHADOW_GATE_CODES = {
     "R4_REB_U25",    # REB under ≤2.5 (volatile at low lines; >2.5 under is live)
     "R11_AST_U25",   # AST under 1.5 and 2.5 (sub-elite lines; 0.5 and >2.5 are live)
 }
+
+# Gates that are full-stat suspensions pending investigation — excluded from
+# pick_log_blocked.csv because suspension frequency tells us nothing structural.
+_BLOCKED_LOG_SKIP_GATES = frozenset({
+    "G_SOG_SUSPENDED",
+    "G_HA_SUSPENDED",
+    "G_RA_DISABLED",
+})
+_BLOCKED_LOG_COLS = [
+    "date", "sport", "player", "stat", "line", "direction",
+    "odds", "edge", "win_prob", "gate_result",
+]
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
 # MLB went live 2026-05-20 — removed from shadow paths.
@@ -1061,7 +1075,7 @@ def check_prop_gates(pick):
         return False, "G7"
 
     # G7b: soft juice
-    if -149 <= odds <= -140 and edge < 0.09:
+    if -149 <= odds <= -140 and edge < 0.10:
         return False, "G7b"
 
     # G8: binary fragility (FIX M3: extended to MLB low-count stats)
@@ -1139,8 +1153,12 @@ def check_prop_gates(pick):
         return False, "G_HA_DIR"
 
     # G9: universal floor
-    if edge < 0.03:
+    if edge < 0.05:
         return False, "G9"
+
+    # G9B: NBA props require a higher edge floor (7%) — more efficient market
+    if pick.get("sport") == "NBA" and edge < 0.07:
+        return False, "G9B"
 
     # G13: sub-50% win probability ban — proven 1-3 record, negative PS
     if prob < 0.50:
@@ -4174,6 +4192,38 @@ def fmt_dir(direction):
 def fmt_pct(val):
     return f"{val*100:.1f}%"
 
+def log_blocked_pick(pick):
+    """Append one row to pick_log_blocked.csv for a gate-blocked pick.
+
+    Skips suspension gates (G_SOG_SUSPENDED, G_HA_SUSPENDED, G_RA_DISABLED) —
+    those block by policy, not by structural signal we want to audit.
+    Also skips picks that actually passed (gate_result == "PASS").
+    """
+    gate = pick.get("gate_result", "")
+    if not gate or gate == "PASS" or gate in _BLOCKED_LOG_SKIP_GATES:
+        return
+    path = Path(PICK_LOG_BLOCKED_PATH)
+    write_header = not path.exists() or path.stat().st_size == 0
+    today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    row = {
+        "date": today,
+        "sport": pick.get("sport", ""),
+        "player": pick.get("player", ""),
+        "stat": pick.get("stat", ""),
+        "line": pick.get("line", ""),
+        "direction": pick.get("direction", ""),
+        "odds": pick.get("odds", ""),
+        "edge": round(pick.get("adj_edge", pick.get("edge", 0)), 4),
+        "win_prob": round(pick.get("win_prob", pick.get("adj_wp", 0)), 4),
+        "gate_result": gate,
+    }
+    with open(path, "a", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=_BLOCKED_LOG_COLS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def log_candidates(candidates, mode, today_str):
     """Write the full gate-passing pick pool to pick_log_candidates.csv for formula backtesting.
 
@@ -6533,6 +6583,12 @@ def main():
     # Split qualified vs failed
     qualified = [p for p in all_picks if p.get("gate_result") == "PASS" and p.get("pick_score") is not None]
     failed = [p for p in all_picks if p.get("gate_result") != "PASS" or p.get("pick_score") is None]
+
+    # Persist structural gate failures to pick_log_blocked.csv for frequency auditing.
+    # Suspension gates are excluded (see _BLOCKED_LOG_SKIP_GATES).
+    if not args.no_save:
+        for p in failed:
+            log_blocked_pick(p)
 
     # Extract direction/line-specific gate kills that should shadow-log instead of just fail.
     # These picks are already in `failed` (built and sized=0 by evaluate_props/evaluate_game_lines).
