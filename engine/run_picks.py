@@ -480,14 +480,14 @@ PLATT_B = -0.8102  # intercept — raw-probability space (not logit-space)
 PLATT_SPACE = "raw"  # "raw"=sigmoid(A*p+B); "logit"=sigmoid(A*logit(p)+B). Change SIMULTANEOUSLY with formula+A/B at H3.
 
 GAME_SIGMA = {
-    # "ml" sigma is separate from "spread" sigma — used only for moneyline win probability.
-    # NHL puck-line spread sigma (1.5 goals) inflates ML win probs to 80%+ when used for
-    # P(margin > 0). Need a wider sigma (~4.0) to produce realistic 55-65% win probs
-    # for typical NHL favorites. Calibrated so -150 fav (55% nv) with ~0.5-goal margin ≈ 55%.
-    "NBA":  {"total": 12.0, "spread": 12.0, "team": 9.0,  "ml": 12.0},
-    "WNBA": {"total": 10.0, "spread": 10.0, "team": 7.5,  "ml": 10.0},
-    "NHL":  {"total": 1.2,  "spread": 1.5,  "team": 1.8,  "ml": 4.0},
-    "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,  "ml": 4.75},  # ml: 6.0→4.75 (empirical run-diff σ≈3.8; 6.0 was artificially wide)
+    # NHL sigmas calibrated 2026-06-05 from 3936 games (2023-24 + 2024-25).
+    # total=std(home+away)=2.311; spread=std(home-away)=2.614; team=avg(std(home),std(away))=1.744
+    # ml uses spread sigma — P(win) = P(margin > 0) under same goal-differential distribution.
+    # Prior values (total=1.2, spread=1.5, ml=4.0) were wrong by ~2x.
+    "NBA":  {"total": 12.0, "spread": 12.0, "team": 9.0,   "ml": 12.0},
+    "WNBA": {"total": 10.0, "spread": 10.0, "team": 7.5,   "ml": 10.0},
+    "NHL":  {"total": 2.311, "spread": 2.614, "team": 1.744, "ml": 2.614},
+    "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,   "ml": 4.75},  # ml: 6.0→4.75 (empirical run-diff σ≈3.8; 6.0 was artificially wide)
 }
 
 # Sports where the spread is always a fixed ±1.5 line (MLB runline, NHL puck line).
@@ -518,6 +518,10 @@ MLB_PARK_FACTORS = {
 # market for the remaining 75% — this prevents massive edge calculations
 # when SaberSim disagrees with Vegas by 10+ pts.
 BLEND_ALPHA = 0.25
+
+# NB dispersion for MLB team run-scoring; calibrated 2026-06-05 from 8095 regular-season games.
+# var/mu=2.261 (pooled); r = mu^2/(var-mu) = 3.548. Used for team-total NB CDF and ML NB sum.
+MLB_TEAM_RUN_R = 3.548
 
 TIERS = {
     # Prop stats only — game lines (SPREAD, TOTAL, TEAM_TOTAL, ML_*, F5_*) are NOT routed
@@ -750,6 +754,25 @@ def negbinom_cdf(k, mu, r):
     for i in range(int(k) + 1):
         total += negbinom_pmf(i, mu, r)
     return min(total, 1.0)
+
+
+def mlb_ml_from_nb(mu_home, mu_away, r):
+    """P(home wins) via direct NB probability sum over discrete run totals.
+
+    More accurate than Normal(margin, sigma) for MLB because run-scoring is
+    discrete and overdispersed (var/mu~2.26). Ties (extra innings) treated
+    as 50/50 split. Sum to 30 runs per team covers >99.99% of probability mass.
+    """
+    if mu_home <= 0 or mu_away <= 0:
+        return 0.5
+    home_wp = 0.0
+    for k in range(31):
+        ph = negbinom_pmf(k, mu_home, r)
+        pa_lt = negbinom_cdf(k - 1, mu_away, r) if k > 0 else 0.0
+        pa_eq = negbinom_pmf(k, mu_away, r)
+        home_wp += ph * (pa_lt + 0.5 * pa_eq)
+    return min(max(home_wp, 0.0), 1.0)
+
 
 def implied_prob(odds):
     """American odds → implied probability."""
@@ -2845,7 +2868,12 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             if sport in _FIXED_SPREAD_SPORTS:
                 # Runline/puck-line prices P(win by 2+), not P(win outright) — different bet.
                 # Blend projection win_prob against ML no-vig as the market anchor.
-                raw_team_wp = 1.0 - normal_cdf(0, raw_margin if is_home else -raw_margin, sigma)
+                if sport == "MLB":
+                    # NB direct sum: more accurate for discrete run-scoring than Normal
+                    raw_home_wp = mlb_ml_from_nb(home_proj, away_proj, MLB_TEAM_RUN_R)
+                    raw_team_wp = raw_home_wp if is_home else (1.0 - raw_home_wp)
+                else:
+                    raw_team_wp = 1.0 - normal_cdf(0, raw_margin if is_home else -raw_margin, sigma)
                 win_prob = nv_this + BLEND_ALPHA * (raw_team_wp - nv_this)
             else:
                 win_prob = 1.0 - normal_cdf(0, team_margin, sigma)
@@ -2899,8 +2927,22 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
 
         proj = line + BLEND_ALPHA * (proj - line)
 
-        over_p = 1.0 - normal_cdf(line, proj, sigma)
-        under_p = normal_cdf(line, proj, sigma)
+        if sport == "MLB":
+            # NB is more accurate for discrete run-scoring (var/mu~2.26).
+            # Half-line (e.g., 3.5): over = P(X >= 4) = 1 - P(X <= 3)
+            # Integer line (e.g., 4.0): push-adjusted
+            k_floor = int(math.floor(line))
+            if line == k_floor:  # integer line
+                push = negbinom_pmf(k_floor, proj, MLB_TEAM_RUN_R)
+                non_push = 1.0 - push
+                over_p  = (1.0 - negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)) / non_push if non_push > 0 else 0.5
+                under_p = negbinom_cdf(k_floor - 1, proj, MLB_TEAM_RUN_R) / non_push if non_push > 0 else 0.5
+            else:
+                over_p  = 1.0 - negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)
+                under_p = negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)
+        else:
+            over_p = 1.0 - normal_cdf(line, proj, sigma)
+            under_p = normal_cdf(line, proj, sigma)
 
         over_odds = tt["over_odds"]
         under_odds = tt["under_odds"]
