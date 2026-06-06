@@ -506,10 +506,10 @@ Documented here because the planning doc (plans_7_8_9.md) stated otherwise or om
 | 8B | Blowout adjustment | MIXED — cutpoints 15/25 + star weights + sigmoid (k/mid) CONFIRMED/LOCKED; bench weights + min-games ACCEPTABLE; max_reduction PERIODIC_RECAL; PBP filtering DATA_GATED upgrade |
 | 8C | Days-rest model | **MIXED — `max_reduction=0.10` NEEDS_CHANGE (overstates played-game effect); travel/altitude/density omissions NEEDS_CHANGE (material); naming mislabel NEEDS_CHANGE (cosmetic)**; decay form CONFIRMED; role gradient + channel CONFIRMED_WITH_CAVEAT |
 | 8D | Bayesian REB priors | **MIXED — `_REB_RATE_PRIOR` (System 2) NEEDS_CHANGE (deflated ~2×, all positions — extends H01)**; decomposed priors + N=5 + denominator CONFIRMED; PO-vs-RS CONFIRMED_WITH_CAVEAT (SF over-deflated); REB_ALPHA LOCKED |
-| 8E | Role classification thresholds | *(batch 2)* |
-| 8F | Cold start treatment | *(batch 2)* |
-| 8G | Injury redistribution model | *(batch 2)* |
-| 8H | Injury status probabilities | *(batch 2)* |
+| 8E | Role classification thresholds | LOCKED (fit-for-purpose) — cutpoints CONFIRMED/ACCEPTABLE vs published rotation bands; validated on 76,604-snapshot backtest |
+| 8F | Cold start treatment | MIXED — returner cap CONFIRMED; taxi/playoff-scalar magnitudes DATA_GATED; new_acq cap weakest but conservative-safe |
+| 8G | Injury redistribution model | MIXED — structure + MIN_ELIGIBLE CONFIRMED; PRIMARY_SHARE/EFFICIENCY ACCEPTABLE/DATA_GATED; **usage-concentration NEEDS_CHANGE** |
+| 8H | Injury status probabilities | **LOCKED** — void-clause premise holds for straight props + parlay legs (fails only on out-of-scope DFS pick'em); "Probable" reinstated Dec 2025, _STATUS_MAP aligned |
 
 ---
 
@@ -686,3 +686,232 @@ Documented here because the planning doc (plans_7_8_9.md) stated otherwise or om
 5. Revisit the SF playoff deflator — model −16% vs empirical ~flat; re-fit PO priors when the playoff sample grows.
 
 ---
+
+## SECTION 8E — Role Classification Thresholds
+
+**Question:** Are the role-classification thresholds (26/20/12/5 MPG plus starter_rate≥0.60) and the 5-tier taxonomy consistent with published NBA role conventions, and — since they exist only to select a minutes scalar — do the cutpoints hold up as a fit-for-purpose minutes-projection device?
+
+**Code ground truth:** `classify_role()` assigns one of 5 tiers from a player's trailing-10-game `avg_min`/`starter_rate`: starter (sr≥0.60 AND avg_min≥26), sixth_man (≥20), rotation (≥12), spot (≥5), cold_start (<5). The tier selects a minutes scalar and a dk_std floor. Refit 2026-05-09 on 76,604 trailing-10-game snapshots; the docstring quotes actual/trailing minute ratios at each cutpoint.
+
+**Findings:**
+
+1. **Published rotations are a 3-tier shape; the model's 5 tiers nest cleanly inside it.** Industry description: starters at 28–36 MPG, a key bench of 3–4 at 15–24 MPG, deep bench in non-competitive minutes ([Striveon](https://joinstriveon.com/blog/nba-bench-rotation-explained); [RotoWire rotations](https://www.rotowire.com/basketball/rotations.php)). The model's starter floor (≥26) sits just below the cited 28–36 "heavy-minutes" band — sensible, since a trailing-10 average is pulled down by blowouts/foul-trouble games. sixth_man (20–26) + upper rotation (15–20) jointly span the published "key bench 15–24" band.
+
+2. **The 20 and 12 MPG floors straddle the standard 15 MPG rotation cutoff.** Analytics sources define rotation size as players averaging ≥15 MPG ([UsageBoost](https://usageboost.com/rotation-analysis); [lineups.com](https://www.lineups.com/nba/nba-player-minutes-per-game)). The model places one boundary above (20) and one below (12), so the 15 MPG "rotation player" sits inside the model's `rotation` tier (12–20). The 12 floor is slightly more inclusive than the public 15, but consistent with the ~10-MPG "is playing" benchmark (~13 players/team average ≥10 MPG, [RotoWire](https://www.rotowire.com/basketball/rotations.php)).
+
+3. **The 8–9 man rotation makes the boundaries land between natural clusters, not through a dense peak.** Tightest competitive rotation is 8, regular-season norm 9, stretching to 10–11 ([Striveon](https://joinstriveon.com/blog/nba-bench-rotation-explained)). 5 starters (≥26) + 3–4 key bench (≈20–24) → the 8–9 man core; 10th–11th men are the 12–20 tier; everyone past 11 is spot/cold_start. The 5-MPG spot/cold_start cut matches the deep-bench/garbage-time boundary that CTG-style filters confirm is a distinct minutes population ([CTG](https://cleaningtheglass.com/stats/guide/garbage_time)). No evidence of a density spike sitting exactly on any cutpoint — they sit in the troughs.
+
+4. **5-tier granularity is finer than the public 3-tier glossary but justified by purpose.** Public taxonomies stop at 3 because they describe roles, not project minutes; the model needs each tier to map to a distinct minutes scalar and dk_std floor. The docstring's evidence supports the most contentious split: 24–26 MPG players show actual/trailing ≈1.006 and are best fit by the sixth_man scalar (starter scalar over-projects +6.9% PO / +4.7% RS) — exactly why starter requires ≥26 *in addition to* starter_rate.
+
+5. **Requiring BOTH sr≥0.60 AND ≥26 is defensible, and fit-for-purpose is the correct lens because minutes are intrinsically hard to predict.** Published work: "while it is fairly easy to predict how good a player is, it is hard to know how much they will play," with returning-player minute churn ~⅓ of total minutes year to year ([Box Score Geeks](https://www.boxscoregeeks.com/articles/nba-minutes-are-hard-to-predict-in-three-charts)). There is no canonical minutes threshold to match — only a minutes-error surface to minimize. The AND-condition encodes real signal: at 26–28 MPG, sr≥0.60 predicts 27.4 min vs 26.1 for <0.60; below 26 MPG it adds nothing. 0.60 is a reasonable "regular starter" bar but is an internally-fit parameter with no published standard ([B-Ref glossary](https://www.basketball-reference.com/about/glossary.html)).
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| 26 MPG starter floor | CONFIRMED | Just below published 28–36 heavy-minutes band; docstring shows 24–26 projects like sixth_man, so 26 is the empirical scalar boundary |
+| sr≥0.60 AND avg_min≥26 (AND-condition) | CONFIRMED_WITH_CAVEAT | starter_rate adds signal only above 26 MPG (27.4 vs 26.1 min); the 0.60 value is internally-fit, rides on backtest not literature |
+| 20 MPG sixth_man floor | CONFIRMED | Inside published "key bench 15–24" band |
+| 12 MPG rotation floor | ACCEPTABLE | Slightly more inclusive than the public 15; consistent with ~10-MPG "is playing" benchmark; fit-for-purpose |
+| 5 MPG spot/cold_start cut | CONFIRMED | Matches deep-bench/garbage-time boundary (CTG) |
+| 5-tier granularity | CONFIRMED_WITH_CAVEAT | Finer than public 3-tier, justified by distinct per-tier scalars/floors + cold_start sub-type machinery |
+| Overall fit-for-purpose design | LOCKED | Minutes are low-autocorrelation/hard-to-predict → internal 76,604-snapshot backtest is the correct validator, not a public glossary |
+
+**Condition to Revisit:**
+1. Re-fit all four cutpoints whenever the minutes scalars are re-fit (July refit) — thresholds and scalars are jointly estimated.
+2. Re-examine the 0.60 starter_rate bar if the 26–28 MPG sr split (currently 27.4 vs 26.1 min) collapses below ~1 min.
+3. If a future backtest shows the 12–15 MPG band projecting closer to spot than upper-rotation, raise the rotation floor toward 15.
+4. Revisit boundaries if rotation sizes structurally shift (continued shortening, or a load-management regime change) — the cluster gaps the cutpoints exploit would move.
+5. If two adjacent tiers' fitted scalars converge to within noise across refits, collapse them; split a tier only on a persistent distinct actual/trailing ratio.
+
+---
+
+## SECTION 8F — Cold Start Treatment
+
+**Question:** Are the cold-start minute caps (taxi 12, returner 22, extended_absence 0.70×/25, new_acquisition 28) and the playoff minute scalars (taxi/extended_absence 0.40, returner 0.70, new_acquisition 0.75) defensible against published return-to-play, two-way usage, traded-player, and playoff-rotation literature?
+
+**Code ground truth:** Cold-start triggers at <10 games on current team. Subtypes & post-scalar caps: taxi (0 career games) → 12.0; returner (≥180d) → min(career_avg, 22.0) else 14; extended_absence (60–179d) → min(career_avg×0.70, 25.0) else 14; new_acquisition (<60d) → min(career_avg, 28.0) else 16. `COLD_START_PLAYOFF_SCALAR`: taxi 0.400, extended_absence 0.400, returner 0.700, new_acquisition 0.750. These are minute CAPS (ceilings) on the highest-uncertainty players — downside protection where projection error is largest.
+
+**Findings:**
+
+1. **Return-from-injury ramp-up minutes.** Standard protocol: teams "typically start with 15–20 minutes per game and increase over several weeks," early-ramp caps "around 25–28 minutes," restrictions lasting ~5–10 games; recent cases (Booker, Wembanyama, SGA, Banchero) cluster at ~20–24 min in initial games ([Oreate AI](https://www.oreateai.com/blog/the-art-of-the-minute-restriction-why-nba-teams-carefully-manage-player-playtime/82d7cfedf4ec1f7e1ba5a6d8a0afb0e4); [Grokipedia: Minutes restriction](https://grokipedia.com/page/Minutes_restriction)).
+
+2. **ACL return — empirical minutes.** Peer-reviewed NBA workload study: ACL-reconstruction players averaged **20.5 ± 1.1 MPG** in their first season back, well below pre-injury baselines ([PMC: Workload After ACL Reconstruction](https://pmc.ncbi.nlm.nih.gov/articles/PMC7682245/)) — a season average, so first-game restrictions are typically lower.
+
+3. **Readiness gap.** Podlog et al. establish physical and psychological readiness are not synonymous; return is a graded psychosocial process — supporting conservative re-integration over immediate full load ([Tandfonline: Psychological Readiness review](https://www.tandfonline.com/doi/abs/10.1080/1750984X.2022.2081929)).
+
+4. **Two-way / G-League call-ups.** Two-way players spend most of the season in the G League, capped at 50 NBA games, playoff-ineligible unless converted ([NBA G League: Two-Way Contracts](https://gleague.nba.com/nba-g-league-101-two-way-contracts)). No source publishes a typical debut minute count; the developmental role means the modal NBA-game outcome is very low minutes or a DNP.
+
+5. **Traded / new-acquisition adjustment.** Nylon Calculus: traded players reach expected performance after ~15–20 games, but the game-1-to-20 gap is small (Game Score ~6.2 → ~7.2), and traded players are generally **not** minutes-restricted — they often play near-normal rotation minutes immediately ([FanSided/Nylon Calculus](https://fansided.com/2020/01/14/nylon-calculus-traded-players-adjust-new-team/)).
+
+6. **Playoff rotation compression.** RS rotations run 9–10 deep; playoffs compress to 7–8 ("use eight, rotate seven, play six, trust five"). D'Antoni's 2007 Suns ran a firm 8-man rotation with four bench players combining for just 26 total minutes across 11 games — fringe/uncertain players are effectively benched ([The Dream Shake](https://www.thedreamshake.com/2017/3/7/14825694/houston-rockets-james-harden-dantoni-playoff-rotation)).
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| taxi cap 12 | ACCEPTABLE (DATA_GATED) | No published debut-minute number; two-way/G-League role implies modal DNP/garbage-time; 12 is a sound conservative ceiling |
+| returner cap 22 | CONFIRMED | Aligns with ACL first-season 20.5±1.1 min and ~20–24 min return restrictions |
+| extended_absence cap (0.70×, 25) | CONFIRMED_WITH_CAVEAT | 25-min ceiling matches 25–28 early-ramp cap; first games often start lower (15–20), so 25 is a ceiling not a point estimate — fine for a CAP |
+| new_acquisition cap 28 | CONFIRMED_WITH_CAVEAT | Loose ceiling; traded players largely *not* restricted and adjust quickly, so the cap rarely binds — weakest-justified, mostly guards projection error |
+| 180/60-day cutoffs | ACCEPTABLE / PERIODIC_RECAL | Sensible calendar partition (≥6mo full-season layoff; 2–6mo major injury; <2mo recent/trade); reasoned intuition, not data-fit |
+| Playoff scalars — direction (all four) | CONFIRMED | Compression literature strongly supports cutting fringe/uncertain minutes; some get ~zero |
+| Playoff scalars — magnitudes (0.40/0.40/0.70/0.75) | DATA_GATED | Ordering correct; magnitudes intuition-set; compression evidence hints true fringe minutes can fall below 0.40, so values are conservative-safe; refit on graded playoff cold-start games |
+
+**Condition to Revisit:**
+1. Refit playoff scalars (and the 0.40 vs 0.70 split) once ≥20–30 graded playoff player-games exist per subtype — compression data hints true fringe minutes may fall below 0.40.
+2. Re-examine new_acquisition cap 28 if traded-player props show systematic over/under — literature implies near-normal minutes, so a lower cap may be unnecessary (or 28 too low for a quickly-integrated star).
+3. Recalibrate 180/60-day cutoffs only if observed return-minute data show a sharper break at a different boundary.
+4. Validate taxi cap 12 against actual two-way/call-up minute logs once captured.
+5. **Double-discount check:** the playoff scalars compound with `PLAYOFF_MINUTES_SCALAR` cold_start=0.400 already in the RS→PO path — confirm there is no unintended double-discount before tightening either value.
+
+---
+
+## SECTION 8G — Injury Redistribution Model (CRITICAL)
+
+**Question:** Does the 3-step injury-redistribution algorithm (position-flow apportionment → primary-backup share split → per-minute efficiency discount) match published research on NBA minute/usage reallocation when a player is OUT, and is a flat 10% efficiency discount on absorbed minutes empirically justified?
+
+**Code ground truth:** OUT player's projected minutes flow to teammates in 3 steps. (1) `_POS_FLOW` apportions minutes across the 5 position groups, diagonal-dominant (PG→"SG" 0.80, SF→SF 0.45, C→C 0.55; PG receiver column always 0.00 — NBA API never returns PG, weight folded into SG, 2026-05-10 fix). (2) Within each recipient group the highest-avg-min eligible player takes `REDISTRIB_PRIMARY_SHARE=0.50`, rest split proportionally; flow weights renormalize over groups with eligible players (`REDISTRIB_MIN_ELIGIBLE=8.0`, C-fallback 5.0). (3) Bumps scaled by `REDISTRIB_EFFICIENCY=0.90`, M16-clamped to 48.0, capped by `ROLE_MAX_MIN`.
+
+**Findings:**
+
+1. **No published source provides a closed-form NBA minute-redistribution matrix.** The most-cited injury-context model (Deshpande & Jensen, [*Estimating an NBA player's impact*, JQAS 2016](https://www.degruyterbrill.com/document/doi/10.1515/jqas-2015-0027/html?lang=en)) is a win-probability regression and does **not** model minute reassignment; recent injury-performance work ([MDPI 2025](https://www.mdpi.com/2078-2489/16/8/699)) measures the injured player's own decline, not teammate reallocation. The algorithm is an **engineering construction**, not a transcription of a published estimator — acceptable provided each constant is defensible.
+
+2. **Diagonal-dominant position flow is consistent with substitution practice (qualitatively).** DFS injury guidance confirms coaches replace like-with-like and that guard injuries are most predictable to redistribute ([RotoGrinders, *Who Stands to Benefit from Injuries?*](https://rotogrinders.com/articles/dfs-nba-strategy-who-stands-to-benefit-from-injuries-977355)). No source quantifies cross-position weights, so the 0.80/0.56/0.45/0.55 diagonals are reasonable priors, not externally validated. Modern positional versatility argues for *moderate*, not extreme, diagonal dominance — current values are a reasonable compromise.
+
+3. **The PG-column-always-0.00 artifact is a genuine fragility.** Folding PG weight into SG works today but relies on the upstream NBA-API position-collapse staying exactly as-is; if the feed ever returns PG, every flow row silently mis-routes. Internally consistent today, but a hidden coupling worth a module-load assertion.
+
+4. **PRIMARY_SHARE=0.50 is well-supported for average starters but caliber-blind.** The canonical DFS finding is bimodal: for an **average** starter the backup picks up most of the minutes and production (Clarkson: 32 min/30.5 FP starting vs 12/8.25 off bench — near-complete handoff, arguing the share is *higher* than 0.50); for a **superstar**, minutes/usage do not concentrate on one backup ("the whole team benefits"; Durant-out → both Westbrook and Kanter spike) ([RotoGrinders](https://rotogrinders.com/articles/dfs-nba-strategy-who-stands-to-benefit-from-injuries-977355)). 0.50 is a sensible average across the two regimes but under-credits the direct backup for role-player injuries and over-concentrates for star injuries.
+
+5. **The usage-efficiency tradeoff is real but small for the marginal shift — and it applies to USAGE, not MINUTES.** Oliver's skill curve and Goldman & Rao's allocative-efficiency model show points-per-possession declines as possession share rises, but **the curve is flat for skilled players and steep only for low-skill players** ([NBAstuffer](https://www.nbastuffer.com/analytics101/trade-off-between-usage-and-efficiency/); [Goldman & Rao](https://www.researchgate.net/publication/228699670_Allocative_and_Dynamic_Efficiency_in_NBA_Decision_Making); [Skinner, arXiv:1512.05652](https://arxiv.org/pdf/1512.05652)). The mechanism is shot-quality/turnovers — driven by extra **shot attempts (usage)**, not extra **minutes**. The skill curve "has never been extracted from data in a generally accepted way," so no precise league slope exists.
+
+6. **A flat 10% discount conflates two distinct effects.** (a) Minutes effect (fatigue from playing more): empirically small — per-minute rates are roughly stable across minute load. (b) Usage effect (harder shots): can exceed 10% for a low-skill backup forced into creation, near-zero for a backup inheriting the same role at higher volume. Because the algorithm applies the discount to **minutes** but the loss lives in **usage**, 0.90 is best read as a *blended fudge factor* — defensible and conservative as a blend, too aggressive as a literal per-minute fatigue discount, too flat as a usage discount.
+
+7. **MIN_ELIGIBLE=8.0 MPG matches observed promotion behavior.** Teams promote established rotation players to expanded roles, rarely handing 25+ minutes to a sub-8-MPG deep-bench player on night one ([RotoGrinders](https://rotogrinders.com/articles/dfs-nba-strategy-who-stands-to-benefit-from-injuries-977355)). 8 MPG cleanly separates rotation from garbage-time bench. The C-fallback to 5.0 is a sensible patch: thin frontcourts do promote a sub-8-MPG backup big to ~20 minutes when the starting C is out.
+
+8. **Principal omission: usage-concentration — usage does NOT follow minutes 1:1.** A star's ~30% usage concentrates on the next-best creator/ball-handler, not evenly on minute-fillers (the Durant-out beneficiary was the *creator* Westbrook). Minutes-based redistribution with a flat efficiency discount captures the minutes reallocation but flattens the usage reallocation, under-projecting the secondary creator's counting stats (esp. AST/PTS) and over-spreading usage to low-usage fillers. This is the algorithm's most material gap for prop accuracy.
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| `_POS_FLOW` diagonal-dominant structure | CONFIRMED_WITH_CAVEAT | Like-with-like substitution qualitatively supported; exact weights unvalidated by any published matrix; PG-column=0.00 is a fragile hidden data coupling |
+| `REDISTRIB_PRIMARY_SHARE=0.50` | ACCEPTABLE | Sensible average across the bimodal regime; caliber-blind (under-credits backup for role-player injuries, over-concentrates for stars) |
+| `REDISTRIB_EFFICIENCY=0.90` (key) | CONFIRMED_WITH_CAVEAT / DATA_GATED | Directionally correct, but the loss lives in usage (shot quality/turnovers), not minutes, and is flat for skilled absorbers; no published slope pins 0.90 — defensible blended constant, gate to empirical refit |
+| `REDISTRIB_MIN_ELIGIBLE=8.0` + C-fallback 5.0 | CONFIRMED | Matches "promote established rotation players" behavior + starter/bench minute bands; C-fallback targets thin-frontcourt promotion |
+| 3-step algorithm overall | ACCEPTABLE | Internally coherent, aligned with DFS injury-projection methodology; no published estimator to benchmark against |
+| Usage-concentration omission | **NEEDS_CHANGE** | Usage concentrates on the next-best creator, not evenly on minute-fillers; flat minutes-based redistribution under-projects the secondary creator (esp. AST/PTS) — highest-value improvement |
+
+**Condition to Revisit:**
+1. **EFFICIENCY refit:** when a with-vs-without per-minute-rate dataset exists (target n≥50 starter-out games per absorbing role), split the single 0.90 into a *minutes* component (likely ≈0.97–1.00, fatigue-only) and a *usage* component conditioned on the absorber's skill/role.
+2. **Usage-concentration layer:** add a creator-weighted usage reallocation (route vacated usage to the highest assist-rate/shot-creation teammate, not pro-rata to minutes) before the efficiency discount; prioritize AST and PTS props. Gate to measurable AST-projection improvement in injury-out games.
+3. **PRIMARY_SHARE caliber-split:** if role-player-out vs star-out backtests diverge, make `REDISTRIB_PRIMARY_SHARE` a function of the OUT player's usage/minutes (~0.60–0.70 for average-starter absences, ~0.35–0.45 for superstar absences).
+4. **PG-column guard:** add a module-load assertion that the NBA-API position feed still never returns "PG"; if it ever does, the 0.00 column silently mis-routes all guard redistribution.
+5. **`_POS_FLOW` empirical fit:** revisit if a published positional-substitution matrix or an internal with/without minute-flow study (≥3 seasons) becomes available.
+
+---
+
+## SECTION 8H — Injury Status Probabilities (CRITICAL)
+
+**Question:** Does the binary in/out design (Q/GTD/P → project at full healthy level; Out/Doubtful → excluded) hold up against published NBA injury-report play rates and, critically, against the sportsbook void-on-DNP grading premise it depends on — including for SGP/longshot parlay legs?
+
+**Code ground truth:** `_STATUS_MAP` maps out→("O",0.00), doubtful→("O",0.10), questionable→("Q",1.00), GTD→("GTD",1.00), probable→("P",1.00). The in/out decision keys on the **status_code**: code "O" (out + doubtful) is excluded; play-codes (Q/GTD/P) project at full healthy level. The 0.10 doubtful prob is vestigial (code "O" excludes before it is consulted). `_TRADED_AWAY_DAYS=30`. Rationale (locked product policy): CO books VOID props on DNP, so full-level projection is +EV (WIN if they play at the right price, PUSH/refund if they sit), whereas probabilistic discounting manufactures −EV unders.
+
+**Findings:**
+
+1. **Current official NBA designation set — "Probable" was REINSTATED.** Effective the Dec 19 2025 injury-reporting overhaul, the NBA limits teams to five participation statuses with league-defined likelihoods: **Available**, **Probable (~75%)**, **Questionable (~50%)**, **Doubtful (~25%)**, **Out** ([Dallas Hoops Journal](https://dallashoopsjournal.com/p/nba-injury-reporting-rules-overhaul-explained/)). The prior assumption that "Probable was largely eliminated" is now outdated — `_STATUS_MAP` recognizing "probable" is correct again. "Game time decision" is not an official NBA term but is common in feeds; mapping it alongside Questionable is reasonable.
+
+2. **Empirical play rates are now league-anchored.** Probable ≈75%, Questionable ≈50%, Doubtful ≈25%, enforced (the league may sanction miscalibrated teams) ([Dallas Hoops Journal](https://dallashoopsjournal.com/p/nba-injury-reporting-rules-overhaul-explained/); [CBS Sports injuries](https://www.cbssports.com/nba/injuries/)). Regime shift: pre-overhaul "Questionable" historically skewed high (~60–70% play, over-used as a hedge); the new ~50% anchor is enforced and lower. The takeaway is unchanged — **none of these are 1.00**, so the 1.00 value is defensible *only* because of the void clause (the actual play rate is irrelevant to EV as long as a DNP refunds).
+
+3. **Void-grading premise (straight props) — TRUE at the standard, with one book-specific caveat.** DraftKings voids inactive/DNP player props ([DK basketball rules](https://sportsbook.draftkings.com/help/sport-rules/basketball)); FanDuel voids and refunds ([FD support](https://support.fanduel.com/s/article/What-happens-to-my-prop-bet-if-a-player-is-inactive-or-injured)); BetMGM voids on DNP ([RotoGrinders](https://rotogrinders.com/sports-betting/does-betmgm-void-prop-bets)). **Caveat — the "must take the court" nuance:** some books require the player to *enter* the game for the bet to stand; others stand it "as long as he's active" ([Outlier](https://outlier.bet/sports-betting-strategy/betting-intelligence/house-rules-for-player-props/)). The edge case where binary breaks: a player **active/dressed but plays 0 minutes (coach's-decision DNP, not an injury scratch)** at a book that grades active players — the prop stands and an OVER loses. Rare, and NOT an injury-report-status path (the player wasn't Q/GTD/P), so it largely sits outside `_STATUS_MAP`.
+
+4. **Parlay/SGP leg DNP grading — binary assumption HOLDS.** When a leg voids on DNP, both regular parlays and SGPs **drop the leg and recompute remaining legs at adjusted odds** rather than voiding the slip or grading the leg as a loss: FanDuel removes and recalculates ([Action Network](https://www.actionnetwork.com/education/prop-betting-rules-what-happens-if-player-doesnt-play)); BetMGM voids just that leg ([RotoGrinders](https://rotogrinders.com/sports-betting/does-betmgm-void-prop-bets)); DraftKings reprices SGPs. Same WIN/PUSH asymmetry as a straight prop. **The one place this fails is DFS pick'em, NOT sportsbook parlays:** DraftKings Pick6 / PrizePicks-style products grade a scratched entry as a **LOSS**, no void ([Fantasy Life on Pick6](https://www.fantasylife.com/articles/dfs/what-is-draftkings-pick6-how-to-play-the-newest-pickem-game-on-the-market)). The model's universe is the 18 CO_LEGAL_BOOKS (true sportsbooks), so this does not currently apply — but if the engine is ever pointed at a pick'em product, the binary design becomes −EV.
+
+5. **Doubtful = OUT and the 0.10 vestigial value.** With Doubtful league-anchored at ~25% play, treating it as excluded is the conservative correct choice (forgoes the 25% who suit up rather than pricing them at full strength on a 75%-they-sit player). The 0.10 value is genuinely vestigial — but **if it were ever wired into a probabilistic path, 0.10 understates the modern ~0.25 play rate** and should be ~0.25.
+
+6. **`_TRADED_AWAY_DAYS=30` is a sound heuristic.** In-season a rostered rotation player essentially never goes 30 days without appearing; a 30-day gap reliably signals trade/waiver, G-League assignment, or long-term injury. False-positive risk (a still-rostered player returning from a 30+ day injury, excluded on his return date) is benign-to-helpful — such a player has no reliable recent form and a depressed minutes outlook, so suppressing a low-confidence pick avoids error rather than costing a clear edge. Robust within ±10 days.
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| Current official NBA designation set | CONFIRMED (update note) | Available / Probable~75% / Questionable~50% / Doubtful~25% / Out, enforced as of Dec 19 2025; **Probable reinstated** — `_STATUS_MAP` "probable" is correct |
+| Binary in/out design (given void premise) | LOCKED | Void clause makes full-level projection of play-coded statuses +EV (WIN/PUSH asymmetry); reverting to discounting is structurally −EV |
+| Void-grading premise — straight props | CONFIRMED_WITH_CAVEAT | DK/FD/MGM void on DNP; caveat = active-but-0-minute DNP-CD at "must-be-active" books grades as a loss (rare, non-injury-status path) |
+| Parlay-leg DNP grading (SGP/longshot) | CONFIRMED | Leg drops and reprices; does not lose — binary holds for parlay legs on real sportsbooks |
+| DFS pick'em exception | NEEDS_CHANGE (only if engine ever targets pick'em) | DK Pick6 / PrizePicks grade DNP as a LOSS, no void; out of scope today (CO_LEGAL_BOOKS only) — flag, don't change |
+| Doubtful = OUT (excluded) | CONFIRMED | ~25% play rate; excluding is conservative-correct |
+| Doubtful = 0.10 vestigial value | ACCEPTABLE | Never consulted (code "O" excludes first); if ever activated, set to ~0.25 |
+| Questionable/GTD/Probable = 1.00 | CONFIRMED | Not a literal play rate (~50/—/75%); correct only because the void clause refunds DNPs |
+| `_TRADED_AWAY_DAYS=30` | CONFIRMED_WITH_CAVEAT | Robust in-season heuristic; only false positive (rostered player returning from 30+ day injury) is benign |
+
+**Condition to Revisit:**
+1. If the engine is ever pointed at a DFS pick'em product (DK Pick6, PrizePicks, Underdog) — the void backstop disappears and full-level projection of Q/GTD/P becomes −EV; the binary design must be re-derived for loss-on-DNP grading.
+2. If any CO_LEGAL_BOOK changes house rules from "must take the court / void on DNP" to "stands if active" for NBA props — re-audit that book.
+3. If the 0.10 doubtful probability is ever wired into a live projection path — bump to ~0.25 to match the enforced league anchor.
+4. Periodic recal of the play-rate documentation (Probable 75% / Questionable 50% / Doubtful 25%) after one full season under the Dec 2025 enforcement regime.
+5. If a healthy-DNP-CD pattern starts appearing in graded results as outright losses, add an explicit guard — these sit outside `_STATUS_MAP` and the void clause may not protect them at "active-suffices" books.
+
+---
+
+## PLAN 8 — CONSOLIDATED VERDICT TABLES
+
+### LOCKED
+*Should not change unless the sport or model architecture fundamentally changes.*
+
+| Assumption | Value | Source(s) | Condition to Revisit |
+|---|---|---|---|
+| AST/BLK/REB/TOV home deltas | +0.0333 / +0.0439 / +0.0088 / −0.0122 | Fan 2019; van Bommel & Bornn 2017 (scorekeeper bias is *recorded*, props settle on box score); Scorecasting | Per-arena prop volume ≥100 player-games/venue → per-arena coefficients |
+| Same home delta RS vs playoffs | — | Playoff HCA *stronger* (2.7→4.5 pts), scorekeeper bias persists; flat delta conservative | Never (only attenuation would matter; it strengthens) |
+| Blowout sigmoid k=0.15, mid=20.0 | — | Reproduces E[reduction\|spread] under margin~N(spread,12); Winston, Stern | σ(margin) shifts past ~13.5–14 |
+| Days-rest decay FORM (exponential) | exp(−days/τ) | Banister fitness-fatigue; team-sport recovery kinetics | Never (form); τ is PERIODIC_RECAL |
+| REB_ALPHA=0.45 | 0.45 | §7G combination-puzzle (flat loss surface under shared-minutes error correlation) | Path decorrelation or blended-MAE loss vs best single path |
+| Role classification (fit-for-purpose) | 26/20/12/5, sr≥0.60 | Minutes intrinsically hard to predict (Box Score Geeks) → internal 76,604-snapshot backtest is the correct validator | Joint refit with minutes scalars |
+| Binary injury in/out design | Q/GTD/P→1.00, O/Doubtful→excluded | Void-on-DNP clause makes full-level projection +EV; DK/FD/MGM rules; parlay legs reprice not lose | Engine targets DFS pick'em, or a book drops the void clause |
+| Decomposed REB priors (System 1, N=5) | OREB/DREB positional, N=5 | kmedved padding orb 98.55 / drb 108.26 poss (~1.5 games); Oliver/Kubatko ORB%/DRB% denominators | July refit re-confirms N=5 |
+
+### PERIODIC_RECAL
+*Correct methodology; update values each offseason (or per stated frequency).*
+
+| Assumption | Current Value | Method | Notes |
+|---|---|---|---|
+| Home/away deltas (as a set) | 6 deltas | within-player (home−away)/avg, 3-season window, with SEs | NBA HCA declining secularly; **FG3M +0.0452 specifically** — 9% spread exceeds published ~3%, re-estimate with SE |
+| Blowout max_reduction | 0.19 | margin-conditional minutes-reduction fit | Rising league blowout rate (34% of Apr 2026 games 20+) → recalibrate |
+| Days-rest τ (e-folding 1.5) | 1.5 | recovery-curve fit to own B2B minutes residuals | Implied curve OK now; validate at n≥500 B2B player-games |
+| Cold-start 180/60-day cutoffs | 180 / 60 | calendar partition of return-risk | Refit only if return-minute data show a sharper break elsewhere |
+| Role cutpoints | 26/20/12/5 | joint with minutes scalars on snapshot backtest | Refit whenever minutes scalars refit |
+
+### DATA_GATED
+*Correct methodology; waiting for enough data to finalize.*
+
+| Assumption | Current Value | Gate | Notes |
+|---|---|---|---|
+| `REDISTRIB_EFFICIENCY=0.90` | 0.90 | n≥50 starter-out games per absorbing role | Split into minutes component (≈0.97–1.00) + usage component conditioned on absorber skill; no published slope pins 0.90 |
+| COLD_START_PLAYOFF_SCALAR magnitudes | 0.40/0.40/0.70/0.75 | n≥20–30 graded playoff player-games per subtype | Ordering correct; compression hints true fringe minutes may fall below 0.40; check double-discount vs cold_start=0.400 |
+| Cold-start taxi cap 12 | 12.0 | actual two-way/call-up debut minute logs | Conservative ceiling on role inference today |
+| Down-weighting vs PBP filtering (8B) | down-weight | acquiring NBA play-by-play data | CTG stint exclusion is the published upgrade |
+| Doubtful=0.10 (if ever activated) | 0.10 | — | Bump to ~0.25 to match enforced league anchor if wired into a probabilistic path |
+
+### NEEDS_CHANGE (priority order)
+
+| # | Item | § | Problem | Fix | Gate/Priority |
+|---|---|---|---|---|---|
+| 1 | **`_REB_RATE_PRIOR` deflated ~2×** | 8D | Per-game figures treated as per-36 then ÷36 → all five positional per-minute REB priors ~half true value (C 5.94 vs ~11.2 per-36); under-projects cold-start (n=0) rebounds at 0.55 baseline weight, worst for bigs. Extends open item H01 from "C only" to all positions | Re-derive `_REB_RATE_PRIOR_RS/PO` from true per-36 (RS ≈ PG 0.128 / SG 0.132 / SF 0.168 / PF 0.210 / C 0.305; recompute PO via existing G×1.054/F×0.832/C×0.806 scalars); fix mislabeled comment at line 395 | Bounded blast radius (cold-start only); backtest cold-start REB bias before/after. **Highest-confidence finding** |
+| 2 | **Usage-concentration omission** | 8G | Injury redistribution routes the OUT player's *minutes* by position but spreads *usage* pro-rata; real usage concentrates on the next-best creator (Durant-out→Westbrook) → under-projects the secondary creator's AST/PTS, over-spreads to minute-fillers | Add a creator-weighted usage reallocation layer (route vacated usage to highest assist-rate/shot-creation teammate) before the efficiency discount; prioritize AST/PTS | Gate to measurable AST-projection improvement in injury-out games. Highest-value redistribution improvement |
+| 3 | **Days-rest `max_reduction=0.10` likely too high for played games** | 8C | Published *played-game* B2B effects ~0.5–1 pt / d≈0.05–0.08; "Tired of Misattribution" finds fatigue impact minimal; most of the visible 10%+ swing is DNP-driven (already handled by injury status) → risk of double-counting on played starters | Validate at n≥500 B2B player-games (regress actual−proj MINUTES by days-rest bucket, players who appeared only); cut toward empirical value if 0-day residual ≪10% | Data-gated; interim value conservative |
+| 4 | **Days-rest omissions: travel / altitude / density** | 8C | Westward travel ~9pp win swing (Roy & Forest); Denver altitude largest HCA in sports (~67%); 4-in-5 ≈ −1 pt/100 — each rivals the modeled 10% B2B effect; all omitted | Add altitude flag (Denver/Utah), eastward/westward travel term, 3-in-4 / 4-in-6 density. Prioritize altitude + westward travel | Next minutes-model pass |
+| 5 | **`DAYS_REST_HALF_LIFE` mislabel** | 8C | Constant is an e-folding time, not a half-life (off by ln2 → true half-life ≈1.04d); zero computational impact but misleads future recalibration | Rename to `DAYS_REST_EFOLD` (or store a true half-life and divide by ln2) | Cosmetic; bundle with next nba_projector.py edit |
+| 6 | **SF playoff REB deflator too steep** | 8D | Model drops SF per-minute REB −16% in playoffs but empirical SF rebounding is ~flat RS→PO | Re-fit SF PO prior when the playoff sample grows | Bundle with §8D System-1 PO refit |
+
+---
+
+## PLAN 8 SUMMARY
+
+Sections 8A–8H audited; constants verified from source 2026-06-06. Headline:
+
+- **6 NEEDS_CHANGE**, of which the highest-confidence is **#1 (`_REB_RATE_PRIOR` ~2× deflation)** — a clear units error (per-game vs per-36) in the cold-start REB baseline, blast radius bounded to n=0 players at 0.55 weight. This **extends and resolves the open H01 item** (the C value was flagged; in fact all five positions are wrong).
+- The two CRITICAL sections landed where expected: **8G** redistribution is structurally sound but flattens usage-concentration (#2); **8H** binary in/out is **LOCKED** (the void-clause premise holds for straight props *and* parlay legs on the 18 CO books; only fails on DFS pick'em, which is out of scope). 8H also surfaced a live fact update: **the NBA reinstated "Probable" (~75%) with enforced status probabilities effective Dec 19 2025** — `_STATUS_MAP` is correctly aligned.
+- **8A** home deltas largely CONFIRMED (scorekeeper-bias literature *validates* the AST/BLK deltas because props settle on recorded box scores); only FG3M flagged for SE re-estimation.
+- **8B** blowout sigmoid is mathematically LOCKED (it reproduces the correct Bayesian E[reduction|spread]); **8E** role tiers LOCKED as fit-for-purpose; **8F** cold-start caps CONFIRMED/ACCEPTABLE as conservative ceilings.
+
+**No engine code was changed this session** (research-only, per plan). NEEDS_CHANGE items #1, #2, #4, #5 are candidate offseason/next-pass work; #3 and the playoff-scalar magnitudes are data-gated. Baseline test suite unaffected (no source touched).
