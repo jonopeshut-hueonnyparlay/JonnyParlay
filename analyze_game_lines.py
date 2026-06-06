@@ -7,6 +7,7 @@ Distributions:
   All other markets: Normal (same GAME_SIGMA values as run_picks.py)
 """
 import math, requests, sys
+from pathlib import Path
 from typing import Optional
 
 API_KEY   = "adb07e9742307895c8d7f14264f52aee"
@@ -68,6 +69,46 @@ F5_SCALAR = 0.540
 
 # NB dispersion for MLB team run-scoring (calibrated 2026-06-05, n=8095 regular-season games)
 MLB_TEAM_RUN_R = 3.548
+
+# Team-specific sigma JSONs (mirrored from run_picks.py) — loaded at startup
+_TEAM_SIGMAS_AGL: dict = {}
+
+def _load_team_sigmas_agl():
+    import json as _json
+    _data_dir = Path(__file__).parent / "data"
+    for sport, fname in [("NHL", "team_sigmas_nhl.json"), ("MLB", "team_sigmas_mlb.json"),
+                         ("NBA", "team_sigmas_nba.json"), ("WNBA", "team_sigmas_wnba.json")]:
+        p = _data_dir / fname
+        if p.exists():
+            _TEAM_SIGMAS_AGL[sport] = _json.loads(p.read_text())
+
+_load_team_sigmas_agl()
+
+def get_game_sigma(sport, home_abbr, away_abbr, market):
+    """Return matchup-specific sigma; falls back to SIGMA league average."""
+    league = SIGMA.get(sport, SIGMA["NBA"])
+    league_sigma = league.get(market, 10.0)
+    team_data = _TEAM_SIGMAS_AGL.get(sport, {})
+    if not team_data:
+        return league_sigma
+    h = team_data.get((home_abbr or "").upper())
+    a = team_data.get((away_abbr or "").upper())
+    if not h or not a:
+        return league_sigma
+    if market in ("total", "ml", "spread"):
+        return math.sqrt(h["score_sigma"]**2 + a["score_sigma"]**2)
+    return league_sigma
+
+def get_game_sigma_team(sport, team_abbr):
+    """Return sigma for one team's scoring — used for team total picks."""
+    league = SIGMA.get(sport, SIGMA["NBA"])
+    league_sigma = league.get("team", 10.0)
+    t = _TEAM_SIGMAS_AGL.get(sport, {}).get((team_abbr or "").upper())
+    return t["score_sigma"] if t and t.get("n_games", 0) >= 20 else league_sigma
+
+def get_mlb_team_run_r(team_abbr):
+    """Return per-team NB dispersion r for MLB run-scoring; falls back to MLB_TEAM_RUN_R."""
+    return _TEAM_SIGMAS_AGL.get("MLB", {}).get((team_abbr or "").upper(), {}).get("nb_r", MLB_TEAM_RUN_R)
 
 # ── Projections (away_abbr, away_proj, home_abbr, home_proj) ───────────────
 MLB_PROJS = [
