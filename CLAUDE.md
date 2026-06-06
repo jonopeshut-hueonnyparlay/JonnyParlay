@@ -8,7 +8,7 @@
 - `_HOME_AWAY_DELTA`: pts=0.0235, reb=0.0088, ast=0.0333, fg3m=0.0452, blk=0.0439, tov=−0.0122.
 - `_REB_RATE_PRIOR` (PO): PG=0.056, SG=0.060, SF=0.066, PF=0.092, C=0.133. RS: PG=0.053, SG=0.057, SF=0.079, PF=0.111, C=0.165. Split 2026-05-10 from G/F/C using StatMuse per-36 ratios. **(~2× DEFLATION PENDING FIX — Plan 8 §8D)**
 - `DK_STD_FLOOR`: starter=4.0, sixth_man=4.0, rotation=3.5, spot=3.0, cold_start=3.0. `DK_STD_COEFF`=0.35.
-- `HIGH_VAR_CV_THRESHOLD`=0.60, `HIGH_VAR_MIN_GAMES`=8 (3PT specialist bimodal flag, RB8 H5).
+- `HIGH_VAR_CV_THRESHOLD`=0.60, `HIGH_VAR_MIN_GAMES`=8 (3PT specialist high-dispersion flag, RB8 H5; relabeled from "bimodal" Plan 7 #6 — CV detects dispersion, not bimodality).
 - Blowout sigmoid: k=0.15, mid=20.0, max_reduction=0.19 (refit 2026-05-06 on 24,600 rows).
 - `PLAYOFF_RATE_DEFLATORS`: pts=0.934, ast=0.845, fg3m=0.948, blk=1.152. Refit 2026-05-10 from 20-date playoff backtest (1071 player-games, Apr 18–May 8 2026). PTS added (was missing, +0.791 over-projection). AST/fg3m updated from stale n=43. BLK added as inflator (under-projected -0.074, t=-2.74; more half-court defense in playoffs). Post-fix biases: PTS −0.007, AST −0.006, FG3M +0.003 (all ≈0); BLK update pending C01 gate (per-possession analysis).
 - `PLATT_A`=1.4988, `PLATT_B`=−0.8102 — **frozen** until H3 gate. Formula: `sigmoid(A * over_p + B)` (**raw-probability space — NOT logit-space**). `PLATT_SPACE="raw"` safeguard constant in run_picks.py asserts formula space matches; change to `"logit"` simultaneously with formula+A/B at H3. At H3, ALL THREE change simultaneously from calibrate_platt.py output.

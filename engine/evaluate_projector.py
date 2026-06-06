@@ -52,6 +52,7 @@ from nba_projector import (
     compute_shooting_rates, compute_per_minute_rates, compute_reb_rates,
     compute_ast_rate, compute_stl_blk_rates,
     LEAGUE_AVG_PACE, MATCHUP_CLIP,
+    REGULAR_SEASON_STAT_SCALAR,
     PTS_BLEND_ALPHA, BLEND_BIAS_CORRECTION,
     REB_ALPHA,
     AST_ALPHA, LEAGUE_AVG_TOV_RATE,
@@ -415,12 +416,22 @@ def project_reb(player_id: int, team_id: int, opp_team_id: int,
 def run_evaluation(season: str, n: int, stat: str, min_min: float,
                    db_path: Path, verbose: bool, seed: int | None = None,
                    alpha: float | None = None,
-                   use_actual_min: bool = False) -> dict:
+                   use_actual_min: bool = False,
+                   production_frame: bool = False) -> dict:
     """Evaluate projection accuracy against DB history.
 
     P12: use_actual_min=False (default) uses projected minutes, giving a
     realistic error surface.  Pass --use-actual-min to recover the old
     rate-only MAE for direct comparison.
+
+    Plan 7 #7: production_frame=True applies REGULAR_SEASON_STAT_SCALAR to the
+    custom projection before computing headline metrics — aligns this eval frame
+    with the production backtest (which runs project_player() with scalars ON).
+    The log-space bias decomposition is always reported for BOTH frames.
+    Note: scalars are only PARTIAL alignment — sample_games() conditions on
+    actual min >= min_min, so actual minutes systematically exceed projected
+    minutes on sampled rows (minutes-selection bias, ~-3.4 min at min_min=20).
+    Use --use-actual-min with --production-frame to remove that channel too.
     """
     log.info("Sampling %d player-games from %s (min>=%.0f) ...", n, season, min_min)
     sample = sample_games(season, n, min_min, db_path, seed=seed)
@@ -489,16 +500,24 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
                 skipped += 1
                 continue
 
+            # Plan 7 #7: production frame applies the RS stat scalar (as
+            # project_player() does); raw frame is the historical eval default.
+            custom_raw    = custom
+            custom_scaled = custom * REGULAR_SEASON_STAT_SCALAR.get(col, 1.0)
+            custom_used   = custom_scaled if production_frame else custom_raw
+
             results.append({
                 "player":       row["player_name"],
                 "date":         gdate,
                 "actual":       actual,
-                "custom":       custom,
+                "custom":       custom_used,
+                "custom_raw":   custom_raw,
+                "custom_scaled": custom_scaled,
                 "baseline":     baseline,
                 "actual_min":   actual_min,
                 "proj_min":     pmin,
                 "min_err":      pmin - actual_min,
-                "custom_err":   custom - actual,
+                "custom_err":   custom_used - actual,
                 "baseline_err": baseline - actual,
                 "role":         role,                      # P17
                 "pos_group":    _pos_to_group(pos),        # P17
@@ -535,12 +554,32 @@ def run_evaluation(season: str, n: int, stat: str, min_min: float,
     by_role = _stratify_mae(df, "role", ROLE_ORDER)
     by_pos  = _stratify_mae(df, "pos_group", POS_ORDER)
 
+    # Plan 7 #7 — log-space bias decomposition, reported for BOTH frames.
+    # log(actual+eps) - log(proj+eps) ~= minutes_component + rate_component.
+    # Convention: positive = actual exceeds projection (under-projection).
+    # The minutes component is frame-invariant (stat scalars don't touch minutes).
+    eps = 0.5
+    log_actual   = np.log(df["actual"].clip(lower=0) + eps)
+    minutes_comp = float((np.log(df["actual_min"] + eps)
+                          - np.log(df["proj_min"].clip(lower=0) + eps)).mean())
+    log_decomp = {}
+    for frame, col_name in (("raw", "custom_raw"), ("scaled", "custom_scaled")):
+        total = float((log_actual - np.log(df[col_name].clip(lower=0) + eps)).mean())
+        log_decomp[frame] = {
+            "total":   total,
+            "minutes": minutes_comp,
+            "rate":    total - minutes_comp,
+            "bias":    float((df[col_name] - df["actual"]).mean()),
+        }
+
     return {
         "n_eval":        n_eval,
         "skipped":       skipped,
         "stat":          stat.upper(),
         "season":        season,
         "use_actual_min": use_actual_min,
+        "production_frame": production_frame,
+        "log_decomp":    log_decomp,   # Plan 7 #7
         "custom_mae":    custom_mae,
         "baseline_mae":  base_mae,
         "custom_bias":   custom_bias,
@@ -595,7 +634,8 @@ def _print_stratified(out: dict) -> None:
             s = strata.get(label)
             if s is None:
                 continue
-            arrow = "▲" if s["delta_mae"] > 0 else "▼"
+            # ASCII arrows — unicode triangles crash cp1252 redirected stdout (background runs)
+            arrow = "^" if s["delta_mae"] > 0 else "v"
             print(f"  {label:<12}  {s['n']:>5}  {s['custom_mae']:>10.3f}  "
                   f"{s['baseline_mae']:>10.3f}  {s['delta_mae']:>+7.3f}{arrow}")
 
@@ -726,6 +766,9 @@ def _main():
                         help="Grid-search optimal blend alpha for --stat (PTS or 3PM) and print recommended constants")
     parser.add_argument("--use-actual-min", action="store_true",
                         help="Use actual minutes (old behaviour). Default: projected minutes (P12)")
+    parser.add_argument("--production-frame", action="store_true",
+                        help="Apply REGULAR_SEASON_STAT_SCALAR to custom projections "
+                             "(aligns eval frame with the production backtest — Plan 7 #7)")
     args = parser.parse_args()
 
     if args.grid_search_alpha:
@@ -749,6 +792,7 @@ def _main():
         verbose=args.verbose,
         seed=args.seed,
         use_actual_min=args.use_actual_min,
+        production_frame=args.production_frame,
     )
 
     if not out:
@@ -757,11 +801,12 @@ def _main():
     sign  = "+" if out["delta_mae"] < 0 else "-"
     arrow = "BETTER" if out["delta_mae"] < 0 else "WORSE"
     min_label = "actual" if out["use_actual_min"] else "projected"
+    frame_label = "production (RS stat scalars ON)" if out["production_frame"] else "raw (scalars OFF)"
 
     print(f"""
 {'='*60}
 Evaluation: {out['stat']} | {out['season']} | n={out['n_eval']} (skipped {out['skipped']})
-minutes_mode: {min_label}
+minutes_mode: {min_label}  |  frame: {frame_label}
 {'='*60}
   Custom   MAE:  {out['custom_mae']:.3f}   RMSE={out['custom_rmse']:.3f}   bias={out['custom_bias']:+.3f}
   Baseline MAE:  {out['baseline_mae']:.3f}   RMSE={out['baseline_rmse']:.3f}   bias={out['baseline_bias']:+.3f}
@@ -771,6 +816,20 @@ minutes_mode: {min_label}
   Minutes MAE:   {out['min_mae']:.3f}   bias={out['min_bias']:+.3f}
 {'='*60}
 """)
+    # Plan 7 #7 — log-space bias decomposition, both frames (ASCII-safe output:
+    # background runs redirect stdout under cp1252, which chokes on unicode).
+    ld = out.get("log_decomp", {})
+    if ld:
+        print("  Log-space bias decomposition (log cols: log(actual+0.5)-log(proj+0.5), +ve = under-proj;")
+        print("  lin.bias: proj-actual, matches headline bias convention):")
+        print(f"  {'frame':<22}  {'total':>8}  {'minutes':>8}  {'rate':>8}  {'lin.bias':>9}")
+        print(f"  {'-'*60}")
+        for frame, label in (("raw", "raw (scalars OFF)"), ("scaled", "production (ON)")):
+            d = ld.get(frame)
+            if d:
+                print(f"  {label:<22}  {d['total']:>+8.4f}  {d['minutes']:>+8.4f}  "
+                      f"{d['rate']:>+8.4f}  {d['bias']:>+9.4f}")
+        print()
     _print_stratified(out)  # P17 — archetype stratification
 
 
