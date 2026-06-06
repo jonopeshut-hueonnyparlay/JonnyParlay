@@ -110,6 +110,7 @@ Discord bot display name: **PicksByJonny**
 | `post_nrfi_bonus.py` | One-shot webhook poster for manual bonus drops. Uses Mozilla UA to bypass Cloudflare 1010. Restored 2026-05-27. |
 | `engine/gate_check.py` | Single-shot CLI reporting all open gate counts. Run: `python engine/gate_check.py`. Added 2026-06-03. |
 | `engine/context_research.py` | Per-game Opus research — 15-factor checklist, writes data/context_verdicts.json. Run before picks: `python engine/context_research.py --sport NBA`. Display-only in v1 (CTX+/CTX- tags); gate: 50 graded picks before behavioral use. |
+| `docs/research/STATISTICAL_FOUNDATIONS.md` | **Statistical foundations audit (Plan 6, 2026-06-05).** Every distribution/constant validated against published literature; 21 sections, each LOCKED / PERIODIC_RECAL / DATA_GATED / NEEDS_CHANGE with citations. **Before changing any distribution or statistical constant, check this doc — changes must cite evidence that overrides it.** Open NEEDS_CHANGE items (11) listed in its summary table; P0: get_game_sigma() market-covariance fix + NBA GAME_SIGMA calibration. |
 
 ## Discord Structure (Target)
 ```
