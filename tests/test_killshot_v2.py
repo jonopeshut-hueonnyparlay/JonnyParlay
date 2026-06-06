@@ -1,40 +1,48 @@
-"""test_killshot_v2.py — regression tests for KILLSHOT v2 qualification gate and sizing.
+"""test_killshot_v2.py — regression tests for the KILLSHOT qualification gate and sizing.
 
-Locks the v2 spec:
-  - Auto-qualify gate (ALL must pass):
-      tier == "T1" strictly
-      pick_score >= 90
-      win_prob >= 0.65
+Locks the v3 spec (Plan 6 §13 redesign, 2026-06-05):
+  - Auto-qualify gate (ALL must pass — NO tier requirement in v3):
+      pick_score >= 65
       odds in [-200, +110]
-      stat in {PTS, AST, SOG, 3PM}  # REB dropped (L9)
+      win_prob >= implied_prob(odds) + KILLSHOT_WP_MARGIN (0.03)  # odds-dependent
+      stat in {PTS, AST}   # SOG removed while G_SOG_SUSPENDED; REB dropped (L9)
   - Sizing:
       3u default
       4u iff win_prob >= 0.70 AND edge >= 0.06
       capped at 4u (no 5u tier)
   - Weekly cap: 2 KILLSHOTs per rolling 7 days
-  - Manual override (--killshot NAME): bypasses v2 gate, still counts toward cap,
-    still requires score >= 75
+  - Manual override (--killshot NAME): bypasses score/stat selection, still requires
+    score >= 75 AND the odds range AND the odds-dependent wp floor (v2's manual
+    path was score-only — a latent −EV bypass), counts toward cap
+  - Module-load invariant: every allowlisted stat is unsuspended + tier-eligible
 
 Run:
-    cd engine && python -m pytest ../test_killshot_v2.py -v
+    python -m pytest tests/test_killshot_v2.py -v
 
-Pure-function tests. No network, no Discord, no filesystem (weekly-cap test patches _killshots_this_week).
+Pure-function tests. No network, no Discord; blocked-pick logging is redirected
+to tmp_path (near-miss disqualifications write to pick_log_blocked.csv).
 """
 
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
-ENGINE_DIR = Path(__file__).resolve().parent / "engine"
-sys.path.insert(0, str(ENGINE_DIR))
+import pytest
+
+ENGINE_DIR = Path(__file__).resolve().parents[1] / "engine"
+if str(ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(ENGINE_DIR))
 
 import run_picks  # noqa: E402
 from run_picks import (  # noqa: E402
+    _assert_killshot_invariants,
+    _killshot_odds_wp_ok,
     _killshot_size,
     _passes_killshot_v2_gate,
+    implied_prob,
     select_killshots,
     KILLSHOT_SCORE_FLOOR,
-    KILLSHOT_WIN_PROB_FLOOR,
+    KILLSHOT_WP_MARGIN,
     KILLSHOT_ODDS_MIN,
     KILLSHOT_ODDS_MAX,
     KILLSHOT_STAT_ALLOW,
@@ -44,12 +52,20 @@ from run_picks import (  # noqa: E402
     KILLSHOT_BUMP_EDGE,
     KILLSHOT_WEEKLY_CAP,
     KILLSHOT_MANUAL_FLOOR,
-    KILLSHOT_TIER_REQUIRED,
+    SUSPENDED_STATS,
 )
 
 
+@pytest.fixture(autouse=True)
+def _patch_blocked_log(tmp_path, monkeypatch):
+    """Near-miss disqualifications append to pick_log_blocked.csv — redirect."""
+    monkeypatch.setattr(run_picks, "PICK_LOG_BLOCKED_PATH",
+                        str(tmp_path / "pick_log_blocked.csv"))
+
+
 def _pick(**overrides):
-    """Build a pick that passes every v2 gate by default. Override individual fields to test each."""
+    """Build a pick that passes every v3 gate by default. Override fields to test each.
+    At odds=-130 the odds-dependent wp floor is implied_prob(-130)+0.03 ≈ 0.595."""
     base = {
         "player": "Test Player",
         "tier": "T1",
@@ -66,21 +82,22 @@ def _pick(**overrides):
     return base
 
 
-# ─── v2 gate: passes ────────────────────────────────────────────────────────────
+# ─── v3 gate: passes ────────────────────────────────────────────────────────────
 
-def test_gate_passes_on_clean_T1():
+def test_gate_passes_on_clean_pick():
     ok, reason = _passes_killshot_v2_gate(_pick())
-    assert ok, f"Clean T1 pick should pass; got reason={reason}"
+    assert ok, f"Clean pick should pass; got reason={reason}"
 
 
 def test_gate_passes_all_allowed_stats():
-    for stat in ("PTS", "AST", "SOG"):
+    for stat in sorted(KILLSHOT_STAT_ALLOW):
         ok, reason = _passes_killshot_v2_gate(_pick(stat=stat))
         assert ok, f"stat={stat} should pass; got reason={reason}"
 
 
 def test_gate_passes_at_odds_lower_boundary():
-    ok, _ = _passes_killshot_v2_gate(_pick(odds=KILLSHOT_ODDS_MIN))
+    # At -200 the wp floor is implied_prob(-200)+0.03 ≈ 0.697 — needs high wp
+    ok, _ = _passes_killshot_v2_gate(_pick(odds=KILLSHOT_ODDS_MIN, win_prob=0.70))
     assert ok, "odds == KILLSHOT_ODDS_MIN (-200) should pass (inclusive boundary)"
 
 
@@ -89,9 +106,10 @@ def test_gate_passes_at_odds_upper_boundary():
     assert ok, "odds == KILLSHOT_ODDS_MAX (+110) should pass (inclusive boundary)"
 
 
-def test_gate_passes_at_win_prob_floor():
-    ok, _ = _passes_killshot_v2_gate(_pick(win_prob=KILLSHOT_WIN_PROB_FLOOR))
-    assert ok, "win_prob == floor (0.65) should pass (inclusive)"
+def test_gate_passes_at_exact_wp_floor():
+    floor = implied_prob(-130) + KILLSHOT_WP_MARGIN
+    ok, _ = _passes_killshot_v2_gate(_pick(win_prob=floor))
+    assert ok, "win_prob == breakeven+margin should pass (inclusive)"
 
 
 def test_gate_passes_at_score_floor():
@@ -99,25 +117,18 @@ def test_gate_passes_at_score_floor():
     assert ok, "pick_score == floor (65) should pass (inclusive)"
 
 
-# ─── v2 gate: rejects ────────────────────────────────────────────────────────────
+# ─── v3: tier requirement dropped ────────────────────────────────────────────────
 
-def test_gate_rejects_T1B():
-    ok, reason = _passes_killshot_v2_gate(_pick(tier="T1B"))
-    assert not ok
-    assert "tier" in reason
-
-
-def test_gate_rejects_T2():
-    ok, reason = _passes_killshot_v2_gate(_pick(tier="T2"))
-    assert not ok
-    assert "tier" in reason
+def test_gate_accepts_any_tier():
+    """v3 dropped the T1-strict requirement: PTS is T2, so PTS ∧ tier=T1 was
+    logically unsatisfiable — the gate was dead for 5+ weeks. T1 WR (46.6%)
+    < T2 (60.3%); selection on floors is strictly better."""
+    for tier in ("T1", "T1B", "T2", "T3", ""):
+        ok, reason = _passes_killshot_v2_gate(_pick(tier=tier))
+        assert ok, f"tier={tier!r} should not matter in v3; got reason={reason}"
 
 
-def test_gate_rejects_T3():
-    ok, reason = _passes_killshot_v2_gate(_pick(tier="T3"))
-    assert not ok
-    assert "tier" in reason
-
+# ─── v3 gate: rejects ────────────────────────────────────────────────────────────
 
 def test_gate_rejects_score_below_floor():
     ok, reason = _passes_killshot_v2_gate(_pick(pick_score=64.9))
@@ -125,14 +136,31 @@ def test_gate_rejects_score_below_floor():
     assert "score" in reason.lower()
 
 
-def test_gate_rejects_win_prob_below_floor():
-    ok, reason = _passes_killshot_v2_gate(_pick(win_prob=0.649))
+def test_gate_rejects_win_prob_below_odds_dependent_floor():
+    # At -130 the floor is ≈0.595
+    ok, reason = _passes_killshot_v2_gate(_pick(win_prob=0.59))
     assert not ok
     assert "win_prob" in reason
 
 
+def test_gate_closes_latent_ev_window_at_minus_200():
+    """The v2 static floor (0.65) was −EV at −200 (breakeven 0.667).
+    v3's odds-dependent floor (0.697 at −200) closes the window."""
+    ok, reason = _passes_killshot_v2_gate(_pick(odds=-200, win_prob=0.66))
+    assert not ok, "wp=0.66 at -200 is -EV and must be rejected in v3"
+    assert "win_prob" in reason
+
+
+def test_gate_wp_floor_scales_with_odds():
+    """Same wp can pass at light juice and fail at heavy juice."""
+    ok_light, _ = _passes_killshot_v2_gate(_pick(odds=-110, win_prob=0.62))
+    ok_heavy, _ = _passes_killshot_v2_gate(_pick(odds=-180, win_prob=0.62))
+    assert ok_light, "wp=0.62 at -110 (floor ≈0.554) should pass"
+    assert not ok_heavy, "wp=0.62 at -180 (floor ≈0.673) should fail"
+
+
 def test_gate_rejects_odds_below_min():
-    ok, reason = _passes_killshot_v2_gate(_pick(odds=-201))
+    ok, reason = _passes_killshot_v2_gate(_pick(odds=-201, win_prob=0.75))
     assert not ok
     assert "odds" in reason
 
@@ -144,16 +172,40 @@ def test_gate_rejects_odds_above_max():
 
 
 def test_gate_rejects_disallowed_stats():
-    for stat in ("PARLAY", "TEAM_TOTAL", "ML_DOG", "F5_ML", "SPREAD", "ML_FAV", "TOTAL"):
+    for stat in ("SOG", "PARLAY", "TEAM_TOTAL", "ML_DOG", "F5_ML", "SPREAD", "ML_FAV", "TOTAL"):
         ok, reason = _passes_killshot_v2_gate(_pick(stat=stat))
-        assert not ok, f"stat={stat} should be rejected under v2 allowlist"
+        assert not ok, f"stat={stat} should be rejected under v3 allowlist"
         assert "stat" in reason
 
 
-def test_gate_rejects_missing_tier():
-    ok, reason = _passes_killshot_v2_gate(_pick(tier=""))
+def test_gate_rejects_suspended_sog():
+    """SOG removed from the allowlist while G_SOG_SUSPENDED is active — re-add
+    at the July refit when the suspension lifts."""
+    ok, reason = _passes_killshot_v2_gate(_pick(stat="SOG"))
     assert not ok
-    assert "tier" in reason
+    assert "stat" in reason
+
+
+# ─── module-load invariant (8b) ──────────────────────────────────────────────────
+
+def test_invariant_passes_on_current_config():
+    _assert_killshot_invariants()   # must not raise
+
+
+def test_invariant_rejects_suspended_stat_in_allowlist(monkeypatch):
+    monkeypatch.setattr(run_picks, "KILLSHOT_STAT_ALLOW", frozenset({"PTS", "SOG"}))
+    with pytest.raises(AssertionError, match="suspended"):
+        run_picks._assert_killshot_invariants()
+
+
+def test_invariant_rejects_tier_orphan_stat(monkeypatch):
+    monkeypatch.setattr(run_picks, "KILLSHOT_STAT_ALLOW", frozenset({"PTS", "NOT_A_STAT"}))
+    with pytest.raises(AssertionError, match="tier"):
+        run_picks._assert_killshot_invariants()
+
+
+def test_allowlist_has_no_suspended_stats():
+    assert not (KILLSHOT_STAT_ALLOW & set(SUSPENDED_STATS))
 
 
 # ─── sizing ─────────────────────────────────────────────────────────────────────
@@ -180,9 +232,9 @@ def test_size_stays_3u_when_only_edge_meets_bump():
 
 
 def test_size_no_5u_tier_even_at_extreme_values():
-    # v2 explicitly caps at 4u — no 5u even with huge wp/edge
+    # Explicitly caps at 4u — no 5u even with huge wp/edge
     size = _killshot_size(_pick(win_prob=0.95, edge=0.50))
-    assert size == 4.0, "size should cap at 4u (no 5u tier in v2)"
+    assert size == 4.0, "size should cap at 4u (no 5u tier)"
 
 
 def test_size_handles_missing_fields_gracefully():
@@ -218,7 +270,7 @@ def test_size_falls_back_to_edge_when_adj_edge_absent():
 
 # ─── select_killshots integration ────────────────────────────────────────────────
 
-def test_select_includes_clean_T1_pick():
+def test_select_includes_clean_pick():
     with patch.object(run_picks, "_killshots_this_week", return_value=0):
         picks = [_pick()]
         ks = select_killshots(picks, "2026-04-21")
@@ -227,11 +279,13 @@ def test_select_includes_clean_T1_pick():
     assert ks[0]["size"] == 4.0  # passes bump (wp=0.72, edge=0.15)
 
 
-def test_select_excludes_T1B_even_with_score_above_90():
+def test_select_includes_T1B_and_T2_in_v3():
+    """v2 excluded everything but strict T1 — v3 selects on floors only."""
     with patch.object(run_picks, "_killshots_this_week", return_value=0):
-        picks = [_pick(tier="T1B", pick_score=95.0)]
+        picks = [_pick(player="A", tier="T1B", pick_score=95.0),
+                 _pick(player="B", tier="T2", pick_score=94.0)]
         ks = select_killshots(picks, "2026-04-21")
-    assert len(ks) == 0, "T1B picks must NOT auto-qualify under v2 (T1 strict)"
+    assert len(ks) == 2
 
 
 def test_select_excludes_disallowed_stat():
@@ -283,23 +337,71 @@ def test_select_sorts_by_score_desc():
     assert [p["player"] for p in ks] == ["High", "Mid"]
 
 
-# ─── manual override ────────────────────────────────────────────────────────────
+# ─── 8d: near-miss logging ──────────────────────────────────────────────────────
 
-def test_manual_override_bypasses_v2_filters():
-    # T2 pick (would fail v2 gate) with score=80 (below auto floor) — manual promote should work
+def test_near_miss_logged_to_blocked_csv(tmp_path):
+    """Picks meeting the score floor but failing another check are appended to
+    pick_log_blocked.csv as KILLSHOT_{code} — v2's dead gate was console-only."""
+    import csv
+    blocked = Path(run_picks.PICK_LOG_BLOCKED_PATH)
     with patch.object(run_picks, "_killshots_this_week", return_value=0):
-        picks = [_pick(player="Doncic Luka", tier="T2", pick_score=80.0, win_prob=0.58, odds=150, stat="PARLAY")]
+        select_killshots([_pick(stat="TEAM_TOTAL")], "2026-04-21")   # near-miss: STAT
+        select_killshots([_pick(odds=-250, win_prob=0.80)], "2026-04-21")  # near-miss: ODDS
+    assert blocked.exists()
+    rows = list(csv.DictReader(open(blocked)))
+    gates = {r["gate_result"] for r in rows}
+    assert "KILLSHOT_STAT" in gates
+    assert "KILLSHOT_ODDS" in gates
+
+
+def test_low_score_disqualification_not_logged():
+    """Score-floor failures are not near-misses — they must NOT flood the log."""
+    blocked = Path(run_picks.PICK_LOG_BLOCKED_PATH)
+    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+        select_killshots([_pick(pick_score=40.0)], "2026-04-21")
+    assert not blocked.exists()
+
+
+# ─── manual override (v3: odds/wp now enforced) ─────────────────────────────────
+
+def test_manual_override_bypasses_score_and_stat_selection():
+    # T2 PARLAY with score=80 (below auto behavior for stat) — manual promote works
+    # as long as odds/wp pass: -130 with wp=0.62 (floor ≈0.595).
+    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+        picks = [_pick(player="Doncic Luka", tier="T2", pick_score=80.0,
+                       win_prob=0.62, odds=-130, stat="PARLAY")]
         ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
-    assert len(ks) == 1, "manual override should bypass tier/wp/odds/stat gates"
+    assert len(ks) == 1, "manual override should bypass stat allowlist"
     assert ks[0]["tier"] == "KILLSHOT"
 
 
 def test_manual_override_still_requires_manual_floor():
-    # Score below manual floor (75) — should NOT promote even with name match
+    # Score below manual floor (75) — should NOT promote even with name match.
+    # stat=PARLAY keeps the auto path closed so only the manual path is in play
+    # (in v3 a T2 PTS pick at score 74.9 would auto-qualify on floors alone).
     with patch.object(run_picks, "_killshots_this_week", return_value=0):
-        picks = [_pick(player="Doncic Luka", tier="T2", pick_score=KILLSHOT_MANUAL_FLOOR - 0.1)]
+        picks = [_pick(player="Doncic Luka", tier="T2", stat="PARLAY",
+                       pick_score=KILLSHOT_MANUAL_FLOOR - 0.1)]
         ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
     assert len(ks) == 0, "manual promote should still require score >= MANUAL_FLOOR (75)"
+
+
+def test_manual_override_enforces_odds_range_in_v3():
+    """v2's manual path bypassed odds entirely — a +150 dog could be promoted.
+    v3 enforces the odds range on manual promotes."""
+    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+        picks = [_pick(player="Doncic Luka", pick_score=90.0, odds=150, win_prob=0.58)]
+        ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
+    assert len(ks) == 0, "manual promote must respect the odds range in v3"
+
+
+def test_manual_override_enforces_wp_floor_in_v3():
+    """v2's manual path bypassed the wp floor — a −EV promote was possible.
+    v3 enforces wp >= breakeven + margin on manual promotes."""
+    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+        picks = [_pick(player="Doncic Luka", pick_score=90.0, odds=-200, win_prob=0.66)]
+        ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
+    assert len(ks) == 0, "manual promote at -200 with wp=0.66 is -EV and must be rejected"
 
 
 def test_manual_override_counts_toward_weekly_cap():
@@ -323,33 +425,27 @@ def test_manual_player_match_case_insensitive():
 # ─── constants sanity ───────────────────────────────────────────────────────────
 
 def test_constants_are_sane():
-    assert KILLSHOT_TIER_REQUIRED == "T1"
+    assert not hasattr(run_picks, "KILLSHOT_TIER_REQUIRED"), "v3 removed the tier requirement"
+    assert not hasattr(run_picks, "KILLSHOT_WIN_PROB_FLOOR"), "v3 replaced the static wp floor"
     assert KILLSHOT_WEEKLY_CAP == 2
     assert KILLSHOT_SCORE_FLOOR == 65.0
-    assert KILLSHOT_WIN_PROB_FLOOR == 0.65
+    assert KILLSHOT_WP_MARGIN == 0.03
     assert KILLSHOT_ODDS_MIN == -200
     assert KILLSHOT_ODDS_MAX == 110
-    assert KILLSHOT_STAT_ALLOW == frozenset({"PTS", "AST", "SOG"})
+    assert KILLSHOT_STAT_ALLOW == frozenset({"PTS", "AST"})
     assert KILLSHOT_SIZE_BASE == 3.0
     assert KILLSHOT_SIZE_BUMP == 4.0
     assert KILLSHOT_BUMP_WIN_PROB == 0.70
     assert KILLSHOT_BUMP_EDGE == 0.06
 
 
-if __name__ == "__main__":
-    # Allow `python test_killshot_v2.py` without pytest
-    import inspect
-    failures = []
-    tests = [(n, fn) for n, fn in globals().items() if n.startswith("test_") and callable(fn)]
-    for name, fn in tests:
-        try:
-            fn()
-            print(f"  PASS  {name}")
-        except Exception as e:
-            failures.append((name, e))
-            print(f"  FAIL  {name}: {e}")
-    print(f"\n{len(tests) - len(failures)}/{len(tests)} passed")
-    sys.exit(1 if failures else 0)
+def test_odds_wp_helper_codes():
+    ok, _, code = _killshot_odds_wp_ok({"odds": -250, "win_prob": 0.80})
+    assert (ok, code) == (False, "ODDS")
+    ok, _, code = _killshot_odds_wp_ok({"odds": -130, "win_prob": 0.50})
+    assert (ok, code) == (False, "WP")
+    ok, reason, code = _killshot_odds_wp_ok({"odds": -130, "win_prob": 0.65})
+    assert (ok, reason, code) == (True, "", "")
 
 
 # ── H30: edge=None / adj_edge=None must not crash _killshot_size ─────────────
@@ -376,7 +472,7 @@ def test_size_missing_edge_returns_base():
 
 def test_gate_none_edge_pick_is_not_crashed():
     """_passes_killshot_v2_gate does not reference edge — None edge must not cause
-    an exception (gate only checks tier/score/wp/odds/stat)."""
+    an exception (gate checks score/odds/wp/stat)."""
     pick = {
         "tier": "T1", "pick_score": 92.0, "win_prob": 0.67,
         "odds": -130, "stat": "PTS", "adj_edge": None,

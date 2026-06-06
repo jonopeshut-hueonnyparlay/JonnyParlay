@@ -66,6 +66,7 @@ from collections import defaultdict, OrderedDict
 # secrets_config.py. See engine/secrets_config.py for the .env search path.
 from secrets_config import (
     ODDS_API_KEY,
+    EDGEMODEL_DB_PATH,
     DISCORD_WEBHOOK_URL,
     DISCORD_BONUS_WEBHOOK,
     DISCORD_ALT_PARLAY_WEBHOOK,
@@ -201,19 +202,27 @@ VALUE_PARLAY_SIZE = 0.25        # Unit size for 5-leg value parlay fallback; tun
 LONGSHOT_MAX_PER_GAME = 2       # F2.20: moved from inside build_safest6_parlay to top-level constant
 SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_builder.SGP_SIZE)
 
-# ── KILLSHOT tier (v2 — safer/tighter; see CLAUDE.md) ─────────
+# ── KILLSHOT tier (v3 — Plan 6 §13 redesign 2026-06-05; see CLAUDE.md) ─────────
+# v2 was internally dead (0 KILLSHOTs in 5+ weeks): PTS is T2 so PTS ∧ tier=T1 was
+# unsatisfiable, SOG is suspended — only NBA AST could ever fire. v3 changes:
+#   - tier requirement dropped (T1 WR=46.6% < T2=60.3%; selection on floors is
+#     strictly better — tier already enters via PICK_SCORE_TIER_MULT)
+#   - static wp floor replaced by odds-dependent: wp >= implied_prob(odds) + MARGIN
+#     (closes the latent −EV window: wp=0.65 at −200 was −2.5%/unit)
+#   - manual path now also enforces the odds range + wp floor (was score-only)
+#   - SOG removed from allowlist while G_SOG_SUSPENDED — re-add at July refit
+#   - _assert_killshot_invariants() fails fast at module load on dead entries
 # Auto-qualify gate: ALL must pass
-KILLSHOT_SCORE_FLOOR    = 65.0                             # Pick Score floor (post-Platt max win_prob ~0.666 → max score ~87 no-bonus or ~97 with +7 injury bonus; 65 = strong pick requiring wp≥0.65 + edge≥12%+)
-KILLSHOT_TIER_REQUIRED  = "T1"                             # v2: strict T1 only (excludes T1B, T2, T3)
-KILLSHOT_WIN_PROB_FLOOR = 0.65                             # v2: hard win-prob floor
-KILLSHOT_ODDS_MIN       = -200                             # v2: no razor-thin chalk
-KILLSHOT_ODDS_MAX       =  110                             # v2: no live dogs
-KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "AST", "SOG"})  # v2: mainline counting stats only; REB dropped (L9), 3PM dropped (T3 — dead code, CV 0.65-1.2 incompatible with KILLSHOT)
-                                                              # PTS: manual override only — PTS is T2, so tier check fires before stat check for auto-qualify
-# Manual override (via --killshot NAME): bypasses v2 filters but still counts toward weekly cap
+KILLSHOT_SCORE_FLOOR    = 65.0                             # Pick Score floor
+KILLSHOT_WP_MARGIN      = 0.03                             # v3: wp >= implied_prob(odds) + 0.03 (breakeven + EV cushion)
+KILLSHOT_ODDS_MIN       = -200                             # no razor-thin chalk (−EV window closed by the wp floor)
+KILLSHOT_ODDS_MAX       =  110                             # no live dogs
+KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "AST"})        # v3: SOG removed while G_SOG_SUSPENDED (re-add at July refit); REB dropped (L9), 3PM dropped (CV 0.65-1.2 incompatible)
+# Manual override (via --killshot NAME): bypasses score/stat selection but still
+# counts toward weekly cap AND must pass the odds range + odds-dependent wp floor (v3).
 KILLSHOT_MANUAL_FLOOR   = 75.0                             # Minimum score to allow manual promote
-KILLSHOT_WEEKLY_CAP     = 2                                # v2: was 3 — rarer = more signal
-# Sizing (v2): replaces VAKE for KILLSHOT picks. Flat-ish — safer plays don't argue for bigger size.
+KILLSHOT_WEEKLY_CAP     = 2                                # rarer = more signal
+# Sizing: replaces VAKE for KILLSHOT picks. Flat-ish — safer plays don't argue for bigger size.
 KILLSHOT_SIZE_BASE       = 3.0   # default
 KILLSHOT_SIZE_BUMP       = 4.0   # bump ceiling
 KILLSHOT_BUMP_WIN_PROB   = 0.70  # bump requires BOTH wp and edge
@@ -460,18 +469,121 @@ COMBO_RHO_WNBA = {
 }
 
 # WNBA early-season gate — opening-day extreme variance is structural (SaberSim cannot
-# price new-team/new-role stars; Section 1 + 6 research). Days counted from season start.
+# price new-team/new-role stars; Section 1 + 6 research). Plan 6 §14 (2026-06-05):
+#   - opening gate re-keyed to GAMES PLAYED (both teams >= WNBA_OPENING_GATE_GAMES);
+#     WNBA_OPENING_GATE_DAYS retained only as the fallback when the games-played
+#     count is unavailable (EdgeModel DB missing/stale).
+#   - early-season dampener rewired from edge-multiplication to SIGMA INFLATION
+#     (sigma /= factor in calc_prop_prob) so win_prob, edge, score AND Kelly size
+#     all shrink coherently — the old edge-mult lowered ranking but sized at full
+#     confidence. Factors are DATA_GATED: recalibrate at WNBA go-live (100 graded).
 WNBA_SEASON_START = date(2026, 5, 13)   # update each season
-WNBA_OPENING_GATE_DAYS = 3              # days 1-3: no picks at all
-WNBA_EARLY_SEASON_EDGE_MULT = [         # (day_threshold, multiplier) — ascending
-    (14, 0.80),   # days 4-14: effective edge × 0.80
-    (21, 0.90),   # days 15-21: effective edge × 0.90
+WNBA_OPENING_GATE_DAYS = 3              # FALLBACK day gate (games-played source unavailable)
+WNBA_OPENING_GATE_GAMES = 2             # both teams need >= 2 current-season games
+WNBA_EARLY_SEASON_EDGE_MULT = [         # (day_threshold, factor) — ascending; sigma /= factor
+    (14, 0.80),   # days 4-14:  sigma × 1.25
+    (21, 0.90),   # days 15-21: sigma × 1.11
 ]
-WNBA_EDGE_FLOOR = 0.035                 # compensates for wider WNBA vig (~-115/-115)
+# G_WNBA_EDGE is an EV-PER-UNIT floor (Plan 6 §14 option B; replaced the dead
+# WNBA_EDGE_FLOOR=0.035, which was always dominated by G9=0.05). Bar = the net EV
+# of NBA's G9 floor pick at standard vig: edge 0.05 at −110 → EV = 0.05 × 1.9091
+# ≈ 0.0955/unit. EV computed from ACTUAL quoted odds, so the floor auto-adjusts
+# to vig (at −115 it requires ~5.1% edge; wider vig → higher edge required).
+# (§14's "6.2% at −115" figure measured edge against p=0.50, not the engine's
+# vigged-implied edge — corrected to the engine's frame here.)
+WNBA_EV_FLOOR = 0.0955
+
+# WNBA team name → abbrev for the games-played opening gate. Odds pipeline carries
+# full names; wnba_player_game_stats (EdgeModel DB) is keyed by team_abbrev.
+# PHX appears as both PHO (2023-24) and PHX (2025+) in the DB — query matches either.
+WNBA_TEAM_ABBREV = {
+    "atlanta dream": "ATL", "chicago sky": "CHI", "connecticut sun": "CON",
+    "dallas wings": "DAL", "golden state valkyries": "GSV", "indiana fever": "IND",
+    "las vegas aces": "LVA", "los angeles sparks": "LAS", "minnesota lynx": "MIN",
+    "new york liberty": "NYL", "phoenix mercury": "PHX", "portland fire": "PDX",
+    "seattle storm": "SEA", "toronto tempo": "TOR", "washington mystics": "WAS",
+}
+
+_WNBA_GP_CACHE: dict = {}   # per-run cache: (abbrev, iso_date) -> int
+
+
+def _wnba_early_season_factor(today=None) -> float:
+    """Early-season confidence factor for WNBA (Plan 6 §14, 9b).
+
+    Returns the WNBA_EARLY_SEASON_EDGE_MULT factor for the current season day
+    (0.80 days 1-14, 0.90 days 15-21, 1.00 after). Consumers divide sigma by
+    this factor (wider sigma → win_prob shrinks toward 0.5 → edge, score and
+    Kelly size all shrink coherently). Injectable `today` for tests.
+    """
+    if today is None:
+        today = datetime.now(ZoneInfo("America/New_York")).date()
+    season_day = (today - WNBA_SEASON_START).days + 1
+    for day_cap, factor in WNBA_EARLY_SEASON_EDGE_MULT:
+        if 0 < season_day <= day_cap:
+            return factor
+    return 1.00
+
+
+def _wnba_team_games_played(team_name: str, today=None):
+    """Count a WNBA team's current-season games before today (Plan 6 §14, 9c).
+
+    Reads wnba_player_game_stats from the EdgeModel DB (read-only). Returns
+    None when the count is unavailable (unknown team name, DB missing, no rows
+    for the season yet) — callers fall back to the day-based opening gate.
+    Cached per (team, date) for the run.
+    """
+    if today is None:
+        today = datetime.now(ZoneInfo("America/New_York")).date()
+    abbrev = WNBA_TEAM_ABBREV.get((team_name or "").strip().lower())
+    if not abbrev:
+        return None
+    key = (abbrev, today.isoformat())
+    if key in _WNBA_GP_CACHE:
+        return _WNBA_GP_CACHE[key]
+    abbrevs = ("PHO", "PHX") if abbrev == "PHX" else (abbrev, abbrev)
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{Path(EDGEMODEL_DB_PATH).as_posix()}?mode=ro", uri=True)
+        try:
+            row = con.execute(
+                """
+                SELECT COUNT(DISTINCT CASE WHEN team_abbrev IN (?, ?) THEN game_id END),
+                       COUNT(*)
+                FROM wnba_player_game_stats
+                WHERE season = ? AND game_date < ?
+                """,
+                (abbrevs[0], abbrevs[1], today.year, today.isoformat()),
+            ).fetchone()
+        finally:
+            con.close()
+        count, season_rows = (int(row[0] or 0), int(row[1] or 0)) if row else (0, 0)
+    except Exception as e:
+        logger.warning("WNBA games-played lookup failed for %s: %s — falling back to day gate", team_name, e)
+        return None
+    if season_rows == 0:
+        # No rows for the season at all — the fetcher hasn't run yet. Treat as
+        # unavailable (day-gate fallback governs) rather than "0 games played",
+        # which would block every team all season.
+        return None
+    _WNBA_GP_CACHE[key] = count   # count==0 with season rows present = real late opener
+    return count
 
 # MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
 # G11/G11b: max 1 prop per player within each correlated group
 PITCHER_STATS = {"OUTS", "HA", "ER", "BB", "PC"}  # All functions of IP — r ≈ 0.70+ between OUTS/HA; ER/BB/PC added 2026-05-26
+
+# Suspended stats — single source of truth (Plan 6 §13, 2026-06-05).
+# check_prop_gates() blocks these via one lookup; _assert_killshot_invariants()
+# asserts KILLSHOT_STAT_ALLOW never contains a suspended stat (the v2 PTS/SOG
+# dead-entry problem took 5+ weeks to discover).
+#   SOG: suspended 2026-06-05 pending distribution investigation — lift at July refit.
+#   HA:  suspended 2026-06-05 pending model investigation — lift after WR ≥40% at n≥20.
+#   RA:  disabled 2026-06-05 — 0W/7L (0% actual vs 56.7% model, n=11 live picks).
+SUSPENDED_STATS = {
+    "SOG": "G_SOG_SUSPENDED",
+    "HA":  "G_HA_SUSPENDED",
+    "RA":  "G_RA_DISABLED",
+}
 BATTER_CORR_STATS = {"HITS", "TB", "HRR"}           # HITS is component of TB and HRR — r ≈ 0.70+
 MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 
@@ -618,7 +730,11 @@ TIERS = {
     # T4 (GOLF_WIN) removed — see archived_golf_code.py
 }
 
-KELLY_FRACTION = 6.0  # fractional Kelly multiplier; calibrated 2026-06-01 on 207 primary/bonus picks (mid-band median implied-F ≈ 5.9)
+KELLY_FRACTION = 6.0  # Units converter for Kelly sizing under the 100u bankroll convention:
+                      # units = f* × 6, so stake fraction = f* × 6/100 ≈ 1/16.7 Kelly —
+                      # NOT "1/6 Kelly" (Plan 6 §4 relabel; the value is correct, the old
+                      # label was wrong). Calibrated 2026-06-01 on 207 primary/bonus picks
+                      # (mid-band median implied-F ≈ 5.9).
 
 # Per-market Kelly multipliers applied BEFORE rounding and floor/cap.
 # Lookup: (sport, stat, direction) → (sport, stat, None) → DEFAULT_MARKET_MULT.
@@ -951,6 +1067,15 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
         else:  # Half-integer line — no push possible
             under_p = negbinom_cdf(k, proj, r)
             over_p = 1.0 - negbinom_cdf(k, proj, r)
+        if sport == "WNBA":
+            # Plan 6 §14 (9b): WNBA early-season dampener. NB has no sigma to
+            # inflate, so shrink the probability toward 1/2 by the same factor —
+            # the NB-path equivalent of the Normal-path sigma inflation below.
+            # DATA_GATED: recalibrate factors at WNBA go-live (100 graded picks).
+            _f = _wnba_early_season_factor()
+            if _f < 1.0:
+                over_p = 0.5 + (over_p - 0.5) * _f
+                under_p = 0.5 + (under_p - 0.5) * _f
     else:
         if sigma_override > 0.0:
             # H3: use empirical σ from projection engine (dk_std), which incorporates
@@ -964,6 +1089,11 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
                 logger.warning("calc_prop_prob: no SIGMA entry for stat=%r sport=%r — using default fallback (mult=0.40, min=2.0)", stat, sport)
                 s = {"mult": 0.40, "min": 2.0}
             sigma = max(proj * s["mult"], s["min"])
+        if sport == "WNBA":
+            # Plan 6 §14 (9b): early-season sigma inflation (sigma /= 0.80 or 0.90)
+            # replaces the old edge-multiplication dampener — win_prob, edge, score
+            # and Kelly size now all shrink through this one mechanism.
+            sigma /= _wnba_early_season_factor()
         if stat == "PTS":
             # Truncated Normal at [0, ∞): points scored can't be negative.
             # P(X > line | X ≥ 0) = [1-Φ((line-μ)/σ)] / Φ(μ/σ)
@@ -1036,7 +1166,12 @@ def _combo_mu_sigma(proj_player: dict, stat: str, sport: str = "") -> tuple:
             pair = (components[i], components[j])
             rho = rho_table.get(pair, rho_table.get((pair[1], pair[0]), 0.10 if sport == "WNBA" else 0.20))
             var += 2.0 * rho * sigmas[i] * sigmas[j]
-    return mu_combo, max(var ** 0.5, 2.0)
+    sigma_combo = max(var ** 0.5, 2.0)
+    if sport == "WNBA":
+        # Plan 6 §14 (9b): early-season sigma inflation — same mechanism as the
+        # single-stat Normal path in calc_prop_prob.
+        sigma_combo /= _wnba_early_season_factor()
+    return mu_combo, sigma_combo
 
 
 def calc_combo_prob(proj_player: dict, stat: str, line: float, sport: str = "") -> tuple:
@@ -1079,6 +1214,10 @@ def pick_score(win_prob, edge, mode="Default", tier=None,
     sw, ew = PICK_SCORE_MODES.get(mode, (0.40, 0.60))
     wp_n = (win_prob * 100 - 50) / 25 * 100
     e_n  = (edge * 100) / 15 * 100          # ceiling: 15% (was 20%)
+    e_n  = min(e_n, 100.0)  # Plan 6 §11: cap at 15% — legitimate edges don't exceed this;
+                            # >15% is almost always a data error, and uncapped e_n let the
+                            # optimizer's curse amplify those errors to the top of the card.
+                            # ([LARGE-EDGE] warning still fires; Kelly sizing uses raw edge.)
     score = sw * wp_n + ew * e_n
     score *= PICK_SCORE_TIER_MULT.get(tier, 1.00)
     score += COLD_START_SCORE_PENALTY.get(cold_start_subtype, 0)
@@ -1203,10 +1342,11 @@ def check_prop_gates(pick):
     if stat == "AST" and sport == "NHL" and not (line == 0.5 and direction == "under"):
         return False, "G_NHL_AST"
 
-    # G_SOG_SUSPENDED: full SOG suspension pending distribution investigation (2026-06-05).
-    # Remove gate and re-evaluate G8C scope when investigation is complete.
-    if stat == "SOG":
-        return False, "G_SOG_SUSPENDED"
+    # Suspension gates — single source of truth (see SUSPENDED_STATS).
+    # SOG: re-evaluate G8C scope when the distribution investigation completes.
+    # HA: re-evaluate G_HA_DIR scope when the model investigation completes.
+    if stat in SUSPENDED_STATS:
+        return False, SUSPENDED_STATS[stat]
 
     # G8C: SOG under at line ≤ 3.5 — extended from ≤2.5 (2026-05-23).
     # ≤2.5 was 51.9% WR (losing at juice). 3.1–3.5 added: 42.9% WR, model 63.7% (n=14).
@@ -1221,28 +1361,42 @@ def check_prop_gates(pick):
     if stat == "3PM" and direction == "over" and line <= 1.5 and sport != "WNBA":
         return False, "G8D"
 
-    # WNBA structural gates — applied after sport is known
+    # WNBA structural gates — applied after sport is known (Plan 6 §14 rework 2026-06-05)
     if sport == "WNBA":
         today_date = datetime.now(ZoneInfo("America/New_York")).date()
         season_day = (today_date - WNBA_SEASON_START).days + 1  # day 1 = opening day
 
-        # G_WNBA_OPEN: no picks in first N days — opening-day extreme variance from
-        # new-team/new-role players that SaberSim cannot price (May 13 2026: -19.8 PTS miss)
+        # G_WNBA_OPEN (9c): re-keyed from calendar days to GAMES PLAYED — both teams
+        # need >= WNBA_OPENING_GATE_GAMES current-season games. Opening-game extreme
+        # variance is per-team (new-team/new-role players SaberSim cannot price;
+        # May 13 2026: -19.8 PTS miss), so a team with a late opener stays gated on
+        # day 5 while a team with 2 games played clears on day 4.
+        # Fallback: when games-played counts are unavailable (EdgeModel DB missing/
+        # stale), the original day gate (days 1-3) governs. Only evaluated in the
+        # first 14 season days — no DB hits the rest of the season.
         # Note: season_day ≤ 0 (pre-season) is not blocked — SaberSim doesn't generate
         # pre-season CSVs in practice, so this theoretical gap has no real exposure.
-        if 1 <= season_day <= WNBA_OPENING_GATE_DAYS:
-            return False, "G_WNBA_OPEN"
+        if 1 <= season_day <= 14:
+            _teams = [t.strip() for t in (pick.get("game", "") or "").split("@")]
+            _gps = [_wnba_team_games_played(t, today_date) for t in _teams if t]
+            if _gps and all(gp is not None for gp in _gps):
+                if any(gp < WNBA_OPENING_GATE_GAMES for gp in _gps):
+                    return False, "G_WNBA_OPEN"
+            elif 1 <= season_day <= WNBA_OPENING_GATE_DAYS:
+                return False, "G_WNBA_OPEN"
 
-        # G_WNBA_EDGE: higher edge floor to compensate for wider WNBA vig (~-115/-115 vs NBA -110)
-        # Early-season dampener: edge is effectively reduced in weeks 1-3 to account for
-        # higher projection uncertainty (new lineups, new teams, first games of season).
-        effective_edge = edge
-        for day_cap, mult in WNBA_EARLY_SEASON_EDGE_MULT:
-            if 0 < season_day <= day_cap:
-                effective_edge = edge * mult
-                break
-        if effective_edge < WNBA_EDGE_FLOOR:
-            return False, "G_WNBA_EDGE"
+        # G_WNBA_EDGE (9a): EV-per-unit floor from ACTUAL quoted odds — replaces the
+        # dead WNBA_EDGE_FLOOR=0.035 (always dominated by G9=0.05). Bar = net EV of
+        # NBA's G9 floor pick at standard −110 vig (≈0.0955/unit), so the floor
+        # auto-adjusts to vig: at −115 it demands ~5.1% edge, at −120 ~5.2%.
+        # The old early-season edge-multiplication is gone — early-season uncertainty
+        # now flows through sigma inflation in calc_prop_prob (9b), which shrinks
+        # prob (and therefore this EV) organically.
+        _imp = implied_prob(odds)
+        if _imp > 0:
+            ev_per_unit = prob / _imp - 1.0
+            if ev_per_unit < WNBA_EV_FLOOR:
+                return False, "G_WNBA_EDGE"
 
     # G_MLB_STRUCT: MLB structural direction gates based on known SaberSim biases.
     # OUTS: Conservative IP bias makes unders lose structurally (actual IP > SaberSim median).
@@ -1250,10 +1404,6 @@ def check_prop_gates(pick):
     # SaberSim projects a very short outing and market line is set high.
     if stat == "OUTS" and direction == "under" and prob < 0.60:
         return False, "G_OUTS_UNDER"
-    # G_HA_SUSPENDED: full HA suspension pending model investigation (2026-06-05).
-    # Remove gate and re-evaluate G_HA_DIR scope when investigation is complete.
-    if stat == "HA":
-        return False, "G_HA_SUSPENDED"
     # HA / HITS: T1B tier definition is unders 3.5+ only. Block overs — they fall to T2 with no research basis.
     if stat in ("HA", "HITS") and direction == "over":
         return False, "G_HA_DIR"
@@ -1272,10 +1422,7 @@ def check_prop_gates(pick):
 
     # G_HRR_DISABLED removed 2026-05-27 — NB r=1.5 is the correct distribution; routing to SHADOW_STATS for fresh data accumulation.
     # G_TB_DISABLED removed 2026-05-27 — calc_tb_prob (Poisson convolution) was already the rebuild; routing to SHADOW_STATS.
-
-    # G_RA_DISABLED: RA (REB+AST combo) disabled 2026-06-05 — 0W/7L (0% actual WR vs 56.7% model, n=11 live picks).
-    if stat == "RA":
-        return False, "G_RA_DISABLED"
+    # G_RA_DISABLED moved to the consolidated SUSPENDED_STATS lookup above (2026-06-05).
 
     # G14: projection clearance gate — ensures model has directional conviction.
     # Normal/SIGMA stats (PTS, OUTS, HA, TB): proj must clear line by ≥0.10σ.
@@ -1290,12 +1437,16 @@ def check_prop_gates(pick):
     if stat in SIGMA and stat not in POISSON_STATS and stat not in NB_STATS:
         _s = (SIGMA_WNBA.get(stat) if sport == "WNBA" else None) or SIGMA[stat]
         _sigma = max(proj * _s["mult"], _s["min"])
+        if sport == "WNBA":
+            _sigma /= _wnba_early_season_factor()   # 9b: early-season inflation
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
         if _z < 0.10:
             return False, "G14"
     if stat in ("3PM", "AST", "REB") and sport == "WNBA":
         _s = SIGMA_WNBA[stat]
-        _sigma = max(proj * _s["mult"], _s["min"])
+        # Early-season sigma inflation applies here too (9b) — wider sigma means
+        # the projection must clear the line by more to show 0.10σ conviction.
+        _sigma = max(proj * _s["mult"], _s["min"]) / _wnba_early_season_factor()
         _z = (line - proj) / _sigma if direction == "under" else (proj - line) / _sigma
         if _z < 0.10:
             return False, "G14"
@@ -1723,12 +1874,16 @@ def size_bonus_pick(pick):
 
 def size_picks_vake(premium):
     """Apply full VAKE sizing to Premium 5 only, in Pick Score descending order.
-    Includes R13: pitcher correlation penalty for same-game pitcher props."""
+
+    R13 (stacked pitcher-correlation penalty) retired 2026-06-05 (Plan 6 §9):
+    G11 guarantees max 1 prop per pitcher, so when 2 pitcher props share a game
+    they are DIFFERENT pitchers (opposing starters, rho~0.05-0.20) — R13 applied
+    a corr_m for rho=0.52-0.68 on top of the general game corr_m, pure
+    double-counting. The MLB SGP rho table prices the same pair at 0.02."""
     premium_sorted = sorted(premium, key=lambda p: p["pick_score"], reverse=True)
 
     stat_seen = defaultdict(int)
     game_seen = defaultdict(int)
-    pitcher_game_seen = defaultdict(int)  # R13: track pitcher props per game
 
     for p in premium_sorted:
         tier = p["tier"]
@@ -1751,12 +1906,6 @@ def size_picks_vake(premium):
             corr_m = 0.85
         else:
             corr_m = 0.70
-
-        # R13: Extra pitcher correlation penalty — same-game pitcher props share IP/pace
-        if stat in PITCHER_STATS:
-            pitcher_game_seen[game] += 1
-            if pitcher_game_seen[game] >= 2:
-                corr_m *= 0.70  # additional 0.70x on top of existing game correlation
 
         # Exposure multiplier
         stat_seen[stat] += 1
@@ -2665,18 +2814,11 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
                 picks.append(pick)
                 continue
 
-            # 4.5: WNBA early-season dampener applies to gate (G_WNBA_EDGE) but not
-            # pick_score — use the same effective_edge so scored picks reflect the
-            # dampened confidence during weeks 1-3 of the season.
-            _score_edge = adj_edge
-            if pick.get("sport") == "WNBA":
-                _today = datetime.now(ZoneInfo("America/New_York")).date()
-                _sday = (_today - WNBA_SEASON_START).days + 1
-                for _dcap, _mult in WNBA_EARLY_SEASON_EDGE_MULT:
-                    if 0 < _sday <= _dcap:
-                        _score_edge = adj_edge * _mult
-                        break
-            pick["pick_score"] = pick_score(adj_wp, _score_edge, mode, tier=tier,
+            # WNBA early-season edge-mult removed 2026-06-05 (Plan 6 §14, 9b):
+            # the dampener now lives in calc_prop_prob as sigma inflation, so
+            # adj_wp/adj_edge already carry the dampened confidence — applying
+            # an edge mult here again would double-count it.
+            pick["pick_score"] = pick_score(adj_wp, adj_edge, mode, tier=tier,
                                             cold_start_subtype=_cold_start_subtype,
                                             injury_trigger=_injury_trigger, stat=stat)
             if adj_edge >= 0.15:
@@ -5858,35 +6000,82 @@ def _killshot_size(pick):
     return KILLSHOT_SIZE_BASE
 
 
-def _passes_killshot_v2_gate(pick):
-    """v2 auto-qualify gate. ALL checks must pass.
-    Returns (True, "") on pass, (False, reason) on fail.
-    Manual promotes bypass this gate.
+def _killshot_odds_wp_ok(pick):
+    """v3 shared odds-range + odds-dependent wp floor (Plan 6 §13).
+
+    wp >= implied_prob(odds) + KILLSHOT_WP_MARGIN — replaces the static 0.65
+    floor, which left a latent −EV window (wp=0.65 at −200 is −2.5%/unit).
+    Self-adjusting under any future parameter changes, including the H3 Platt
+    refit. Applied to BOTH the auto path and the manual --killshot path (the
+    v2 manual path checked score only).
+
+    Returns (True, "", "") on pass, (False, reason, code) on fail —
+    code is a short machine tag for blocked-pick logging (ODDS / WP).
     """
-    if pick.get("tier") != KILLSHOT_TIER_REQUIRED:
-        return False, f"tier={pick.get('tier')!r} (need {KILLSHOT_TIER_REQUIRED})"
+    try:
+        odds = int(float(pick.get("odds", 0)))  # H6: float() first handles "-115.5" strings
+    except (TypeError, ValueError):
+        return False, "odds unparseable", "ODDS"
+    if odds < KILLSHOT_ODDS_MIN or odds > KILLSHOT_ODDS_MAX:
+        return False, f"odds={odds:+d} outside [{KILLSHOT_ODDS_MIN},{KILLSHOT_ODDS_MAX}]", "ODDS"
+    try:
+        wp = float(pick.get("win_prob", 0))
+    except (TypeError, ValueError):
+        return False, "win_prob unparseable", "WP"
+    wp_floor = implied_prob(odds) + KILLSHOT_WP_MARGIN
+    if wp < wp_floor:
+        return False, f"win_prob={wp:.3f} < breakeven+margin {wp_floor:.3f} at {odds:+d}", "WP"
+    return True, "", ""
+
+
+def _passes_killshot_v2_gate(pick):
+    """v3 auto-qualify gate (name kept for test/API stability). ALL must pass:
+    score floor, odds range, odds-dependent wp floor, stat allowlist.
+    Tier requirement dropped in v3 — T1 WR (46.6%) < T2 (60.3%); selection on
+    floors is strictly better, and tier already enters via PICK_SCORE_TIER_MULT.
+    Returns (True, "") on pass, (False, reason) on fail.
+    Manual promotes bypass score/stat but NOT the odds/wp checks.
+    """
     try:
         score = float(pick.get("pick_score", 0))
     except (TypeError, ValueError):
         return False, "pick_score unparseable"
     if score < KILLSHOT_SCORE_FLOOR:
         return False, f"score={score:.1f} < {KILLSHOT_SCORE_FLOOR}"
-    try:
-        wp = float(pick.get("win_prob", 0))
-    except (TypeError, ValueError):
-        return False, "win_prob unparseable"
-    if wp < KILLSHOT_WIN_PROB_FLOOR:
-        return False, f"win_prob={wp:.3f} < {KILLSHOT_WIN_PROB_FLOOR}"
-    try:
-        odds = int(float(pick.get("odds", 0)))  # H6: float() first handles "-115.5" strings
-    except (TypeError, ValueError):
-        return False, "odds unparseable"
-    if odds < KILLSHOT_ODDS_MIN or odds > KILLSHOT_ODDS_MAX:
-        return False, f"odds={odds:+d} outside [{KILLSHOT_ODDS_MIN},{KILLSHOT_ODDS_MAX}]"
+    ok, reason, _code = _killshot_odds_wp_ok(pick)
+    if not ok:
+        return False, reason
     stat = pick.get("stat", "")
     if stat not in KILLSHOT_STAT_ALLOW:
         return False, f"stat={stat!r} not in allowlist"
     return True, ""
+
+
+def _assert_killshot_invariants():
+    """Fail fast at module load if KILLSHOT_STAT_ALLOW contains a dead entry
+    (Plan 6 §13: the v2 PTS-tier and SOG-suspension dead entries went unnoticed
+    for 5+ weeks — 0 KILLSHOTs fired).
+
+    Every allowlisted stat must be (a) not suspended and (b) in some active
+    tier's stat universe (i.e. capable of producing a qualified pick at all).
+    """
+    suspended = KILLSHOT_STAT_ALLOW & set(SUSPENDED_STATS)
+    assert not suspended, (
+        f"KILLSHOT_STAT_ALLOW contains suspended stat(s) {sorted(suspended)} — "
+        f"dead entries can never fire. Remove them from the allowlist (or lift "
+        f"the suspension in SUSPENDED_STATS) before starting the engine."
+    )
+    tier_universe = set()
+    for _tier_def in TIERS.values():
+        tier_universe |= set(_tier_def.get("stats", ()))
+    orphans = KILLSHOT_STAT_ALLOW - tier_universe
+    assert not orphans, (
+        f"KILLSHOT_STAT_ALLOW contains stat(s) {sorted(orphans)} not present in "
+        f"any tier's stat set — they can never reach the qualified pool."
+    )
+
+
+_assert_killshot_invariants()   # fail fast at module load (Plan 6 §13, 8b)
 
 
 def _killshots_this_week(today_str):
@@ -5917,21 +6106,24 @@ def _killshots_this_week(today_str):
 
 
 def select_killshots(qualified, today_str, manual_players=None):
-    """Identify KILLSHOT picks from the qualified pool (v2 rules).
+    """Identify KILLSHOT picks from the qualified pool (v3 rules — Plan 6 §13).
 
-    Auto-qualify (all must pass):
-      - tier == T1 strictly (no T1B/T2/T3)
+    Auto-qualify (all must pass; no tier requirement in v3):
       - pick_score >= KILLSHOT_SCORE_FLOOR (65)
-      - win_prob >= KILLSHOT_WIN_PROB_FLOOR (0.65)
       - odds in [KILLSHOT_ODDS_MIN, KILLSHOT_ODDS_MAX] ([-200, +110])
-      - stat in KILLSHOT_STAT_ALLOW ({PTS, AST, SOG})  # REB dropped L9, 3PM dropped (T3 — CV incompatible)
+      - win_prob >= implied_prob(odds) + KILLSHOT_WP_MARGIN (0.03) — odds-dependent
+      - stat in KILLSHOT_STAT_ALLOW ({PTS, AST}; SOG removed while suspended)
 
-    Manual promote (--killshot NAME): bypasses v2 gate but still requires
-      pick_score >= KILLSHOT_MANUAL_FLOOR (75) and counts toward weekly cap.
+    Manual promote (--killshot NAME): bypasses score/stat selection, still requires
+      pick_score >= KILLSHOT_MANUAL_FLOOR (75) AND the odds range + odds-dependent
+      wp floor (v3 — the v2 manual path was a −EV bypass), counts toward weekly cap.
 
     Weekly cap: max KILLSHOT_WEEKLY_CAP (2) per rolling 7 days.
 
-    Returns picks with tier='KILLSHOT' and v2 sizing applied.
+    8d: disqualification counts printed per run; near-misses (score floor met,
+    another check failed) appended to pick_log_blocked.csv as KILLSHOT_{code}.
+
+    Returns picks with tier='KILLSHOT' and sizing applied.
     """
     manual_players = manual_players or set()
     # CLI passes last names ("Pastrnak,McDavid") but pick rows store full names.
@@ -5953,21 +6145,42 @@ def select_killshots(qualified, today_str, manual_players=None):
         return any(tok == full_lower or tok in parts for tok in manual_tokens)
 
     candidates = []
+    disqual_counts = defaultdict(int)   # 8d: per-run disqualification tally
     for p in qualified:
         try:
             score = float(p.get("pick_score", 0))
         except (TypeError, ValueError):
             score = 0.0
         player = p.get("player", "")
-        # Manual promote: bypass ALL v2 gate criteria (tier/score/wp/odds/stat).
-        # Only KILLSHOT_MANUAL_FLOOR applies.
+        # Manual promote (v3): bypasses score-floor/stat selection but MUST still
+        # pass the odds range + odds-dependent wp floor — the v2 manual path
+        # checked score only, leaving a −EV bypass (Plan 6 §13).
         if _player_matches(player) and score >= KILLSHOT_MANUAL_FLOOR:
-            candidates.append(p)
+            m_ok, m_reason, _m_code = _killshot_odds_wp_ok(p)
+            if m_ok:
+                candidates.append(p)
+            else:
+                print(f"  [KILLSHOT] Manual promote REJECTED: {player} — {m_reason}")
             continue
-        # Auto-qualify: must pass full v2 gate
+        # Auto-qualify: must pass full v3 gate
         ok, _reason = _passes_killshot_v2_gate(p)
         if ok:
             candidates.append(p)
+            continue
+        # 8d: tally disqualifications; log near-misses (score floor met but
+        # another check failed) to pick_log_blocked.csv so gate health is
+        # visible in audits — v2's dead gate was console-only for 5+ weeks.
+        code = "SCORE"
+        if score >= KILLSHOT_SCORE_FLOOR:
+            _ok2, _r2, code = _killshot_odds_wp_ok(p)
+            if _ok2:
+                code = "STAT"   # only remaining check that can have failed
+            log_blocked_pick({**p, "gate_result": f"KILLSHOT_{code}"})
+        disqual_counts[code] += 1
+
+    if disqual_counts:
+        _summary = ", ".join(f"{k}={v}" for k, v in sorted(disqual_counts.items()))
+        print(f"  [KILLSHOT] {sum(disqual_counts.values())} disqualified ({_summary}); near-misses logged to blocked log")
 
     # Sort by score desc, apply cap
     candidates.sort(key=lambda x: x.get("pick_score", 0), reverse=True)
