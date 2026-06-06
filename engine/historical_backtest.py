@@ -21,22 +21,26 @@ from pathlib import Path
 from collections import defaultdict
 
 # ---------------------------------------------------------------------------
-# Path setup — works whether run from outputs/ or JonnyParlay/engine/
+# EdgeModel path discovery — nba_projector and projections_db live in
+# EdgeModel/engine/ (moved out of JonnyParlay). Discovery: EDGEMODEL_ROOT env
+# var → sibling repo → Windows home. Mirrors evaluate_projector.py.
+# (Plan 7 #4 fix: the old JONNYPARLAY_ROOT discovery was un-runnable — it
+# looked for engine/nba_projector.py inside JonnyParlay.)
 # ---------------------------------------------------------------------------
-_ROOT = Path(os.environ.get("JONNYPARLAY_ROOT", "")).resolve()
-if not _ROOT or not (_ROOT / "engine" / "nba_projector.py").exists():
-    # Try common locations
+_HERE = Path(__file__).resolve().parent
+_EM_ROOT = Path(os.environ.get("EDGEMODEL_ROOT", "")).resolve()
+if not _EM_ROOT or not (_EM_ROOT / "engine" / "nba_projector.py").exists():
     for _candidate in [
-        Path(__file__).resolve().parent.parent / "JonnyParlay",
-        Path.home() / "Documents" / "JonnyParlay",
+        _HERE.parent.parent / "EdgeModel",       # sibling to JonnyParlay
+        Path.home() / "Documents" / "EdgeModel",
     ]:
         if (_candidate / "engine" / "nba_projector.py").exists():
-            _ROOT = _candidate
+            _EM_ROOT = _candidate
             break
     else:
-        sys.exit("ERROR: Cannot find JonnyParlay root. Set JONNYPARLAY_ROOT env var.")
+        sys.exit("ERROR: Cannot find EdgeModel root. Set EDGEMODEL_ROOT env var.")
 
-_ENGINE = _ROOT / "engine"
+_ENGINE = _EM_ROOT / "engine"
 if str(_ENGINE) not in sys.path:
     sys.path.insert(0, str(_ENGINE))
 
@@ -429,7 +433,16 @@ if __name__ == "__main__":
     parser.add_argument("--dates",   default=None,
                         help="Comma-separated explicit dates (YYYY-MM-DD). "
                              "Bypasses sampling; works for playoff dates too.")
+    parser.add_argument("--spot-min-filter", type=float, default=None,
+                        help="Set nba_projector.SPOT_MIN_EWMA_FILTER for this run "
+                             "(e.g. 10 — filters <10-min games from spot-tier minutes "
+                             "EWMA; Plan 7 #4 refit harness)")
     args = parser.parse_args()
+
+    if args.spot_min_filter is not None:
+        import nba_projector
+        nba_projector.SPOT_MIN_EWMA_FILTER = args.spot_min_filter
+        print(f"SPOT_MIN_EWMA_FILTER = {args.spot_min_filter} (filtered-EWMA variant)")
 
     explicit = [d.strip() for d in args.dates.split(",")] if args.dates else None
 

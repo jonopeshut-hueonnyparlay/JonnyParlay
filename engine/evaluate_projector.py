@@ -751,6 +751,131 @@ def run_alpha_grid_search(season: str, n: int, min_min: float,
     print(f"{'='*60}\n")
 
 
+SPAN_GRID = (8, 12, 15, 20, 25)   # Plan 7 #1 — STL/BLK EWMA span candidates (§7A)
+
+
+def run_span_grid_search(season: str, n: int, min_min: float,
+                         db_path: Path, seed: int | None = None,
+                         use_actual_min: bool = False,
+                         stat: str = "STL") -> None:
+    """Grid-search the STL/BLK EWMA span over SPAN_GRID (Plan 7 #1, §7A).
+
+    Precomputes per-row components once (DB queries dominate runtime), then
+    sweeps spans through compute_stl_blk_rates(span_stl=/span_blk=) — the cheap
+    EWMA is the only thing recomputed per span. Mirrors run_alpha_grid_search.
+
+    Note: passes team_pace to compute_stl_blk_rates (existing eval convention,
+    lines in project_stl/project_blk); production passes game_pace. The
+    constant-ish offset does not affect the span argmax — do not "fix" here.
+    """
+    stat = stat.upper()
+    if stat not in ("STL", "BLK"):
+        log.error("--grid-search-span supports stat=STL or stat=BLK only (got %s)", stat)
+        return
+    col = "stl" if stat == "STL" else "blk"
+
+    log.info("Span grid search (%s): sampling %d games from %s ...", stat, n, season)
+    sample = sample_games(season, n, min_min, db_path, seed=seed)
+    log.info("Got %d rows  [minutes_mode=%s]", len(sample),
+             "actual" if use_actual_min else "projected")
+
+    pace_cache: dict = {}
+    tov_cache: dict = {}
+
+    def _pace(tid: int, szn: str) -> float:
+        key = (tid, szn)
+        if key not in pace_cache:
+            pace_cache[key] = get_team_pace(tid, szn, db_path=db_path)
+        return pace_cache[key]
+
+    comps_cache = []
+    actuals = []
+    for _, row in sample.iterrows():
+        try:
+            pid   = int(row["player_id"])
+            tid   = int(row["team_id"])
+            gdate = row["game_date"]
+            szn   = row["season"]
+            pos   = str(row.get("position", "") or "")
+            home_raw = row["home_team_id"]
+            away_raw = row["away_team_id"]
+            if pd.isna(home_raw) or pd.isna(away_raw):
+                opp_tid = 0
+            else:
+                opp_tid = int(away_raw) if tid == int(home_raw) else int(home_raw)
+
+            if use_actual_min:
+                pmin = float(row["min"])
+            else:
+                pmin, _ = _get_proj_min(pid, tid, gdate, szn, spread=None,
+                                        db_path=db_path)
+
+            df = get_player_recent_games(pid, gdate, n_games=30, db_path=db_path)
+            df = df[df["min"] >= RATE_MIN_MIN].copy() if not df.empty else df
+            if len(df) < 3:
+                continue   # prior-only rows are span-invariant — skip (matches alpha harness)
+
+            pos_group = _pos_to_group(pos)
+            team_pace = _pace(tid, szn)
+            opp_pace  = _pace(opp_tid, szn)
+            game_pace = (team_pace + opp_pace) / 2.0
+            proj_poss = game_pace * pmin / 48.0
+
+            if stat == "STL":
+                key = (opp_tid, szn)
+                if key not in tov_cache:
+                    tov_cache[key] = get_team_tov_rate(opp_tid, szn, db_path)
+                fac = float(np.clip(tov_cache[key] / LEAGUE_AVG_TOV_RATE, 0.80, 1.30))
+            else:
+                fac = 1.0
+
+            comps_cache.append({"df": df, "pos_group": pos_group,
+                                "team_pace": team_pace,
+                                "proj_poss": proj_poss, "fac": fac})
+            actuals.append(float(row[col]))
+        except Exception:
+            continue
+
+    if not comps_cache:
+        log.error("No valid rows for span grid search")
+        return
+
+    actuals_arr = np.array(actuals)
+
+    print(f"\n{'='*60}")
+    print(f"EWMA span grid search ({stat}) | {season} | n={len(actuals_arr)}")
+    print(f"{'='*60}")
+    print(f"  {'span':>6}  {'MAE':>8}  {'bias':>8}  {'RMSE':>8}")
+    print(f"  {'-'*38}")
+
+    best_span = SPAN_GRID[0]
+    best_mae  = float("inf")
+    for span in SPAN_GRID:
+        preds = []
+        for c in comps_cache:
+            stl_r, blk_r = compute_stl_blk_rates(
+                c["df"], c["pos_group"], c["team_pace"],
+                span_stl=span, span_blk=span,
+            )
+            rate = stl_r if stat == "STL" else blk_r
+            preds.append(max(0.0, rate * c["proj_poss"] * c["fac"]))
+        errs = np.array(preds) - actuals_arr
+        mae  = float(np.abs(errs).mean())
+        bias = float(errs.mean())
+        rmse = float(np.sqrt((errs**2).mean()))
+        flag = " <-- BEST" if mae < best_mae else ""
+        if mae < best_mae:
+            best_mae  = mae
+            best_span = span
+        print(f"  {span:>6}  {mae:>8.4f}  {bias:>+8.4f}  {rmse:>8.4f}{flag}")
+
+    print(f"\n  Optimal span: {best_span}")
+    print(f"  => Set EWMA_SPAN_STAT[\"{col}\"] = {best_span} in EdgeModel nba_projector.py")
+    print(f"  (Deploy rule per Plan 7 #1: deploy optimum even if MAE gain <0.5% — ")
+    print(f"   noise-reduction rationale at span=8 is quantified in 7A.)")
+    print(f"{'='*60}\n")
+
+
 def _main():
     parser = argparse.ArgumentParser(description="Direct DB evaluation of projection engine")
     parser.add_argument("--season",    default="2025-26")
@@ -764,6 +889,8 @@ def _main():
     parser.add_argument("--verbose",   action="store_true")
     parser.add_argument("--grid-search-alpha", action="store_true",
                         help="Grid-search optimal blend alpha for --stat (PTS or 3PM) and print recommended constants")
+    parser.add_argument("--grid-search-span", action="store_true",
+                        help="Grid-search EWMA span for --stat (STL or BLK) over {8,12,15,20,25} (Plan 7 #1)")
     parser.add_argument("--use-actual-min", action="store_true",
                         help="Use actual minutes (old behaviour). Default: projected minutes (P12)")
     parser.add_argument("--production-frame", action="store_true",
@@ -773,6 +900,18 @@ def _main():
 
     if args.grid_search_alpha:
         run_alpha_grid_search(
+            season=args.season,
+            n=args.n,
+            min_min=args.min_games,
+            db_path=Path(args.db),
+            seed=args.seed,
+            use_actual_min=args.use_actual_min,
+            stat=args.stat,
+        )
+        return
+
+    if args.grid_search_span:
+        run_span_grid_search(
             season=args.season,
             n=args.n,
             min_min=args.min_games,
