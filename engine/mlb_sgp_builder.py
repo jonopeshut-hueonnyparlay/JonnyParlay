@@ -68,7 +68,9 @@ MIN_PARLAY_ODDS = 200
 MAX_PARLAY_ODDS = 450
 MIN_LEG_EDGE = 0.010
 MIN_LEG_WIN_PROB = 0.65
-MIN_LEG_WIN_PROB_OUTS = 0.62   # OUTS-specific floor (Gaussian sigma=0.311 makes 0.65 too tight)
+MIN_LEG_WIN_PROB_OUTS = 0.62   # OUTS-specific floor (was tuned to sigma=0.311; sigma now 0.27
+                               # starts-only — narrower sigma raises OUTS leg win_probs, so this
+                               # floor binds less often. Monitor leg counts; don't retune yet.)
 MAX_SGPS_PER_DAY = 3   # MLB has 15 games/night vs NBA's ~5 — cap to top 3 by score
 
 ODDS_BASE = "https://api.the-odds-api.com/v4"
@@ -91,8 +93,9 @@ _BATTER_STATS  = {"HITS"}   # Come from batters
 # HITS: Poisson (within-batter var/mu ~ 1.0, confirmed Poisson for low-mean counts)
 _POISSON_STATS_MLB = {"HITS"}
 
-# OUTS: Normal (SIGMA from run_picks.py — mult=0.311, min=1.0)
-_OUTS_SIGMA = {"mult": 0.311, "min": 1.0}
+# OUTS: Normal (SIGMA from run_picks.py — mult=0.27, min=1.0;
+# starts-only recalibration 2026-06-05, Plan 6 §1C)
+_OUTS_SIGMA = {"mult": 0.27, "min": 1.0}
 
 
 # -- Math helpers (self-contained; Poisson/Normal CDF) -------------------------

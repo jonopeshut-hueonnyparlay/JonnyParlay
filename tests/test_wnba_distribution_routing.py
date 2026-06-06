@@ -1,9 +1,9 @@
 """Tests: WNBA AST and REB distribution routing and sigma values.
 
 WNBA AST (var/mu=1.205, NB_R_WNBA r=11.37) and REB (var/mu=1.404, r=10.74)
-use NB for probability. SIGMA_WNBA (AST mult=0.779/min=1.0, REB mult=0.633/min=1.0)
-is used for G14 z-score gate and combo sigma. Calibrated 2026-06-04 from 202
-players / 13,322 games.
+use NB for probability. SIGMA_WNBA (PTS mult=0.48/min=3.5, AST mult=0.65/min=1.0,
+REB mult=0.54/min=1.0) is used for G14 z-score gate and combo sigma.
+Recalibrated 2026-06-05 (Plan 6 §1C) on the priced population (min>=20, 153 players).
 """
 
 import pytest
@@ -18,7 +18,7 @@ def test_wnba_ast_routes_to_nb():
     """WNBA AST uses NB with WNBA-specific r=11.37, not NBA r=12.16 and not Normal."""
     proj, line = 5.0, 4.5
     expected_over = 1.0 - negbinom_cdf(int(line), proj, 11.37)  # NB_R_WNBA["AST"]
-    normal_sigma = max(proj * 0.779, 1.0)
+    normal_sigma = max(proj * 0.65, 1.0)
     normal_over = 1.0 - normal_cdf(line, proj, normal_sigma)
 
     over_p, _ = calc_prop_prob(proj, line, "AST", sport="WNBA")
@@ -31,7 +31,7 @@ def test_wnba_reb_routes_to_nb():
     """WNBA REB uses NB with WNBA-specific r=10.74, not NBA r=14.7 and not Normal."""
     proj, line = 6.0, 5.5
     expected_over = 1.0 - negbinom_cdf(int(line), proj, 10.74)  # NB_R_WNBA["REB"]
-    normal_sigma = max(proj * 0.633, 1.0)
+    normal_sigma = max(proj * 0.54, 1.0)
     normal_over = 1.0 - normal_cdf(line, proj, normal_sigma)
 
     over_p, _ = calc_prop_prob(proj, line, "REB", sport="WNBA")
@@ -99,7 +99,7 @@ def _wnba_pick(stat, proj, line, direction="under"):
 
 def test_wnba_ast_g14_blocks_borderline():
     pick = _wnba_pick("AST", proj=3.0, line=3.0, direction="under")
-    # z = (3.0 - 3.0) / max(3.0*0.779, 1.0) = 0 < 0.10 → G14
+    # z = (3.0 - 3.0) / max(3.0*0.65, 1.0) = 0 < 0.10 → G14
     passed, gate = check_prop_gates(pick)
     assert not passed
     assert gate == "G14"
@@ -107,7 +107,7 @@ def test_wnba_ast_g14_blocks_borderline():
 
 def test_wnba_reb_g14_blocks_borderline():
     pick = _wnba_pick("REB", proj=4.0, line=4.0, direction="under")
-    # z = (4.0 - 4.0) / max(4.0*0.633, 1.0) = 0 < 0.10 → G14
+    # z = (4.0 - 4.0) / max(4.0*0.54, 1.0) = 0 < 0.10 → G14
     passed, gate = check_prop_gates(pick)
     assert not passed
     assert gate == "G14"
@@ -124,9 +124,9 @@ def test_wnba_pra_combo_mu_sigma():
 
     assert mu == pytest.approx(26.0)
 
-    sig_pts = max(15.0 * 0.618, 3.5)   # 9.27
-    sig_reb = max(7.0  * 0.633, 1.0)  # 4.431
-    sig_ast = max(4.0  * 0.779, 1.0)  # 3.116
+    sig_pts = max(15.0 * 0.48, 3.5)   # 7.20
+    sig_reb = max(7.0  * 0.54, 1.0)   # 3.78
+    sig_ast = max(4.0  * 0.65, 1.0)   # 2.60
     var = sig_pts**2 + sig_reb**2 + sig_ast**2
     var += 2 * 0.294 * sig_pts * sig_reb
     var += 2 * 0.188 * sig_pts * sig_ast
@@ -148,8 +148,8 @@ def test_wnba_pr_combo_mu_sigma():
 
     assert mu == pytest.approx(28.0)
 
-    sig_pts = max(20.0 * 0.618, 3.5)   # 12.36
-    sig_reb = max(8.0  * 0.633, 1.0)  # 5.064
+    sig_pts = max(20.0 * 0.48, 3.5)   # 9.60
+    sig_reb = max(8.0  * 0.54, 1.0)   # 4.32
     var = sig_pts**2 + sig_reb**2 + 2 * 0.294 * sig_pts * sig_reb
     assert sigma == pytest.approx(max(var**0.5, 2.0), rel=1e-6)
 

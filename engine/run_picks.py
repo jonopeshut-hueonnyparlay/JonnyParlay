@@ -360,8 +360,11 @@ SIGMA = {
     # "HRR" not here — NB_STATS (Negative Binomial, r=1.5).
     # "TB" not here — G_TB_DISABLED (structural kill A2 2026-05-22).
     # "HITS" not here — POISSON_STATS takes priority.
-    "OUTS": {"mult": 0.311, "min": 1.0},  # Pitcher outs — recalibrated 2026-05-26: within-player CV=0.311, min 3.0→1.0 (floor was too aggressive)
-    "PC":   {"mult": 0.375, "min": 6.0},  # Pitcher pitch count — calibrated 2026-05-26: within-player CV=0.375 (69k pitcher game-logs); high-count continuous stat; min=6.0
+    # OUTS/PC recalibrated 2026-06-05 (Plan 6 §1C) on STARTS ONLY (is_starter=1, 16,187 starts,
+    # 345 pitchers n>=10). Prior 0.311/0.375 were contaminated by relief appearances (the market
+    # prices starters only): within-CV starts-only = 0.228/0.142 vs relief 0.443/0.460.
+    "OUTS": {"mult": 0.27, "min": 1.0},   # pooled-start CV=0.276; within=0.228 — 0.27 keeps a left-tail buffer
+    "PC":   {"mult": 0.19, "min": 6.0},   # within=0.142, pooled-start=0.204 — 0.19 mid-band; skew −1.93, Normal provisional (empirical-CDF candidate at July refit)
     # NHL goalie — calibrated 2026-05-26 from 15k goalie game-logs (2023-2026), within-player CV=0.253.
     # High-count stat (mean=26.6); Normal is correct (continuous-ish, high-volume).
     "SV":   {"mult": 0.253, "min": 3.5},
@@ -434,15 +437,16 @@ COMBO_RHO = {
 }
 
 # WNBA-specific sigma (used for G14 z-score proxy and combo sigma).
-# Calibrated 2026-06-04 from 202 players / 13,322 games (2023–2026,
-# min>=8, n>=10 per player). Within-player CV from projections.db.
-# AST/REB use NB for probability (NB_R_WNBA) but Normal sigma here.
-# PTS mult refit 2026-06-04: 0.618 (202 players/13,322 games; prior 0.38 was 9-player sample).
+# Recalibrated 2026-06-05 (Plan 6 §1C) on the PRICED population: min>=20 minutes,
+# 153 players n>=10 (2023–2026 RS, EdgeModel projections.db). The prior min>=8 frame
+# (PTS 0.618 / AST 0.779 / REB 0.633) was a sampling artifact — median player in that
+# frame scores 7.2 PPG and is never actually priced (NBA same-frame check gives 0.615).
+# AST/REB use NB for probability (NB_R_WNBA) but Normal sigma here (G14 + combos).
 SIGMA_WNBA = {
-    "PTS": {"mult": 0.618, "min": 3.5},
-    "AST": {"mult": 0.779, "min": 1.0},
-    "REB": {"mult": 0.633, "min": 1.0},
-    "3PM": {"mult": 0.48, "min": 0.70},  # Normal model; NB_R not used for WNBA 3PM
+    "PTS": {"mult": 0.48, "min": 3.5},   # min>=20 median within-CV=0.479
+    "AST": {"mult": 0.65, "min": 1.0},   # min>=20 median within-CV=0.650 (was 0.779)
+    "REB": {"mult": 0.54, "min": 1.0},   # min>=20 median within-CV=0.537 (was 0.633)
+    "3PM": {"mult": 0.48, "min": 0.70},  # z-score/combo proxy only — 3PM probability uses NB (NB_R_WNBA)
 }
 
 # WNBA combo correlations — calibrated 2026-06-04 from 202 players / 13,322 games

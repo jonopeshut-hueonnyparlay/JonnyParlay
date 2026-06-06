@@ -45,6 +45,7 @@ from projections_db import (
     DB_PATH, get_conn, get_player_recent_games, get_team_avg_fga,
     get_team_pace, get_player_b2b_context, get_team_def_ratio,
     get_team_shooting_stats, get_player_season_game_count,
+    get_player_career_fg3_totals,
 )
 from projections_db import get_team_tov_rate
 from nba_projector import (
@@ -167,7 +168,9 @@ def _compute_pts_components(player_id: int, team_id: int, opp_team_id: int,
     if len(df) < 3:
         return None
 
-    shoot = compute_shooting_rates(df)
+    # Career-to-date 3PA/3PM for the Bayesian 3P% pad — mirrors project_player() (Plan 6 §12).
+    career_fg3m, career_fg3a = get_player_career_fg3_totals(player_id, game_date, db_path)
+    shoot = compute_shooting_rates(df, career_fg3m=career_fg3m, career_fg3a=career_fg3a)
     usg_pct       = shoot["usg_pct"]
     fg2_pct       = shoot["fg2_pct"]
     fg3_pct       = shoot["fg3_pct"]
@@ -211,11 +214,12 @@ def _compute_pts_components(player_id: int, team_id: int, opp_team_id: int,
 def project_3pm(player_id: int, team_id: int, opp_team_id: int,
                 position: str, game_date: str,
                 season: str, proj_min: float, db_path: Path,
-                alpha: float = 0.60) -> float | None:
+                alpha: float = 0.65) -> float | None:
     """Project 3PM using alpha-weighted blend of FGA-decomp + per-min baseline.
 
     FGA path: proj_3pa * fg3_pct * matchup_pts (extracted from PTS decomposition).
-    alpha=0.50 starting point — run --grid-search-alpha with stat=3PM to optimise.
+    alpha=0.65 — re-grid 2026-06-05 post-PAD_3P fix (mirrors FG3M_BLEND_ALPHA
+    in EdgeModel nba_projector.py).
     """
     comps = _compute_pts_components(player_id, team_id, opp_team_id,
                                     position, game_date, season, proj_min, db_path)
@@ -667,6 +671,15 @@ def run_alpha_grid_search(season: str, n: int, min_min: float,
     print(f"\n{'='*60}")
     print(f"Alpha grid search ({stat}) | {season} | n={len(actuals_arr)}")
     print(f"{'='*60}")
+
+    # Plan 6 §12 diagnostic — component biases at the blend endpoints.
+    # Separates the FGA-path bias from the per-minute baseline bias so a
+    # blended-alpha bias can be attributed to the right component.
+    print(f"  Component diagnostic (endpoints):")
+    for name, arr in ((f"{fga_key} (alpha=1)", fga_arr), (f"{base_key} (alpha=0)", base_arr)):
+        errs = arr - actuals_arr
+        print(f"    {name:<22} bias={float(errs.mean()):+.3f}  MAE={float(np.abs(errs).mean()):.3f}")
+    print()
     print(f"  {'alpha':>6}  {'MAE':>7}  {'bias':>7}  {'RMSE':>7}")
     print(f"  {'-'*35}")
 
