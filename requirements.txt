@@ -24,9 +24,8 @@ openpyxl
 # Required for results_graphic.py PNG rendering.
 Pillow
 
-# Context sanity system (disabled by default; enable with --context).
-# Only needed when you pass --context to run_picks.py.
-# anthropic
+# Anthropic API — used by engine/context_research.py for per-game research.
+anthropic
 
 # ── Custom projection engine ────────────────────────────────────────────────
 # Optional until custom projector goes live (currently parallel-running with
