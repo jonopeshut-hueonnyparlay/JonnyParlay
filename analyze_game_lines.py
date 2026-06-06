@@ -61,7 +61,9 @@ def mlb_ml_from_nb(mu_home, mu_away, r):
 # NHL calibrated 2026-06-05 from 3936 games. MLB team total uses NB (not sigma).
 SIGMA = {
     "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,  "ml": 4.75},
-    "NBA":  {"total": 12.0, "spread": 12.0, "team": 9.0,  "ml": 12.0},
+    # NBA calibrated 2026-06-05 (Plan 6 §6, 3,922 games): residual-basis SDs
+    # (raw total SD=20.20, residual=19.33; margin residual=15.27; rho=+0.227).
+    "NBA":  {"total": 18.5, "spread": 12.5, "team": 11.0, "ml": 12.5},
     "NHL":  {"total": 2.311, "spread": 2.614, "team": 1.744, "ml": 2.614},
 }
 F5_SIGMA  = {"total": 2.65, "spread": 2.70, "team": 2.10}
@@ -72,6 +74,7 @@ MLB_TEAM_RUN_R = 3.548
 
 # Team-specific sigma JSONs (mirrored from run_picks.py) — loaded at startup
 _TEAM_SIGMAS_AGL: dict = {}
+_TEAM_SIGMAS_MEANSQ_AGL: dict = {}
 
 def _load_team_sigmas_agl():
     import json as _json
@@ -80,23 +83,34 @@ def _load_team_sigmas_agl():
                          ("NBA", "team_sigmas_nba.json"), ("WNBA", "team_sigmas_wnba.json")]:
         p = _data_dir / fname
         if p.exists():
-            _TEAM_SIGMAS_AGL[sport] = _json.loads(p.read_text())
+            data = _json.loads(p.read_text())
+            _TEAM_SIGMAS_AGL[sport] = data
+            sq = [t["score_sigma"] ** 2 for t in data.values()
+                  if isinstance(t, dict) and t.get("score_sigma") and t.get("n_games", 0) >= 20]
+            _TEAM_SIGMAS_MEANSQ_AGL[sport] = (sum(sq) / len(sq)) if sq else 0.0
 
 _load_team_sigmas_agl()
 
 def get_game_sigma(sport, home_abbr, away_abbr, market):
-    """Return matchup-specific sigma; falls back to SIGMA league average."""
+    """Return matchup-specific sigma; falls back to SIGMA league average.
+
+    Plan 6 §6 (2026-06-05): relative-variability scaler on the per-market league
+    sigma — sigma_league(market) * sqrt((σh²+σa²)/(2·σ̄²)) — mirrors run_picks.py.
+    """
     league = SIGMA.get(sport, SIGMA["NBA"])
     league_sigma = league.get(market, 10.0)
     team_data = _TEAM_SIGMAS_AGL.get(sport, {})
-    if not team_data:
+    mean_sq = _TEAM_SIGMAS_MEANSQ_AGL.get(sport, 0.0)
+    if not team_data or mean_sq <= 0:
         return league_sigma
     h = team_data.get((home_abbr or "").upper())
     a = team_data.get((away_abbr or "").upper())
-    if not h or not a:
+    if (not h or not a
+            or h.get("n_games", 0) < 20 or a.get("n_games", 0) < 20):
         return league_sigma
     if market in ("total", "ml", "spread"):
-        return math.sqrt(h["score_sigma"]**2 + a["score_sigma"]**2)
+        scaler = math.sqrt((h["score_sigma"] ** 2 + a["score_sigma"] ** 2) / (2.0 * mean_sq))
+        return league_sigma * scaler
     return league_sigma
 
 def get_game_sigma_team(sport, team_abbr):
