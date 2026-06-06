@@ -55,6 +55,12 @@ MIN_LEG_WIN_PROB = 0.65      # floor: 0.65^3 = 29% × 1.35 corr = 39% > +200 imp
 IDEAL_LEG_WIN_PROB = 0.70    # target: 0.70^3 = 34% × 1.35 corr = 46% — clearly +EV
 MAX_LEG_ODDS = -115          # loosened: -130 to -149 alt lines excluded before were good value
                               # floor still screens out uncorrelated junk (+100 etc.)
+# Plan 9 §9H: joint-EV existence floor. Per-leg WP floors alone can construct -EV
+# slips on the 4-leg path (the +200-450 window forces per-leg implied 0.653-0.760,
+# above the 0.65/0.62 floors). ANY slip must clear: copula joint prob >
+# implied(parlay odds) + margin. The premium-sizing gate (margin >= 0.10) is separate.
+# DATA_GATED: re-tune at n=100 scored SGP slips.
+SGP_JOINT_EV_MARGIN = 0.025
 ODDS_BASE = "https://api.the-odds-api.com/v4"
 ODDS_REGIONS = "us,us2,us_ex"
 API_SLEEP = 1.3
@@ -1037,6 +1043,21 @@ def _log_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None, copula_
         print(f"  [SGP] ⚠ pick_log write failed: {e}")
 
 
+def _joint_ev_ok(legs, parlay_odds, _copula_joint=None):
+    """Plan 9 §9H joint-EV existence floor.
+
+    Returns (ok, joint, margin): ok is True iff the copula joint probability
+    exceeds the book-implied parlay probability by at least SGP_JOINT_EV_MARGIN.
+    Caller may pass a precomputed _copula_joint to avoid a second MC run.
+    """
+    if _copula_joint is None:
+        probs = [l["fair_prob"] for l in legs]
+        corr = _build_corr_matrix(legs)
+        _copula_joint = _copula_joint_prob(probs, corr)
+    margin = _copula_joint - _implied_prob(parlay_odds)
+    return margin >= SGP_JOINT_EV_MARGIN, _copula_joint, margin
+
+
 def post_sgp(legs, parlay_odds, game, suppress_ping=False, today_str=None, save=True):
     from secrets_config import DISCORD_SGP_WEBHOOK
     webhook = DISCORD_SGP_WEBHOOK or DISCORD_BONUS_WEBHOOK
@@ -1059,6 +1080,12 @@ def post_sgp(legs, parlay_odds, game, suppress_ping=False, today_str=None, save=
     _probs = [l["fair_prob"] for l in legs]
     _corr = _build_corr_matrix(legs)
     _cj = _copula_joint_prob(_probs, _corr)
+    # Plan 9 §9H: belt-and-suspenders joint-EV floor (primary gate is in
+    # run_sgp_builder; this protects direct post_sgp callers).
+    _ev_ok, _, _ev_margin = _joint_ev_ok(legs, parlay_odds, _copula_joint=_cj)
+    if not _ev_ok:
+        print(f"  [SGP] Joint-EV gate: margin {_ev_margin:+.3f} < {SGP_JOINT_EV_MARGIN} — not posting {game}.")
+        return False
     sgp_size = size_sgp(legs, cohesion_val, _copula_joint=_cj)
     print(f"  [SGP-sizing] avg_wp={sum(l['fair_prob'] for l in legs)/len(legs):.2f} cohesion={cohesion_val:.2f} avg_edge={sum(l['edge'] for l in legs)/len(legs):.3f} → {sgp_size:.2f}u")
     payload = build_sgp_embed(legs, parlay_odds, game, sgp_size=sgp_size, _copula_joint=_cj)
@@ -1176,6 +1203,14 @@ def run_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
                   f"(need {MIN_LEGS}+ legs in +{MIN_PARLAY_ODDS}-{MAX_PARLAY_ODDS} range).")
             continue
         legs, parlay_odds, score = result
+        # Plan 9 §9H: joint-EV existence floor — copula joint must beat
+        # book-implied + margin for ANY slip to fire.
+        ev_ok, ev_joint, ev_margin = _joint_ev_ok(legs, parlay_odds)
+        if not ev_ok:
+            print(f"  [SGP] Joint-EV gate: joint {ev_joint:.3f} vs implied "
+                  f"{_implied_prob(parlay_odds):.3f} (margin {ev_margin:+.3f} < "
+                  f"{SGP_JOINT_EV_MARGIN}) — rejecting {game}.")
+            continue
         print_sgp(legs, parlay_odds, game, score)
         results.append((legs, parlay_odds, game))
         if dry_run:

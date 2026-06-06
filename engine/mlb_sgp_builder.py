@@ -72,6 +72,11 @@ MIN_LEG_WIN_PROB_OUTS = 0.62   # OUTS-specific floor (was tuned to sigma=0.311; 
                                # starts-only — narrower sigma raises OUTS leg win_probs, so this
                                # floor binds less often. Monitor leg counts; don't retune yet.)
 MAX_SGPS_PER_DAY = 3   # MLB has 15 games/night vs NBA's ~5 — cap to top 3 by score
+# Plan 9 §9H: joint-EV existence floor — copula joint prob must exceed
+# implied(parlay odds) + margin for ANY slip to fire (per-leg WP floors alone can
+# construct -EV slips on the 4-leg path). Premium gate (>=0.10) is separate.
+# DATA_GATED: re-tune at n=100 scored SGP slips. Mirrors sgp_builder.py.
+SGP_JOINT_EV_MARGIN = 0.025
 
 ODDS_BASE = "https://api.the-odds-api.com/v4"
 ODDS_REGIONS = "us,us2,us_ex"
@@ -758,6 +763,20 @@ def _log_mlb_sgp(legs, parlay_odds, game, today_str, book="", sgp_size=None, cop
 
 # -- Posting -------------------------------------------------------------------
 
+def _joint_ev_ok_mlb(legs, parlay_odds, _copula_joint=None):
+    """Plan 9 §9H joint-EV existence floor (MLB mirror of sgp_builder._joint_ev_ok).
+
+    Returns (ok, joint, margin): ok is True iff the copula joint probability
+    exceeds the book-implied parlay probability by at least SGP_JOINT_EV_MARGIN.
+    """
+    if _copula_joint is None:
+        probs = [l["fair_prob"] for l in legs]
+        corr = _build_corr_matrix_mlb(legs)
+        _copula_joint = _copula_joint_prob(probs, corr)
+    margin = _copula_joint - _implied_prob(parlay_odds)
+    return margin >= SGP_JOINT_EV_MARGIN, _copula_joint, margin
+
+
 def post_mlb_sgp(legs, parlay_odds, game, suppress_ping=False, today_str=None, save=True):
     from secrets_config import DISCORD_SGP_WEBHOOK
     webhook = DISCORD_SGP_WEBHOOK or DISCORD_BONUS_WEBHOOK
@@ -779,6 +798,13 @@ def post_mlb_sgp(legs, parlay_odds, game, suppress_ping=False, today_str=None, s
     probs  = [l["fair_prob"] for l in legs]
     corr   = _build_corr_matrix_mlb(legs)
     cj     = _copula_joint_prob(probs, corr)
+    # Plan 9 §9H: belt-and-suspenders joint-EV floor (primary gate is in
+    # run_mlb_sgp_builder phase 1; this protects direct post_mlb_sgp callers).
+    ev_ok, _, ev_margin = _joint_ev_ok_mlb(legs, parlay_odds, _copula_joint=cj)
+    if not ev_ok:
+        print(f"  [MLB SGP] Joint-EV gate: margin {ev_margin:+.3f} < "
+              f"{SGP_JOINT_EV_MARGIN} — not posting {game}.")
+        return False
     size   = _size_mlb_sgp(legs)
     book   = _pick_best_book({l["book"] for l in legs})
 
@@ -856,6 +882,14 @@ def run_mlb_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
         if result is None:
             continue
         legs, parlay_odds, score = result
+        # Plan 9 §9H: joint-EV existence floor — rejected slips must NOT consume
+        # MAX_SGPS_PER_DAY slots, so gate before candidates.append.
+        ev_ok, ev_joint, ev_margin = _joint_ev_ok_mlb(legs, parlay_odds)
+        if not ev_ok:
+            print(f"  [MLB SGP] Joint-EV gate: joint {ev_joint:.3f} vs implied "
+                  f"{_implied_prob(parlay_odds):.3f} (margin {ev_margin:+.3f} < "
+                  f"{SGP_JOINT_EV_MARGIN}) — rejecting {game}.")
+            continue
         candidates.append((score, legs, parlay_odds, game))
 
     if not candidates:

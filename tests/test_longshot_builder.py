@@ -157,3 +157,100 @@ class TestBuildLongshotParlay:
         from collections import Counter
         game_counts = Counter(l["game"] for l in result["legs"])
         assert max(game_counts.values()) <= 2
+
+
+# ---------------------------------------------------------------------------
+# Plan 9 §9B: positive-ρ ranking boost (OUTS under + opposing TT over)
+# ---------------------------------------------------------------------------
+
+def _corr_pick(win_prob, game, player, stat, direction, team_abbrev):
+    p = _pick(win_prob, game, player=player, stat=stat, direction=direction)
+    p["team_abbrev"] = team_abbrev
+    return p
+
+
+class TestLongshotRhoBoost:
+    def test_rho_constant(self):
+        assert rp.LONGSHOT_PAIR_RHO == 0.35
+
+    def test_pair_detector_positive(self):
+        a = _corr_pick(0.80, "MIL @ CHC", "Pitcher", "OUTS", "under", "CHC")
+        b = _corr_pick(0.70, "MIL @ CHC", "", "TEAM_TOTAL", "over", "MIL")
+        assert rp._longshot_pos_corr_pair(a, b)
+        assert rp._longshot_pos_corr_pair(b, a)  # order-independent
+
+    def test_pair_detector_same_team_negative(self):
+        """Pitcher's OWN team total over is NOT the boosted pair."""
+        a = _corr_pick(0.80, "MIL @ CHC", "Pitcher", "OUTS", "under", "CHC")
+        b = _corr_pick(0.70, "MIL @ CHC", "", "TEAM_TOTAL", "over", "CHC")
+        assert not rp._longshot_pos_corr_pair(a, b)
+
+    def test_pair_detector_different_game_negative(self):
+        a = _corr_pick(0.80, "MIL @ CHC", "Pitcher", "OUTS", "under", "CHC")
+        b = _corr_pick(0.70, "NYY @ BOS", "", "TEAM_TOTAL", "over", "NYY")
+        assert not rp._longshot_pos_corr_pair(a, b)
+
+    def test_pair_detector_wrong_directions_negative(self):
+        a = _corr_pick(0.80, "MIL @ CHC", "Pitcher", "OUTS", "over", "CHC")
+        b = _corr_pick(0.70, "MIL @ CHC", "", "TEAM_TOTAL", "over", "MIL")
+        assert not rp._longshot_pos_corr_pair(a, b)
+
+    def test_effective_wp_equals_raw_without_pair(self):
+        p = _pick(0.72, "G1 @ G2", player="P1")
+        others = [_pick(0.80, "G3 @ G4", player="P2")]
+        assert rp._longshot_effective_wp(p, others) == 0.72
+
+    def test_effective_wp_boosted_with_pair(self):
+        """Effective wp = min(0.99, (p·q + ρ·sqrt(p(1−p)q(1−q))) / q) > raw wp."""
+        import math
+        outs = _corr_pick(0.82, "MIL @ CHC", "Pitcher", "OUTS", "under", "CHC")
+        tt = _corr_pick(0.70, "MIL @ CHC", "", "TEAM_TOTAL", "over", "MIL")
+        eff = rp._longshot_effective_wp(tt, [outs])
+        joint = 0.70 * 0.82 + 0.35 * math.sqrt(0.70 * 0.30 * 0.82 * 0.18)
+        assert eff == pytest.approx(min(0.99, joint / 0.82))
+        assert eff > 0.70
+
+    def test_boosted_partner_enters_the_six(self):
+        """A TT-over leg below the raw-wp cutoff makes the 6 via the +ρ pair."""
+        base = [_pick(0.80 - i * 0.01, f"G{i} @ H{i}", player=f"P{i}")
+                for i in range(4)]  # 0.80, 0.79, 0.78, 0.77 in distinct games
+        outs = _corr_pick(0.82, "MIL @ CHC", "Pitcher", "OUTS", "under", "CHC")
+        tt = _corr_pick(0.70, "MIL @ CHC", "", "TEAM_TOTAL", "over", "MIL")
+        marginal = _pick(0.76, "G9 @ H9", player="P9")   # raw-wp 6th place
+        filler = _pick(0.745, "G8 @ H8", player="P8")
+        picks = base + [outs, tt, marginal, filler]
+        result = rp.build_safest6_parlay(picks)
+        assert result is not None
+        wps = [l["win_prob"] for l in result["legs"]]
+        # TT boosted: eff ≈ 0.775 > 0.76 → displaces the marginal pick
+        assert 0.70 in wps, "boosted TT leg should be selected"
+        assert 0.76 not in wps, "marginal raw-wp pick should be displaced"
+
+    def test_same_team_tt_not_boosted(self):
+        """Same scenario but TT on the pitcher's own team → no boost → no entry."""
+        base = [_pick(0.80 - i * 0.01, f"G{i} @ H{i}", player=f"P{i}")
+                for i in range(4)]
+        outs = _corr_pick(0.82, "MIL @ CHC", "Pitcher", "OUTS", "under", "CHC")
+        tt = _corr_pick(0.70, "MIL @ CHC", "", "TEAM_TOTAL", "over", "CHC")  # same team
+        marginal = _pick(0.76, "G9 @ H9", player="P9")
+        filler = _pick(0.745, "G8 @ H8", player="P8")
+        picks = base + [outs, tt, marginal, filler]
+        result = rp.build_safest6_parlay(picks)
+        assert result is not None
+        wps = [l["win_prob"] for l in result["legs"]]
+        assert 0.70 not in wps
+        assert 0.76 in wps
+
+    def test_combined_prob_stays_independence_product(self):
+        """Even with a boosted pair, logged combined_prob is the raw product."""
+        base = [_pick(0.80 - i * 0.01, f"G{i} @ H{i}", player=f"P{i}")
+                for i in range(4)]
+        outs = _corr_pick(0.82, "MIL @ CHC", "Pitcher", "OUTS", "under", "CHC")
+        tt = _corr_pick(0.70, "MIL @ CHC", "", "TEAM_TOTAL", "over", "MIL")
+        marginal = _pick(0.76, "G9 @ H9", player="P9")
+        filler = _pick(0.745, "G8 @ H8", player="P8")
+        result = rp.build_safest6_parlay(base + [outs, tt, marginal, filler])
+        expected = 1.0
+        for l in result["legs"]:
+            expected *= l["win_prob"]
+        assert abs(result["combined_prob"] - expected) < 1e-9

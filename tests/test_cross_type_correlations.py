@@ -134,6 +134,7 @@ class TestNrfiPoissonCalibration:
     _BASE_LAMBDA_1ST      = 0.32
     _LEAGUE_AVG_RUNS      = 4.39
     _LEAGUE_AVG_BLENDED   = 0.438
+    _NRFI_GAMMA           = 0.65   # Plan 9 §9A multiplier dampener (mirrors run_picks)
 
     def _compute_p_nrfi(self, home_blended, away_blended,
                          home_runs, away_runs):
@@ -141,8 +142,12 @@ class TestNrfiPoissonCalibration:
         away_pitch_mult = away_blended / self._LEAGUE_AVG_BLENDED
         off_away = away_runs / self._LEAGUE_AVG_RUNS
         off_home = home_runs / self._LEAGUE_AVG_RUNS
-        lam_away = max(0.05, min(0.90, self._BASE_LAMBDA_1ST * home_pitch_mult * off_away))
-        lam_home = max(0.05, min(0.90, self._BASE_LAMBDA_1ST * away_pitch_mult * off_home))
+        # Plan 9 §9A: gamma dampener on the matchup multiplier, clamped at 0
+        # before exponentiation (negative blended rate → complex number otherwise).
+        mult_away = max(0.0, home_pitch_mult * off_away)
+        mult_home = max(0.0, away_pitch_mult * off_home)
+        lam_away = max(0.05, min(0.90, self._BASE_LAMBDA_1ST * mult_away ** self._NRFI_GAMMA))
+        lam_home = max(0.05, min(0.90, self._BASE_LAMBDA_1ST * mult_home ** self._NRFI_GAMMA))
         return math.exp(-(lam_away + lam_home))
 
     def test_average_matchup_nrfi_near_53pct(self):
@@ -164,7 +169,8 @@ class TestNrfiPoissonCalibration:
         )
         avg_p = self._compute_p_nrfi(0.438, 0.438, 4.39, 4.39)
         assert p > avg_p, "Elite pitchers should produce higher P(NRFI)"
-        assert p >= 0.60, f"Two elite pitchers should be >=60% NRFI, got {p:.3f}"
+        # Gamma dampener (Plan 9 §9A) compresses extremes: was >=0.60 un-dampened.
+        assert p >= 0.58, f"Two elite pitchers should be >=58% NRFI, got {p:.3f}"
 
     def test_poor_pitchers_lower_nrfi(self):
         """Poor pitcher (ERA=5.5, FIP=5.0) → P(NRFI) below average."""
@@ -177,7 +183,8 @@ class TestNrfiPoissonCalibration:
         )
         avg_p = self._compute_p_nrfi(0.438, 0.438, 4.39, 4.39)
         assert p < avg_p, "Poor pitchers should lower P(NRFI)"
-        assert p <= 0.44, f"Two poor pitchers should be <=44% NRFI, got {p:.3f}"
+        # Gamma dampener (Plan 9 §9A) compresses extremes: was <=0.44 un-dampened.
+        assert p <= 0.48, f"Two poor pitchers should be <=48% NRFI, got {p:.3f}"
 
     def test_high_offense_team_lowers_nrfi(self):
         """High-scoring offense (6.0 R/game, like a Coors team) → lower P(NRFI)."""
@@ -194,3 +201,40 @@ class TestNrfiPoissonCalibration:
         # Both should be valid probabilities
         assert 0.0 < p_low < 1.0
         assert 0.0 < p_high <= 1.0
+
+    # --- Plan 9 §9A gamma dampener tests -----------------------------------
+
+    def test_gamma_constant_matches_engine(self):
+        """Mirror gamma must match the engine's NRFI_GAMMA (literature default)."""
+        assert self._NRFI_GAMMA == 0.65
+
+    def test_average_matchup_unaffected_by_gamma(self):
+        """mult=1 → 1**γ = 1, so the ~53% baseline is preserved exactly."""
+        p = self._compute_p_nrfi(0.438, 0.438, 4.39, 4.39)
+        expected = math.exp(-2 * 0.32)  # λ=BASE on both sides
+        assert abs(p - expected) < 1e-12, f"Baseline shifted: {p:.6f} vs {expected:.6f}"
+
+    def test_gamma_dampens_toward_baseline(self):
+        """Dampened P(NRFI) lies between the un-dampened value and the baseline."""
+        baseline = math.exp(-2 * 0.32)
+
+        def _undamped(blended):
+            mult = blended / self._LEAGUE_AVG_BLENDED
+            lam = max(0.05, min(0.90, self._BASE_LAMBDA_1ST * mult))
+            return math.exp(-2 * lam)
+
+        # Elite side: undamped > damped > baseline
+        p_damp = self._compute_p_nrfi(0.320, 0.320, 4.39, 4.39)
+        p_raw = _undamped(0.320)
+        assert baseline < p_damp < p_raw
+        # Poor side: undamped < damped < baseline
+        p_damp = self._compute_p_nrfi(0.578, 0.578, 4.39, 4.39)
+        p_raw = _undamped(0.578)
+        assert p_raw < p_damp < baseline
+
+    def test_negative_blended_rate_does_not_raise(self):
+        """Elite-K pitcher with negative FIP/blended rate must not crash
+        ((negative)**0.65 is complex — the max(0,·) mult clamp prevents it)."""
+        p = self._compute_p_nrfi(-0.05, 0.438, 4.39, 4.39)
+        assert 0.0 < p <= 1.0
+        assert isinstance(p, float)

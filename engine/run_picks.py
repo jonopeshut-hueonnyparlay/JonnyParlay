@@ -200,6 +200,10 @@ MIN_LEG_COVER_PROB_DAILY = 0.58 # Minimum per-leg cover probability for daily la
 LONGSHOT_SIZE = 0.25            # Unit size for longshot parlay (high variance, small stake)
 VALUE_PARLAY_SIZE = 0.25        # Unit size for 5-leg value parlay fallback; tune separately after data
 LONGSHOT_MAX_PER_GAME = 2       # F2.20: moved from inside build_safest6_parlay to top-level constant
+LONGSHOT_PAIR_RHO = 0.35        # Plan 9 §9B: +ρ ranking boost for pitcher OUTS-under +
+                                # opposing TEAM_TOTAL-over in the same game (ρ ≈ +0.30-0.40,
+                                # mirror image of the X1 negative pair). Ranking-only —
+                                # never blocks; displayed combined_prob stays independence.
 SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_builder.SGP_SIZE)
 
 # ── KILLSHOT tier (v3 — Plan 6 §13 redesign 2026-06-05; see CLAUDE.md) ─────────
@@ -3539,6 +3543,13 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
     picks = []
     # Poisson model constants (2026-05-29 calibration)
     BASE_LAMBDA_1ST = 0.32        # first-inning λ per team — calibrated to ~53% NRFI for avg matchup
+    # NRFI_GAMMA (Plan 9 §9A, DATA_GATED): elasticity dampener on the matchup multiplier.
+    # Pure Poisson elasticity exp(-0.32·m) is ~50-60% too steep under NB overdispersion
+    # (±2pp at pick-firing extremes). Literature default γ≈0.6-0.7; applied to the
+    # MULTIPLIER (λ = BASE · m^γ), not λ_total, so mult=1 keeps the ~53% baseline.
+    # Recalibrate when first-inning-level data exists (bucket predicted mult vs
+    # realized NRFI rate on the in-house 8,095-game DB).
+    NRFI_GAMMA = 0.65
     _LEAGUE_AVG_RUNS = 4.45       # 2025 MLB runs/game/team (offense normalisation)
     _LEAGUE_AVG_BLENDED_RATE = 0.4808  # 0.25*(4.17/9) + 0.75*(4.38/9) — avg pitcher blended ERA+FIP rate (2025, Plan 9 §9A 25/75 blend)
     # Park factor intentionally omitted: SaberSim saber_team projections and
@@ -3657,9 +3668,15 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
         off_away = _team_runs(away) / _LEAGUE_AVG_RUNS
         off_home = _team_runs(home) / _LEAGUE_AVG_RUNS
 
-        # Poisson λ per half-inning: higher λ = more expected runs = lower P(0 runs)
-        lam_away = BASE_LAMBDA_1ST * home_pitch_mult * off_away
-        lam_home = BASE_LAMBDA_1ST * away_pitch_mult * off_home
+        # Poisson λ per half-inning: higher λ = more expected runs = lower P(0 runs).
+        # Plan 9 §9A: dampen the matchup multiplier by NRFI_GAMMA (m^γ) — raw Poisson
+        # elasticity is too steep under NB overdispersion. Clamp the multiplier at 0
+        # BEFORE exponentiation: elite-K pitchers can produce a negative FIP/blended
+        # rate → negative mult, and (negative)**0.65 is a complex number (TypeError).
+        mult_away = max(0.0, home_pitch_mult * off_away)
+        mult_home = max(0.0, away_pitch_mult * off_home)
+        lam_away = BASE_LAMBDA_1ST * mult_away ** NRFI_GAMMA
+        lam_home = BASE_LAMBDA_1ST * mult_home ** NRFI_GAMMA
         lam_away = max(0.05, min(0.90, lam_away))
         lam_home = max(0.05, min(0.90, lam_home))
 
@@ -4153,6 +4170,50 @@ def prob_to_american(prob):
     else:
         return ((1.0 - prob) / prob) * 100
 
+def _longshot_pos_corr_pair(a, b):
+    """True iff (a, b) is the positively-correlated pair: pitcher OUTS under +
+    opposing team's TEAM_TOTAL over in the same game (Plan 9 §9B, ρ ≈ +0.30-0.40 —
+    pitcher exits early → opposing offense scoring; mirror of the X1 negative pair).
+    Opposing-team check mirrors filter_cross_type_correlations (team_abbrev fields).
+    """
+    g = a.get("game", "")
+    if not g or g != b.get("game", ""):
+        return False
+    for outs_pick, tt_pick in ((a, b), (b, a)):
+        if (outs_pick.get("stat") == "OUTS" and outs_pick.get("direction") == "under"
+                and tt_pick.get("stat") == "TEAM_TOTAL" and tt_pick.get("direction") == "over"):
+            t_outs = outs_pick.get("team_abbrev", "")
+            t_tt = tt_pick.get("team_abbrev", "")
+            if t_outs and t_tt and t_outs != t_tt:
+                return True
+    return False
+
+
+def _longshot_effective_wp(p, selected):
+    """Effective win prob of candidate p for longshot RANKING, conditional on
+    already-selected legs (Plan 9 §9B). If p forms a positively-correlated pair
+    with a selected leg q, independence understates the joint prob — rank p by
+    P(p | q) = joint / P(q), where (Bernoulli-φ identity):
+
+        joint = p·q + ρ·sqrt(p(1−p)·q(1−q))
+
+    Equals the raw win_prob when no boosted pair exists. Ranking-only: the
+    displayed/logged combined_prob stays the independence product (conservative
+    for the boosted pair).
+    """
+    wp = p["win_prob"]
+    best = wp
+    for q_pick in selected:
+        if _longshot_pos_corr_pair(p, q_pick):
+            q = q_pick["win_prob"]
+            if q <= 0.0:
+                continue
+            joint = wp * q + LONGSHOT_PAIR_RHO * math.sqrt(
+                max(0.0, wp * (1.0 - wp) * q * (1.0 - q)))
+            best = max(best, min(0.99, joint / q))
+    return best
+
+
 def build_safest6_parlay(qualified):
     """Build a longshot parlay from the 6 safest picks by win probability.
 
@@ -4173,12 +4234,19 @@ def build_safest6_parlay(qualified):
     correlation (shared pace/scoring environment) would make true joint prob
     >= naive product, so independence is conservative, not aggressive.
     """
-    # Hit-frequency product: sort by win_prob, not EV-factor.
-    ranked = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
+    # Hit-frequency product: rank by win_prob, not EV-factor.
+    # Plan 9 §9B: iterative greedy — each round selects the pool max by
+    # EFFECTIVE wp (conditional on already-selected positively-correlated
+    # partners via _longshot_effective_wp). With no boosted pairs this is
+    # sequence-identical to the old single-pass wp-desc sort (max() resolves
+    # ties to the lowest index in the wp-desc pool).
+    pool = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
     game_counts: dict = {}
     player_counts: dict = {}
     safest = []
-    for p in ranked:
+    while pool and len(safest) < 6:
+        p = max(pool, key=lambda c: _longshot_effective_wp(c, safest))
+        pool.remove(p)
         g = p.get("game", "")
         player = p.get("player", "")
         if game_counts.get(g, 0) >= LONGSHOT_MAX_PER_GAME:
@@ -4190,10 +4258,10 @@ def build_safest6_parlay(qualified):
         if player:
             player_counts[player] = player_counts.get(player, 0) + 1
         safest.append(p)
-        if len(safest) == 6:
-            break
     if len(safest) < 6:
         return None
+    # Displayed/logged combined_prob stays the independence product — conservative
+    # for a boosted pair (true joint prob >= product under positive ρ).
     combined_prob = 1.0
     combined_dec  = 1.0
     book_counts: dict = {}
