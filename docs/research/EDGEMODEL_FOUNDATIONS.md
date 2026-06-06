@@ -33,15 +33,77 @@ one published source. Companion doc: docs/research/STATISTICAL_FOUNDATIONS.md
 | 7D | Stat scalars + playoff deflators | MIXED — multiplicative form LOCKED; values PERIODIC_RECAL; **BLK=1.152 DATA_GATED (likely ~1.05; do NOT lock — C01 confirmed)** |
 | 7E | DK_STD model + HIGH_VAR flag | MIXED — coeff 0.35 + Vegas-scaling exclusion LOCKED; floors PERIODIC_RECAL; CV flag NEEDS_RELABEL (statistic kept) |
 | 7F | 3PM architecture post-PAD_3P | CONFIRMED — −0.26 "shared bias" is ~⅔ frame mismatch, ~⅓ real (minutes + EWMA trend-lag); scalar compensation correct form; PAD_3P=242 verified |
-| 7G | Stat-specific blend alphas | PENDING |
-| 7H | Position-specific AST EWMA spans | PENDING |
-| 7I | EWMA_SPAN_SHOOTING + OT_MIN_CAP | PENDING |
+| 7G | Stat-specific blend alphas | LOCKED — all four alphas + architecture; flat loss surface under high error correlation; offseason refits NOT recommended |
+| 7H | Position-specific AST EWMA spans | **NEEDS_CHANGE** — span ordering inverts sampling principle (same error as STL/BLK); fix: uniform span=13 or invert+lengthen |
+| 7I | EWMA_SPAN_SHOOTING + OT_MIN_CAP | MIXED — USG%/FG3A-rate/FT% spans + OT cap LOCKED; **FG% span-10 NEEDS_CHANGE (P3, test-gated: PAD_FG≈103)** |
+
+---
+
+## LOCKED ASSUMPTIONS
+*These should not change unless the sport or model architecture fundamentally changes. "Feeling" is not sufficient to change them.*
+
+| Assumption | Value | Source(s) | Condition to Revisit |
+|---|---|---|---|
+| EWMA functional form (vs Kalman/ridge/GP) | per-stat EWMA + Bayesian blend | Hyndman SSOE (EWMA = steady-state Kalman); DARKO uses per-stat exp decay | Published NBA head-to-head showing Kalman/GP beats tuned exp decay (none exists) |
+| span→α = 2/(span+1) | pandas convention | pandas.DataFrame.ewm docs | Never |
+| FG3M span=10 + shooting span=10 (except FG%) | 10 | Miller & Sanjurjo hot-hand; Medvedovsky padding table (USG 72 poss, FG3A-rate 3.6 FGA, FT% 24 FTA) | FG3A-rate responsiveness issue post-trade |
+| Minutes span=8 | 8 | Minutes shifts are coach decisions (regime changes), not noise — kmedved | — |
+| OT_MIN_CAP=44.0 | 44.0 | OT ~5.9% of games, +0.3 min EV; 6+ min above league MPG leader (37.6) | NBA OT format change, or any projected mean >42 |
+| Vegas total as pace prior (`_base_pf`) | implied_total / LEAGUE_AVG_TOTAL | Štrumbelj & Robnik-Šikonja 2010; Sauer 1998; closing-line absence studies | Model's own totals beat Vegas on Brier at n≥200 (don't expect it) |
+| STL/BLK on historical pace (NOT Vegas) | ^0.30 each | Oliver pace/efficiency separation — Vegas total confounds pace with efficiency | Possession-specific market signal becomes available |
+| Lineup-protected 240-min reconciliation | top-5 immutable | Zhang et al. 2023 immutable-forecast reconciliation; MinT variance-weighting logic | Starter proj_min MAE exceeds bench MAE in season-scale backtest |
+| Dual-path playoff scalar (Vegas path skips ×0.963) | — | Market prices embed playoff pace; double-count otherwise | Never |
+| Multiplicative (vs additive) stat-scalar form | proj × scalar | Mincer-Zarnowitz decomposition; zero-bounded bias-correction practice | MZ intercept \|t\|>2 for any stat at next refit |
+| Blend alphas PTS=0.50 / REB=0.45 / AST=0.40 / FG3M=0.65 | as listed | Forecast combination puzzle (Smith & Wallis 2009; Elliott 2011) — loss surface flat, refits are churn | Structural change to either path; path decorrelation; blended MAE loses to best single path |
+| Two-path blend architecture | decomp + baseline | Bates & Granger 1969; Clemen 1989; RotoGrinders two-projection practice | — |
+| DK_STD_COEFF=0.35 | 0.35 | Implies NB r≈8.2, matching engine's own fits; published CV range 0.28–1.1 | League scoring shift moves implied r outside ~6–10 |
+| dk_std excluded from 240-min scaling | — | NB variance falls slower than μ²; minutes squeezes add rotation uncertainty | Never |
+| PAD_3P=242, career-to-date | 242.0 | Medvedovsky 2020 primary source (242.61); supersedes Blackport 750 | Consider decayed-attempts denominator for >2,000 career 3PA + talent change |
+| Single playoff deflator across rounds | — | Round effects unidentifiable at n=1,071 | Pooled playoff n≥3,000 |
+
+---
+
+## PERIODIC RECALIBRATION
+*Correct methodology. Parameter values should be updated each offseason (or per the stated frequency).*
+
+| Assumption | Current Value | Method | Notes |
+|---|---|---|---|
+| Per-stat EWMA spans (PTS/REB/AST/TOV) | 15/12/13/10 | DARKO-style: optimize per-stat decay vs rest-of-season MAE on 3-season backtest | Only deploy changes >0.5% MAE improvement; differences in 12–15 range likely immaterial |
+| Role minute scalars (RS + PO, non-spot) | starter 1.0667/1.075 etc. | actual/projected ratio per tier | Refit after ANY change to EWMA span, tier thresholds, or sampling frame |
+| REGULAR_SEASON_STAT_SCALAR | pts 1.0019 … blk 1.0608 | ratio of means | **Add split-half temporal holdout** (current "bias≈0" is tautological) + per-stat MZ intercept test; fix comment/fit-basis docs (AST/BLK comment arithmetic inconsistent) |
+| PLAYOFF_RATE_DEFLATORS pts/ast/fg3m | 0.934/0.845/0.948 | playoff backtest ratio | Refit at ≥2 pooled postseasons (~2,500 player-games); check Vegas-total efficiency double-count (PTS expected to drift toward ~0.97) |
+| DK_STD_FLOOR | 4.0/4.0/3.5/3.0/3.0 | regress \|error\| on projection by role | Rotation/spot floors look ~1–2 pts low vs MAE-implied σ; harmless while informational |
+| LG_FG3A_RATE | 0.420 | league 3PA/FGA from B-Ref | Verify exact 2025-26 figure at July refit; adjust if \|Δ\|>0.01 |
+| FG3M stat scalar drift | 1.0231 | — | Expect +1–2%/season drift while league 3PA rises; if flat-3PA league and scalar still rising → different mechanism, investigate |
+
+---
+
+## DATA-GATED
+*Correct methodology. Waiting for enough data to finalize parameters.*
+
+| Assumption | Current Value | Gate | Notes |
+|---|---|---|---|
+| PLAYOFF_RATE_DEFLATORS BLK (C01) | 1.152 — **do NOT lock** | Per-possession decomposition + leave-one-player-out (exclude >2 BPG) before 2027 playoffs | League per-possession playoff block rate ≈ flat (+1–3%); defensible value ≈1.04–1.06; 95% CI [1.04, 1.26] from single postseason likely dominated by Wembanyama (5.6 BPG). If LOPO <1.10 → shrink to ~1.05 |
+| COLD_START_PLAYOFF_SCALAR | taxi/ext_abs 0.400, returner 0.700, new_acq 0.750 | n≥50 playoff cold-start player-games | Direction matches rotation compression (7–9 players); taxi/ext_abs likely still over-projects (modal outcome = DNP) but priced exposure ≈0. If >40% DNP rate → replace 0.400 with play-probability gate |
+| HIGH_VAR flag behavioral use | CV≥0.60, n≥8 (informational) | If G15 ever becomes blocking | Raise HIGH_VAR_MIN_GAMES to ≥20 + add 2-window persistence first; CV at n=8 carries ±33% relative SE |
+
+---
+
+## NEEDS_CHANGE (priority order)
+
+| # | Item | Section | Problem | Fix | Gate/Priority |
+|---|---|---|---|---|---|
+| 1 | **STL/BLK EWMA span=8** | 7A | Logic inverted: lowest-frequency stats stabilize slowest and need the LONGEST spans; at span=8 the STL estimate is ~50% noise (sampling SD ≈0.37 rivals between-player talent SD ≈0.4) | Grid-search spans {8,12,15,20,25} on existing 30-date backtest harness; expect optimum 18–25; or equivalently heavier Bayesian-prior weight | Next backtest window with ≥1,500 STL/BLK rows (July refit). Low downside risk |
+| 2 | **_AST_EWMA_SPAN position table** | 7H | Same inverted-sampling error as #1, per position: noisiest position (C, span=5) gets least smoothing; deployed reality is flat {guards 8, SF/PF 6, C 5} — ALL below generic span 13 (PG cell is dead code, API never assigns PG) | (a) Delete table, use uniform span=13 (simplest); or (b) invert+lengthen: guards ≈13, SF/PF ≈15, C ≈18–20. Validate per-position AST MAE on 30-date backtest. Evaluate jointly with AST_ALPHA=0.40 | July refit. Severity moderated by AST_ALPHA down-weighting (60/40 toward baseline) |
+| 3 | **AST not Vegas-anchored** | 7C | AST mechanically coupled to made FGs (AST/FGM ≈0.60–0.63 stable) → implied scoring-environment elasticity ≈0.7–0.9, current design assigns 0; ~0.25–0.45 AST systematic miss on 8% Vegas-vs-pace divergence; incoherent with COMBO_RHO_PTS_AST=0.233 downstream | One-line change: AST joins the pts/fg3m/reb `_base_pf` branch at its existing ^0.50 elasticity; consider ^0.70 at next refit | Backtest-gated: bucket graded AST props by Vegas-vs-pace divergence quintile; ship if top-vs-bottom bias spread >0.15 AST |
+| 4 | **RS spot minute scalar = 1.6124** | 7B | Band-aid over incidental truncation (Heckman-class selection): spot players priced only on real-role nights while EWMA averages DNP-adjacent games; PO 0.948 vs RS 1.612 sign flip confirms scalar encodes sample composition, not role behavior | Root fix: exclude games <10 min from spot-tier EWMA (industry standard) or two-stage hurdle model. At next refit, fit both ways; if filtered-EWMA scalar drops below ~1.30, selection mechanism confirmed — replace scalar with filtered input | Next RS scalar refit. Interim value may stand (empirically calibrated, CI excludes 1.0) |
+| 5 | **FG% on span-10 EWMA (no padding)** | 7I | FG% stabilizes at ~103 FGA ≈ the span-10 window's entire volume → unshrunk EWMA FG% is ~50% noise vs empirical-Bayes optimum | Apply the PAD_3P pattern: PAD_FG≈103 FGA (PAD_2P≈127) career-padded blend on the PTS decomp path | P3, test-gated at July refit: deploy only on PTS MAE improvement (3P% precedent says shared-path bias may dominate — then mark LOCKED and close) |
+| 6 | **HIGH_VAR flag mislabeled** | 7E | CV measures dispersion, not bimodality; "bimodal 3PT specialist" label overstates what the statistic detects | Rename to high-variance flag (comment/docs only); keep CV statistic — dip test/BC are powerless at n=8 | Cosmetic; bundle with next nba_projector.py edit |
+| 7 | **evaluate_projector.py frame mismatch** | 7F | The −0.26 "shared 3PM bias" headline is ~⅔ measurement artifact: scalar arithmetic (1.0365×1.0231 ≈ 1.06 lift on 1.34 mean ≈ −0.08) cannot produce −0.26; the extra ~−0.18 is frame/selection disagreement vs the production backtest (likely conditioning on realized outcomes) | Align evaluate frame with production (same population, scalars toggleable); add log-space minutes×rate bias decomposition | Diagnostic, not a model change. If shared bias remains ≤−0.20 after alignment, selection hypothesis falsified — escalate |
 
 ---
 
 ## SECTION DETAIL
-
-*Sections appended as research completes (batches of 3).*
 
 ---
 
@@ -275,3 +337,128 @@ Overall section verdict: **PERIODIC_RECAL** for the architecture, with one **NEE
 - Align evaluate_projector.py frame with production (same population, scalars toggleable); if shared bias remains ≤ −0.20 after alignment, selection hypothesis is falsified — open a new investigation.
 - If league 3PA/game is flat or down in 2026-27, expect `REGULAR_SEASON_STAT_SCALAR[fg3m]` to need *reduction* toward 1.00; a scalar still rising in a flat-3PA league indicates a different mechanism.
 - If a player's career-to-date 3PA exceeds ~2,000 with a documented talent change (role/mechanics), the career-to-date pad denominator materially staleness-biases 3P% — consider exponentially-decayed attempts (DARKO-style) as the denominator at the next architecture pass.
+
+---
+
+## SECTION 7G — Stat-Specific Blend Alphas
+
+**Question:** Are the four stat-specific blend alphas (PTS=0.50, REB=0.45, AST=0.40, FG3M=0.65) defensible per forecast-combination literature? Does provenance (heuristic vs grid-search) matter? Should they be refit each offseason, fixed at 0.5, or left as-is?
+
+**Code ground truth:** `proj = α × decomposed_path + (1−α) × EWMA_baseline` per stat. PTS (0.50) and FG3M (0.65) grid-search calibrated with flat MAE curves (FG3M flat across 0.55–0.70, n=1,936). REB (0.45) and AST (0.40) provenance undocumented; the AST comment ("lean toward baseline until rates stabilise") reads as judgment. Both paths share the projected-minutes input, so forecast errors are strongly positively correlated (plausibly ρ ≥ 0.7).
+
+**Findings:**
+
+1. **The two-path blend is the canonical published architecture, not an idiosyncrasy.** Combining a structural/causal forecast with a time-series extrapolation baseline is exactly the setting [Bates & Granger (1969)](https://rdrr.io/cran/GeomComb/man/comb_BG.html) formalized, and [Clemen's (1989) review](https://ideas.repec.org/a/eee/intfor/v24y2008i1p163-169.html) found "virtually unanimous" evidence that combining forecasts improves accuracy, with the largest gains from combining *structurally different* methods. NBA-specific practice matches: [DARKO](https://www.nbastuffer.com/analytics101/darko-daily-plus-minus/) blends an exponential-decay component with a Kalman component (weights varying by stat), and the standard DFS approach is per-minute rates × projected minutes with structural adjustments layered on ([RotoGrinders methodology](https://rotogrinders.com/fantasy/lessons/nba-player-projections)).
+
+2. **The Bates–Granger optimal weight is w\* = (σ²_b − σ_ab)/(σ²_a + σ²_b − 2σ_ab), but the loss surface around it is extremely flat when errors are highly correlated.** Analytically, with roughly equal path error SDs and correlation ρ, combined error variance is σ²(w) = σ²[1 − 2w(1−w)(1−ρ)]. The penalty for using w instead of the 0.5 optimum is **0.08(1−ρ)/[1−0.5(1−ρ)]** in variance at the extreme of w ∈ {0.3, 0.7}. At ρ = 0.7 that is a **2.8% variance penalty ≈ 1.4% RMSE/MAE penalty at the worst edge of the 0.3–0.7 window**, and only **~0.35% RMSE at w = 0.4 vs 0.5**. At ρ = 0.8 the figures halve again. This is why the observed grid-search MAE curves for PTS and FG3M are flat — it is the mathematically expected shape, not a calibration artifact.
+
+3. **Provenance of REB=0.45/AST=0.40 therefore does not matter.** Whether heuristic or calibrated, any value in 0.3–0.7 is within ~1% MAE of optimal given the shared-minutes error correlation; 0.40–0.45 are within ~0.5%. The literature explicitly warns against estimating these weights precisely: [Smith & Wallis (2009)](https://onlinelibrary.wiley.com/doi/abs/10.1111/j.1468-0084.2008.00541.x) show finite-sample estimation error in combining weights typically exceeds the gain from optimal weighting — the "forecast combination puzzle" ([Wang, Hyndman et al., 50-year review](https://arxiv.org/pdf/2205.04216)). [Elliott (2011)](https://econweb.ucsd.edu/~grelliott/AveragingOptimal.pdf) bounds the expected gains from optimal over equal weights and shows they are "often too small to balance estimation error," with the bound shrinking as error correlation rises.
+
+4. **The alpha family (0.40–0.65) is effectively equal weighting, and the literature says that is the right place to be.** Estimated Bates–Granger weights "do not appear to work well in practice" across decades of studies; simple combinations that ignore error correlations "often dominate more refined combination schemes" ([Timmermann 2006, Handbook of Economic Forecasting ch. 4](https://ideas.repec.org/h/eee/ecofch/1-04.html)). Clustering near 0.5 with mild stat-level tilts is precisely the robust configuration the puzzle literature recommends.
+
+5. **Forcing all four to exactly 0.5 would be churn, not improvement.** FG3M's measured flat region is 0.55–0.70; snapping it to 0.50 moves it marginally *outside* its own calibrated plateau for zero expected gain. The puzzle literature's prescription is "don't chase precision," not "all weights must equal 0.5." Annual refits would re-estimate parameters whose sampling noise exceeds their signal on n in the low thousands.
+
+**VERDICT:**
+
+| Item | Value | Verdict | Rationale |
+|---|---|---|---|
+| PTS_BLEND_ALPHA | 0.50 | **LOCKED** | Grid-calibrated, flat curve; equal weight is the literature-robust point (Smith & Wallis 2009; Elliott 2011). |
+| REB_ALPHA | 0.45 | **LOCKED** | Provenance immaterial: ≤~0.5% MAE from optimum anywhere in 0.4–0.6 under ρ≈0.7. Do not spend a grid search on it. |
+| AST_ALPHA | 0.40 | **LOCKED** | Same flat-surface argument; mild baseline tilt is harmless and within the plateau. |
+| FG3M_BLEND_ALPHA | 0.65 | **LOCKED** | Freshly grid-calibrated (2026-06-05), flat 0.55–0.70. Do NOT snap to 0.50 — that exits its measured plateau. |
+| Two-path blend architecture | — | **LOCKED** | Canonical Bates–Granger/Clemen design; matches DARKO and industry NBA practice. |
+| Offseason alpha refits | — | **NOT RECOMMENDED** (no PERIODIC_RECAL) | Flat curves + combination puzzle: refit cost > expected gain. Calibration effort is better spent on the paths themselves (minutes model, sigma calibration), where errors actually live. |
+
+**Condition to Revisit:** (1) **Structural change to either path** — if the decomposed path for a stat is redesigned or the EWMA baseline's decay changes, the error-variance ratio and correlation shift, so re-run one grid search for that stat only. (2) **Path decorrelation** — if a future path stops sharing projected minutes (e.g., a possession-based path with independent minutes), error correlation drops, the loss surface steepens, and weight estimation starts to pay; re-derive w\* then. (3) **Empirical trigger** — if any stat's blended MAE exceeds the better single path's MAE over a ≥1,500-row backtest window (combination should never lose to its best component by more than noise), investigate the blend. (4) **n ≥ ~10,000 paired residuals per stat** — only at that scale does estimated-weight sampling error shrink enough that a non-flat curve, if one exists, becomes detectable; even then expect ≤1% MAE upside.
+
+---
+
+## SECTION 7H — Position-Specific AST EWMA Spans
+
+**Question:** Are the position-specific AST EWMA spans `{PG: 10, SG: 8, SF: 6, PF: 6, C: 5}` in `compute_ast_rate` supported by published research — specifically the rationale that "PG assist rates are more stable and need longer history; C assist rates are more variable" (therefore shorter span)?
+
+**Code ground truth:** `_AST_EWMA_SPAN = {"PG": 10, "SG": 8, "SF": 6, "PF": 6, "C": 5}` on the position-conditional AST rate path (general `EWMA_SPAN_STAT` AST span = 13; path down-weighted by `AST_ALPHA=0.40`). API mapping never assigns PG, so deployed reality is `{all guards: 8, SF: 6, PF: 6, C: 5}`.
+
+**Findings:**
+
+1. **The span ordering inverts the universally published sampling principle: rarer events require LARGER samples to stabilize, not smaller.** Russell Carleton's stabilization research (the canonical reference, ported to the NBA by Blackport/Narsu/Medvedovsky) shows sample requirements scale inversely with event frequency and directly with noise in the generating process — e.g., K% stabilizes at 60 PA while rarer/noisier HBP rate needs 240 PA and BABIP needs 820 BIP ([FanGraphs Sample Size library](https://library.fangraphs.com/principles/sample-size/); [kmedved, NBA Stabilization Rates and the Padding Approach](https://kmedved.com/2020/08/06/nba-stabilization-rates-and-the-padding-approach/)). A center at ~1.5–2.5 AST/game observed through a span-5 EWMA has an effective sample of roughly 8–12 assist events (relative SE ≈ 30%); a PG at ~7–9 AST/game through span-10 has ~70–90 events (relative SE ≈ 11%). The code gives the noisiest estimate ~3× less smoothing — statistically backwards. No published source supporting shorter windows for low-frequency positions was found in any search.
+
+2. **The stated rationale is also self-contradicting.** "C assist rates are more variable" is precisely the argument for a LONGER span: higher sampling variance → more regression/smoothing needed. This is the same error pattern the STL/BLK span audit flagged (§7A), applied to the lowest-frequency assist position. Bayesian shrinkage treatments confirm the direction: the empirical-Bayes AST% prior exists exactly because small assist samples must be regressed harder, not trusted faster ([tothemean, Empirical Bayes-ketball](https://www.tothemean.com/2020/09/06/empirical-bayes.html)).
+
+3. **Optimized decay rates in published projection systems imply far LONGER memory than any of these spans — and are fit per stat, never hand-set per position.** DARKO weights each game by β^t with β fit per stat via differential-evolution optimization; "in practice, with a few exceptions, values of β tend to be 0.98 or higher" per day ([NBAstuffer, DARKO explained](https://www.nbastuffer.com/analytics101/darko-daily-plus-minus/)). At ~2.1 days/game, β=0.98/day ≈ 0.958/game ≈ EWMA span ~46 games — an order of magnitude longer than span 5–10. Even the engine's own generic AST span of 13 is short by this benchmark; the positional path makes it shorter still. No published projection system was found that conditions decay rate on position.
+
+4. **Published stability/reliability work treats assists as among the MOST stable, discriminative box-score stats — with no positional reliability split.** Franks, D'Amour, Cervone & Bornn find assists, rebounds, and blocks "highly discriminative and stable because of the relatively large between-player variance" ([Franks et al. 2016, arXiv:1609.09830](https://arxiv.org/abs/1609.09830)). Note the subtlety: high between-player stability of AST is mostly a role/position effect, which says nothing about within-player short-window estimation — the relevant quantity here — where event-count math (Finding 1) dominates. Additionally, assists carry scorekeeper subjectivity noise ([van Bommel & Bornn, Adjusting for Scorekeeper Bias in NBA Box Scores, arXiv:1602.08754](https://arxiv.org/pdf/1602.08754)) — measurement noise that argues for more smoothing across all positions, never less.
+
+5. **The PG-mapping caveat makes the deployed config worse, not better.** Since the NBA API maps G→SG, true point guards — the highest-volume, most reliably estimated playmakers — get span 8, barely half the generic AST span of 13. Deployed, the table is a flat "shorten everyone, shorten bigs most" — every position gets less memory than the generic path, with the biggest haircut on the noisiest estimates.
+
+6. **The static positional stereotype behind the ordering is empirically eroding.** Center playmaking has risen league-wide: average center AST% up 3.58 points since 2014-15 (centers now assist ~12.8% of team FGs), and center passes per 100 possessions rose 16.76% in 2014-18 alone ([Berkeley SAG, Point Centers](https://sportsanalytics.studentorg.berkeley.edu/articles/point-centers.html); [NBA.com on Jokić leading the league in assists](https://www.nba.com/news/nikola-jokic-first-player-lead-nba-assists-rebounds)). Modern high-usage hub centers have PG-like assist volumes; a hand-set span keyed to a 2010s positional stereotype misclassifies exactly the centers most likely to carry priced AST props.
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| Shorter spans for non-primary playmakers | **NEEDS_CHANGE** — no support found; ordering inverts the Carleton/Blackport/Medvedovsky sampling principle (rarer events → larger samples) | FanGraphs sample-size library; kmedved 2020; tothemean EB priors |
+| Empirical autocorrelation support for spans 5–10 | **NEEDS_CHANGE** — optimized per-stat decays (DARKO β≥0.98/day ≈ span ~45+ games) imply far longer memory; no published positional decay split exists | NBAstuffer DARKO; kmedved 2020 |
+| PG-never-assigned caveat | **Worsens the assessment** — deployed table is flat {guards 8, SF/PF 6, C 5}, all below the generic span 13; the only long-span cell is unreachable | Code ground truth + Franks et al. |
+| Position-conditioning vs uniform | **NEEDS_CHANGE (overfitting risk)** — spans hand-set, never fit; the stereotype is eroding (center AST% +3.58pp since 2014-15); if conditioned at all, the ordering should be inverted | Franks et al. 2016; Berkeley point-centers data |
+
+**Recommended fix:** Either (a) **delete `_AST_EWMA_SPAN` and use the generic AST span 13 uniformly** (simplest, removes an unfitted hand-set table), or (b) **invert and lengthen**: PG/SG ≈ 13, SF/PF ≈ 15, C ≈ 18–20, then validate by per-position AST MAE/bias backtest. Severity is moderated by `AST_ALPHA=0.40` (the decomposed path is down-weighted 60/40 against the baseline path) and by Bayesian priors downstream — a real but partially absorbed error, largest for low-minute bigs and modern playmaking centers. Any fitted replacement should be optimized (per-stat decay à la DARKO), not hand-ordered by position.
+
+**Condition to Revisit:**
+- Backtest trigger: run the 30-date RS backtest with uniform span=13 vs current table; adopt uniform if per-position AST MAE is flat or better for C/PF (expected: improvement concentrated in C).
+- Data trigger: if a future PG mapping lands, do NOT activate span 10 for PG without refitting — the whole table needs refitting, not just the PG cell.
+- Monitoring trigger: graded AST prop bias by player position — if C/PF AST picks show win-rate or projection-bias divergence vs guards at n≥30 per group, prioritize fix (b) with a fitted span grid.
+- Interaction check: any change to `_AST_EWMA_SPAN` should be evaluated jointly with `AST_ALPHA=0.40`, since lengthening spans reduces path variance and may justify raising alpha.
+
+---
+
+## SECTION 7I — EWMA_SPAN_SHOOTING and OT_MIN_CAP
+
+**Question:** Is a single span-10 EWMA appropriate for the four efficiency/rate inputs it governs (FG%, FT%, FG3A rate, USG%), given published per-stat stabilization points? And does published data independently confirm 7B's LOCKED verdict on OT_MIN_CAP=44.0?
+
+**Code ground truth:** `EWMA_SPAN_SHOOTING = 10` (α = 2/11 ≈ 0.182; ~87% of weight on last 10 games; half-life ≈ 3.5 games). Applies to FG%, FT%, FG3A rate, USG%. 3P% is exempt — it routes through the PAD_3P=242 career-padded stabilizer. `OT_MIN_CAP = 44.0` caps projected minute means.
+
+**Findings:**
+
+1. **The authoritative published per-stat numbers exist — Medvedovsky 2020 padding table** ([kmedved.com, "NBA Stabilization Rates and the Padding Approach"](https://kmedved.com/2020/08/06/nba-stabilization-rates-and-the-padding-approach/), fit by differential evolution on ~750k player-game rows, 2001–2020). Exact values relevant here:
+
+   | Metric | Padding | Denominator |
+   |---|---|---|
+   | minutes | 1.52 | games |
+   | **fg3_ar (3PA/FGA rate)** | **3.64** | FGA |
+   | **ft_pct** | **24.11** | FTA |
+   | **usg_pct** | **72.41** | possessions |
+   | **fg_pct (all FGA)** | **102.92** | FGA |
+   | fg2_pct | 127.33 | 2PA |
+   | fg3_pct | 242.61 | 3PA |
+   | pm_100 (+/-) | 1,007.21 | possessions |
+
+   The fg3_pct value 242.61 confirms the engine's PAD_3P=242 is the correct published number.
+
+2. **FT% needs far less smoothing than baseball-style intuition suggests — span-10 is fine.** Medvedovsky's empirical-Bayes padding for FT% is only **24.11 FTA** — the smallest of any shooting percentage — because padding reflects the noise-to-skill-spread ratio, and FT% has an enormous between-player skill spread (~50%–90%). Franks et al. (2016, [Meta-Analytics, arXiv:1609.09830](https://arxiv.org/pdf/1609.09830)) corroborate: FT% is "very stable over time." A span-10 window contains ~20–50 FTA for rotation players — at or above the 24-FTA padding scale. No action needed.
+
+3. **USG% is among the fastest-stabilizing stats in basketball — span 10 is more smoothing than needed, which is harmless.** Padding is **72.41 possessions ≈ roughly one game**. Nylon Calculus's stabilization work ([team-stats noise analysis](https://fansided.com/2017/12/21/nylon-calculus-team-stats-noise-stabilization-thunder/)) finds stylistic/volume metrics trustworthy within a handful of games. A span-10 EWMA carries ~700 effective possessions → observed-data weight ~0.91 vs the padding prior. Only cost is a 3.5-game half-life lag after genuine role changes — acceptable, partially covered by the injury-redistribution layer.
+
+4. **FG3A rate stabilizes near-instantly — span 10 is reasonable.** Padding is **3.64 FGA**, the second-fastest stat in the table after minutes, because attempt share is a role/shot-diet choice, not a noisy conversion outcome. The design constraint is responsiveness to rotation/scheme changes — span 10's 3.5-game half-life tracks those within a week.
+
+5. **FG% is the one input where span-10 EWMA is roughly half noise — the material finding.** A 10-effective-game window holds ~80–150 FGA; Medvedovsky's FG% padding is **102.92 FGA** (127.33 for 2P% alone). At 100 observed FGA against a 103-FGA prior, the data weight in a proper shrinkage estimate is ~0.49 — an *unshrunk* EWMA FG% over-weights recent conversion luck by roughly 2× relative to the empirical-Bayes optimum. Published literature is unanimous that raw short-window FG% is noise-dominated ([Daly-Grafstein & Bornn, Rao-Blackwellizing Field Goal Percentage, arXiv:1808.04871](https://arxiv.org/pdf/1808.04871)). Two mitigations: (a) the EWMA retains decaying pre-window weight, anchoring established players near their own season mean; (b) the matchup/USG/minutes structure carries most of the PTS decomp signal. Still, the literature-aligned upgrade is exactly the treatment 3P% already received: a career-padded stabilizer with **PAD_FG≈103 FGA** (or PAD_2P≈127 if the path separates twos), blended like FG3M.
+
+6. **Single shared span: defensible simplification.** The four stats' stabilization points span two orders of magnitude (3.6 → 103 FGA-equivalent), but the asymmetry is benign in one direction: over-smoothing fast stats costs only responsiveness lag, while under-smoothing slow stats injects noise. The architecture already handles this correctly in principle — the slow stat that matters most (3P%, padding 242) got a padding stabilizer rather than a per-stat span. The remaining gap is FG% (Finding 5). Per-stat EWMA spans are NOT the right fix; padding is, because padding adapts to each player's attempt volume while a span is volume-blind.
+
+7. **OT_MIN_CAP=44.0 — independently confirmed.** (a) OT frequency ~5.9% of RS games, trending *down* since 2000 ([Binomial Basketball](https://www.binomialbasketball.com/p/probability-of-nba-overtime-over)) — at 5 min/OT this is ~+0.3 expected minutes, matching 7B's figure exactly. (b) Headroom: the 2024-25 league minutes leader averaged 37.6–37.7 MPG ([NBA.com](https://www.nba.com/news/nba-fantasy-minnutes-per-game-leaders-from-2024-25)) — a 44.0 cap on projected *means* sits ~6.3 minutes above the most extreme real workload and can only bind on data errors. 7B's LOCKED verdict stands.
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| EWMA span=10 for USG% | **LOCKED** | Stabilizes at ~72 poss ≈ 1 game; span 10 is conservative smoothing, no harm |
+| EWMA span=10 for FG3A rate | **LOCKED** | Padding 3.64 FGA — near-instant; 3.5-game half-life tracks role changes adequately |
+| EWMA span=10 for FT% | **LOCKED** | Published padding is 24.11 FTA, not ~250 — within the span-10 window's volume; minor decomp input regardless |
+| EWMA span=10 for FG% | **NEEDS_CHANGE (P3, test-gated)** | Padding 102.92 FGA ≈ the window's entire effective volume → unshrunk EWMA is ~50% noise vs the EB optimum; apply the PAD_3P pattern: PAD_FG≈103 FGA (PAD_2P≈127) career-padded blend. Deploy only if backtest PTS MAE improves — the 3P% precedent showed shared-path bias may dominate, in which case keep as-is |
+| Single shared span (4 stats) | **LOCKED** (conditional) | Heterogeneity correctly resolved by padding slow stats, not per-stat spans; condition = FG% padding item above |
+| OT_MIN_CAP=44.0 | **LOCKED** (confirms 7B) | OT ~5.9% of games and declining; +0.3 min EV; 6+ min above the league MPG leader (37.6) |
+
+**Condition to Revisit:**
+- **FG% padding test:** at the July offseason refit, run the FG3M-style grid for a PAD_FG=103 (or PAD_2P=127) career-padded blend on the FG%/PTS decomp path; deploy only on MAE/bias improvement over span-10 EWMA alone. If, as with 3P%, the residual bias proves shared across blend components, mark FG% LOCKED and close.
+- **FG3A-rate responsiveness:** if post-trade/rotation-change FG3M projection lag is observed (systematic mis-projection in a player's first ~4 games after a confirmed role change), consider a shorter span or a role-change reset for FG3A rate only.
+- **OT_MIN_CAP:** revisit only if the NBA changes OT format, or if any projected minute mean ever exceeds ~42 (would indicate an upstream minutes-model error, not a cap problem).
