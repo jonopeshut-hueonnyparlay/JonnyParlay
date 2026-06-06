@@ -40,23 +40,23 @@ older planning docs stated otherwise):
 |---|---|---|
 | 1A | NB distribution family | CONFIRMED_WITH_CAVEAT |
 | 1B | Poisson validity | CONFIRMED_WITH_CAVEAT |
-| 1C | Normal for continuous props | **NEEDS_CHANGE** (OUTS, PC, WNBA PTS sigmas) |
+| 1C | Normal for continuous props | **NEEDS_CHANGE → ✅ RESOLVED** (416d5ac: starts-only OUTS/PC, WNBA priced-population sigmas) |
 | 1D | Truncation formula | CONFIRMED_WITH_CAVEAT (math exact) |
 | 1E | POISSON_CUTOFF=8.5 | CONFIRMED_WITH_CAVEAT (dead branch, NFL foot-gun) |
 | 1F | NB PMF/CDF/estimator | CONFIRMED (verified to machine precision) |
 | 2 | Combo props (Normal sum) | CONFIRMED_WITH_CAVEAT |
 | 3 | Platt scaling | CONFIRMED_WITH_CAVEAT (logit migration confirmed; script missing) |
-| 4 | Kelly & sizing | CONFIRMED_WITH_CAVEAT (**NEEDS_CHANGE**: multiplier stack) |
+| 4 | Kelly & sizing | CONFIRMED_WITH_CAVEAT (multiplier stack **PARTIALLY RESOLVED**: KELLY relabel 530fc6a; tier mults retired via BM shrinkage c4380ca; per-market consolidation DATA_GATED) |
 | 5 | Vig removal & edge | CONFIRMED_WITH_CAVEAT |
-| 6 | Game line distributions | **NEEDS_CHANGE** (NBA σ, matchup formula) |
+| 6 | Game line distributions | **NEEDS_CHANGE → ✅ RESOLVED** (2d57a14: NBA GAME_SIGMA calibrated + relative-scaler matchup formula) |
 | 7 | Push handling | CONFIRMED_WITH_CAVEAT (load-bearing & correct) |
 | 8 | G14 clearance | CONFIRMED_WITH_CAVEAT |
-| 9 | Correlation penalties | **NEEDS_CHANGE** (retire R13 only) |
+| 9 | Correlation penalties | **NEEDS_CHANGE → ✅ RESOLVED** (530fc6a: R13 retired) |
 | 10 | SGP joint probability | CONFIRMED_WITH_CAVEAT |
 | 11 | PICK_SCORE formula | CONFIRMED_WITH_CAVEAT (e_n cap recommended) |
-| 12 | EWMA / FG3M / rest | **NEEDS_CHANGE** (3P% padding) |
-| 13 | KILLSHOT thresholds | **NEEDS_CHANGE** (dead combos, latent −EV window) |
-| 14 | WNBA gates | **NEEDS_CHANGE** (dead-code floor, dampener mechanism) |
+| 12 | EWMA / FG3M / rest | **NEEDS_CHANGE → ✅ RESOLVED** (EdgeModel 2026-06-05: PAD_3P 750→242 career-to-date; alpha re-grid → 0.65) |
+| 13 | KILLSHOT thresholds | **NEEDS_CHANGE → ✅ RESOLVED** (530fc6a: KILLSHOT v3 — odds-dependent wp floor, T1-strict dropped, manual path hardened, load invariant) |
+| 14 | WNBA gates | **NEEDS_CHANGE → ✅ RESOLVED** (530fc6a: EV-per-unit floor, sigma-inflation dampener, games-played gate) |
 | 15 | G9/G9B edge floors | CONFIRMED_WITH_CAVEAT (floors are lower-bound defensible) |
 | 16 | TB convolution | CONFIRMED_WITH_CAVEAT (verified empirically) |
 
@@ -82,7 +82,7 @@ older planning docs stated otherwise):
 | TB NB fallback r=1.3 | NB_R["TB"] | CONFIRMED (beats μ-dependent r empirically) | §16 RMSE comparison | Same as above |
 | corr_m 1.00/0.85/0.70 + exp_m 0.70 | size_picks_vake | CONFIRMED (variance insurance; implied ρ≈0.18-0.21 sensible) | Whitrow 2007; exact joint-Kelly solve | Effective Kelly fraction rises above ~¼ |
 | POISSON_CUTOFF=8.5 | run_picks.py:376 | CONFIRMED_WITH_CAVEAT (dead branch today) | λ≥10 Normal-approx convention | NFL REC go-live: drop cutoff or guard fallback σ |
-| Sizing floor/cap [0.50u, 1.25u] | size_picks_vake | CONFIRMED as product decision (floored bets stay below full Kelly while edge ≥3%) | Thorp 2006; §4 growth math | Market mults <0.30 added (floor neutralizes them) |
+| Sizing floor/cap [0.25u, 1.25u] (floor lowered from 0.50u — 76fbb36, Plan 9 §9K) | size_picks_vake | CONFIRMED as product decision (floored bets stay below full Kelly while edge ≥3%) | Thorp 2006; §4 growth math | Market mults <0.30 added (floor neutralizes them) |
 
 ---
 
@@ -100,7 +100,7 @@ older planning docs stated otherwise):
 | NHL GAME_SIGMA | 2.311/2.614/1.744/2.614 | league score SDs (excellent — reproduce within 0.05) | Offseason | 2026-06-05 |
 | F5_SIGMA / F5_SCALAR | 2.65/2.70/2.10 / 0.540 | market-calibrated (confirmed mid-band of published 0.529–0.556) | Offseason | 2026-05-29 |
 | G14 z=0.10 + NB exemption layout | run_picks.py:1252-1279 | re-derive G13↔G14 equivalence at every Platt change | At H3 + offseason | — (never fit) |
-| PICK_SCORE weights/tier mults | 40/60; T1 0.90 etc. | tier WR re-eval (T1 gate n=30); add e_n cap | At tier gates | 2026-05-23 |
+| PICK_SCORE weights | 40/60 (tier mults RETIRED c4380ca — BM shrinkage carries tier calibration; e_n cap shipped 530fc6a) | family ROI bootstrap + BM weight refit at n≥150/family | At family gates | 2026-06-06 |
 | Days-rest model (EdgeModel) | 0.10 / e-fold 1.5 / role scalars | regress minutes residuals on days_rest; fix HALF_LIFE naming | Offseason | ~2026-05-01 (literature-set) |
 | REGULAR_SEASON_STAT_SCALAR | pts 1.0019 … blk 1.0608 | multiplicative ratio (correct form); add Mincer-Zarnowitz a=0,b=1 test + decile bias | Per refit | 2026-05-10 |
 | FG3M_BLEND_ALPHA | 0.60 | grid search — re-run ONLY after PAD_3P fix | After §12 fix | 2026-06-05 |
@@ -112,7 +112,7 @@ older planning docs stated otherwise):
 
 | Assumption | Current Value | Gate | Notes |
 |---|---|---|---|
-| Platt A/B (raw-space, frozen) | 1.4988 / −0.8102 | H3: 100 over_p_raw rows | §3: at n=100 fit intercept-only (A=1 logit-space); free 2-param fit at n≥300; **calibrate_platt.py must be written first — it does not exist** |
+| Platt A/B (raw-space, frozen) | 1.4988 / −0.8102 | H3: 100 over_p_raw rows | §3: at n=100 fit intercept-only (A=1 logit-space); free 2-param fit at n≥300; calibrate_platt.py restored to engine/ (416d5ac) with `--intercept-only` |
 | Per-stat Platt | none | ≥200 graded per stat | Partial pooling (global slope, per-stat intercept) preferred |
 | Combo Platt | none applied | 100 scored combos (11/100) | §2: also fix NB-consistent σs + skew correction; RA failure was μ-bias not shape |
 | SGP thresholds (0.10/0.55/0.035) | heuristic | 100 scored SGP slips (52/100) | Order of magnitude confirmed vs 20-30% SGP hold; raise sizing-gate MC n or go deterministic |
@@ -127,21 +127,21 @@ older planning docs stated otherwise):
 ---
 
 ## NEEDS_CHANGE
-*Research found an error. No code was changed in this session — each item below requires explicit sign-off. Exact lines/values are in the named section.*
+*Research found an error. Status pass 2026-06-06: 10 of 11 items RESOLVED (commits 2d57a14, 416d5ac, 530fc6a — Plan 6 fix session 2026-06-05; c4380ca — Plan 9 tier restructure; PAD_3P in EdgeModel). #9 partially resolved — per-market mult consolidation remains DATA_GATED. Exact lines/values in the named sections.*
 
 | # | Issue | Current | Correct | Priority | Evidence (§) |
 |---|---|---|---|---|---|
-| 1 | `get_game_sigma()` applies independence sum to ALL markets — breaks NBA spread/ML (~45% too wide → ~5-7pp ML error), degrades NHL | `sqrt(σh²+σa²)` for total/spread/ml (run_picks.py:532-534) | Relative-scaler form: `σ_league(market) × sqrt((σh²+σa²)/(2σ̄²))` | **P0 — live game-line picks affected daily** | §6; coordinator-verified ρ_NBA=+0.227, ρ_NHL=−0.102, ρ_MLB=+0.013 |
-| 2 | NBA GAME_SIGMA never calibrated; total=12.0 is ~40% too narrow (WNBA internal contradiction: lower-scoring league with higher σ) | total/spread/team/ml = 12/12/9/12 | total≈18.5, spread/ml≈12.5, team≈11.0 — calibrate from `games` table like NHL | **P0** (same fix pass as #1) | §6; coordinator-verified total SD=20.2 (n=3,922) |
-| 3 | SIGMA["OUTS"]/["PC"] calibrated on ALL pitcher appearances incl. relievers; market prices starters only | mult 0.311 / 0.375 | starts-only: OUTS ≈0.27 interim (within-CV 0.228), PC ≈0.18-0.20 (within-CV 0.142); MAE-validate | **P1 — OUTS is a live market (~5pp mispricing at typical lines)** | §1C; coordinator-verified starts/relief CV split |
-| 4 | SIGMA_WNBA["PTS"]=0.618 is a sampling-frame artifact (min≥8 sample median 7.2 PPG; NBA same-frame gives 0.615) | mult 0.618 | ≈0.46-0.50 from priced population (min≥20 or μ-stratified); recheck AST 0.779/REB 0.633 same pass | P1 — shadow-only today, gates go-live data quality | §1C |
-| 5 | EdgeModel 3P% pad: 750 attempts against ≤30-game window — over-shrinks everyone; quantitatively explains −0.26 FG3M bias | PAD_3P=750 on window (nba_projector.py:904-957) | pad ≈242-300 vs career-to-date 3PA (or ~100-150 if window kept); then re-run alpha grid | P1 (EdgeModel repo) | §12; coordinator-verified docstring; Medvedovsky 2020 optimal pad=242 |
-| 6 | R13 pitcher penalty double-counts: G11 guarantees the 2 props are different pitchers (ρ≈0.05-0.20, not 0.70); implied ρ=0.52-0.68 | corr_m ×0.70 stacked (run_picks.py:1727-1731) | Retire R13 | P2 — small EV leak (HA suspended) | §9; coordinator-verified G11 at :3592/:6284 |
-| 7 | KILLSHOT gate internally contradictory: PTS∧T1 unsatisfiable, SOG suspended → only NBA AST can fire; latent −EV window at odds<−186; manual path bypasses wp/odds gates; 4u bump unreachable under Platt cap | run_picks.py:206-220, 5935-5936 | Drop T1-strict (floors+score select), odds-dependent wp floor (≥p_be+0.03) or ODDS_MIN=−185 incl. manual path, startup allowlist invariant, log disqualifications | P2 — product integrity (0 KILLSHOTs in 5+ weeks) | §13; coordinator-verified PTS∈T2 vs T1-strict |
-| 8 | WNBA_EDGE_FLOOR=0.035 is dead code (G9=0.05 always dominates); comment's vig rationale inverted (correct equivalent floor ≈6.2%); early-season dampener affects ranking only, not sizing; opening gate keyed to days not games | run_picks.py:460-466, 1196-1217 | EV-per-unit floor; dampener → σ inflation; gate → ≥2 games played per team | P2 — shadow-only today | §14; coordinator-verified G9 dominance |
-| 9 | KELLY_FRACTION=6.0 labeled "1/6 Kelly" but is ~1/17 Kelly at 100u bankroll; market/var/tier mults triple-count stat-level info; mults <0.3 neutralized by 0.50u floor | run_picks.py:593-617 | Rename/document constant; consolidate to single empirical-Bayes per-market mult at ~50 graded per market; gate (don't multiply) for distrust <0.3 | P3 — system is conservative-coherent as-is | §4 |
-| 10 | `calibrate_platt.py` referenced by H3 plan + CLAUDE.md is missing from JonnyParlay — deleted in commit 5b8ee6d (2026-05-29 EdgeModel extraction) although it calibrates pick_log win probs, not projections; it now lives at `EdgeModel\engine\calibrate_platt.py` where it cannot find pick_log.csv via the documented workflow | mislocated file | Move it back to `engine/calibrate_platt.py` (git history intact); apply §3's slope-prior amendment when H3 fires | P1 — H3 gate is at 76/100 and approaching | §3; coordinator traced deletion via git log |
-| 11 | PICK_SCORE e_n uncapped — edge 20% scores 133; optimizer's-curse amplifier at top of card | run_picks.py:1053 | `e_n = min(e_n, 100)` or shrink above 15% | P3 | §11 |
+| 1 | `get_game_sigma()` applies independence sum to ALL markets — breaks NBA spread/ML (~45% too wide → ~5-7pp ML error), degrades NHL | `sqrt(σh²+σa²)` for total/spread/ml (run_picks.py:532-534) | Relative-scaler form: `σ_league(market) × sqrt((σh²+σa²)/(2σ̄²))` | **P0 → ✅ RESOLVED (2d57a14, 2026-06-05)** | §6; coordinator-verified ρ_NBA=+0.227, ρ_NHL=−0.102, ρ_MLB=+0.013 |
+| 2 | NBA GAME_SIGMA never calibrated; total=12.0 is ~40% too narrow (WNBA internal contradiction: lower-scoring league with higher σ) | total/spread/team/ml = 12/12/9/12 | total≈18.5, spread/ml≈12.5, team≈11.0 — calibrate from `games` table like NHL | **P0 → ✅ RESOLVED (2d57a14, 2026-06-05)** — deployed 18.5/12.5/11.0/12.5 residual-basis | §6; coordinator-verified total SD=20.2 (n=3,922) |
+| 3 | SIGMA["OUTS"]/["PC"] calibrated on ALL pitcher appearances incl. relievers; market prices starters only | mult 0.311 / 0.375 | starts-only: OUTS ≈0.27 interim (within-CV 0.228), PC ≈0.18-0.20 (within-CV 0.142); MAE-validate | **P1 → ✅ RESOLVED (416d5ac, 2026-06-05)** — deployed OUTS 0.27/PC 0.19 starts-only | §1C; coordinator-verified starts/relief CV split |
+| 4 | SIGMA_WNBA["PTS"]=0.618 is a sampling-frame artifact (min≥8 sample median 7.2 PPG; NBA same-frame gives 0.615) | mult 0.618 | ≈0.46-0.50 from priced population (min≥20 or μ-stratified); recheck AST 0.779/REB 0.633 same pass | P1 → ✅ RESOLVED (416d5ac, 2026-06-05) — deployed PTS 0.48/AST 0.65/REB 0.54/3PM 0.48 (min≥20, 153 players) | §1C |
+| 5 | EdgeModel 3P% pad: 750 attempts against ≤30-game window — over-shrinks everyone; quantitatively explains −0.26 FG3M bias | PAD_3P=750 on window (nba_projector.py:904-957) | pad ≈242-300 vs career-to-date 3PA (or ~100-150 if window kept); then re-run alpha grid | P1 → ✅ RESOLVED (EdgeModel, 2026-06-05) — PAD_3P 750/window → 242/career-to-date; alpha re-grid → 0.65 (n=1936) | §12; coordinator-verified docstring; Medvedovsky 2020 optimal pad=242 |
+| 6 | R13 pitcher penalty double-counts: G11 guarantees the 2 props are different pitchers (ρ≈0.05-0.20, not 0.70); implied ρ=0.52-0.68 | corr_m ×0.70 stacked (run_picks.py:1727-1731) | Retire R13 | P2 → ✅ RESOLVED (530fc6a, 2026-06-05) — R13 retired | §9; coordinator-verified G11 at :3592/:6284 |
+| 7 | KILLSHOT gate internally contradictory: PTS∧T1 unsatisfiable, SOG suspended → only NBA AST can fire; latent −EV window at odds<−186; manual path bypasses wp/odds gates; 4u bump unreachable under Platt cap | run_picks.py:206-220, 5935-5936 | Drop T1-strict (floors+score select), odds-dependent wp floor (≥p_be+0.03) or ODDS_MIN=−185 incl. manual path, startup allowlist invariant, log disqualifications | P2 → ✅ RESOLVED (530fc6a, 2026-06-05) — KILLSHOT v3 shipped (all four fixes) | §13; coordinator-verified PTS∈T2 vs T1-strict |
+| 8 | WNBA_EDGE_FLOOR=0.035 is dead code (G9=0.05 always dominates); comment's vig rationale inverted (correct equivalent floor ≈6.2%); early-season dampener affects ranking only, not sizing; opening gate keyed to days not games | run_picks.py:460-466, 1196-1217 | EV-per-unit floor; dampener → σ inflation; gate → ≥2 games played per team | P2 → ✅ RESOLVED (530fc6a, 2026-06-05) — all three shipped (WNBA_EV_FLOOR=0.0955) | §14; coordinator-verified G9 dominance |
+| 9 | KELLY_FRACTION=6.0 labeled "1/6 Kelly" but is ~1/17 Kelly at 100u bankroll; market/var/tier mults triple-count stat-level info; mults <0.3 neutralized by 0.50u floor | run_picks.py:593-617 | Rename/document constant; consolidate to single empirical-Bayes per-market mult at ~50 graded per market; gate (don't multiply) for distrust <0.3 | P3 → PARTIALLY RESOLVED — relabel shipped (530fc6a); tier mults retired via BM shrinkage (c4380ca, 2026-06-06); per-market consolidation remains DATA_GATED at n≥50/market | §4 |
+| 10 | `calibrate_platt.py` referenced by H3 plan + CLAUDE.md is missing from JonnyParlay — deleted in commit 5b8ee6d (2026-05-29 EdgeModel extraction) although it calibrates pick_log win probs, not projections; it now lives at `EdgeModel\engine\calibrate_platt.py` where it cannot find pick_log.csv via the documented workflow | mislocated file | Move it back to `engine/calibrate_platt.py` (git history intact); apply §3's slope-prior amendment when H3 fires | P1 → ✅ RESOLVED (416d5ac, 2026-06-05) — restored to engine/ with `--intercept-only` support | §3; coordinator traced deletion via git log |
+| 11 | PICK_SCORE e_n uncapped — edge 20% scores 133; optimizer's-curse amplifier at top of card | run_picks.py:1053 | `e_n = min(e_n, 100)` or shrink above 15% | P3 → ✅ RESOLVED (530fc6a, 2026-06-05) — e_n capped at 100 | §11 |
 
 ---
 

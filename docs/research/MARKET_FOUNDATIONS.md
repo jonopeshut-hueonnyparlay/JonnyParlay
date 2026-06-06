@@ -15,20 +15,20 @@
 
 ## Summary Verdict Table
 
-**Counts: 24 LOCKED · 9 PERIODIC_RECAL · 13 DATA_GATED · 12 NEEDS_CHANGE** (NEEDS_CHANGE detail in the table below and per-section verdict tables; none shipped in this session — all await explicit decision).
+**Counts: 24 LOCKED · 9 PERIODIC_RECAL · 13 DATA_GATED · 12 NEEDS_CHANGE → ALL 12 RESOLVED** (Plan 9 fixes shipped 2026-06-06 in commits 76fbb36 — ERA/FIP, stake floor, R9/R12/longshot reclassify, SB26-131 note; 3aad87f — NRFI gamma, SGP joint-EV floor, longshot +ρ ranking; c4380ca — tier restructure, BM shrinkage, R8 retired. Residual DATA_GATED follow-ups noted per row).
 
 | § | Item | Current | Verdict | Action |
 |---|------|---------|---------|--------|
 | 9A | NRFI game-level baseline (53%) | λ=0.32/team | LOCKED | Matches published 52–55% |
-| 9A | **NRFI Poisson elasticity** | exp(−0.32·m) | **NEEDS_CHANGE** | NB overdispersion ⇒ elasticity ~50–60% too steep (±2pp at extremes). NB zero-prob or m^γ (γ≈0.6–0.7); validate on in-house 8,095 games first |
-| 9A | **ERA/FIP blend** | 0.40/0.60 | **NEEDS_CHANGE** | r² ratios (ERA 0.019 / FIP 0.038 / xFIP 0.061) ⇒ ≤25% ERA / ≥75% FIP, prefer xFIP/FIP− (also fixes pitcher-side park bias). July refit |
+| 9A | **NRFI Poisson elasticity** | exp(−0.32·m^0.65) | **✅ RESOLVED** (3aad87f, 2026-06-06) | NRFI_GAMMA=0.65 m^γ dampener shipped (literature default). γ DATA_GATED — recalibrate when first-inning-level data exists |
+| 9A | **ERA/FIP blend** | 0.25/0.75 | **✅ RESOLVED** (76fbb36, 2026-06-06) | 25/75 shipped (_LEAGUE_AVG_BLENDED_RATE=0.4808). xFIP/FIP− upgrade deferred to July refit (needs HR/FB data not in CSV) |
 | 9A | Lineup slots 1–3 λ adjustment | absent | DATA_GATED | Backtest top-3 wOBA vs team-R/G in-house before adding |
 | 9A | Park omission · λ level · 4.45 R/G | — | LOCKED · PERIODIC_RECAL ×2 | Annual April refit from 1st-inning zero rate |
 | 9A | λ home/away independence + symmetry | independent, same base | DATA_GATED | Measure φ + bottom-1st premium (0.6 vs 0.5 runs) in-house |
 | 9I | P(YRFI)=1−P(NRFI) · min_edge 0.08 · R5 dedup | — | LOCKED ×3 | FLB-supported differential; revisit after elasticity fix |
 | 9B | X1 hard block + ER ρ band | −0.65/−0.75 | LOCKED | Optimal at engine edge scale (breakeven needs 11–20%/leg edges) |
 | 9B | X1 HA ρ band | −0.65/−0.75 | PERIODIC_RECAL | Overstated; ≈−0.45/−0.60. Re-document + in-house fit at July refit; no behavior change |
-| 9B | Positive-ρ pairs in longshot pool | independent | NEEDS_CHANGE (minor) + DATA_GATED ×3 | Optional +ρ for ranking honesty; in-house corr fits; check NBA over+TOTAL-under co-occurrence |
+| 9B | Positive-ρ pairs in longshot pool | +ρ ranking boost | ✅ RESOLVED (3aad87f) + DATA_GATED ×3 | OUTS-under + opp-TT-over +ρ ranking boost shipped (ranking-only, never blocks). In-house corr fits + NBA over+TOTAL-under co-occurrence check remain DATA_GATED |
 | 9C | CLV formula (devig close − raw entry) | post-reform | LOCKED | **Suspected defect inverted — formula is published best practice.** Never pool pre/post-reform rows |
 | 9C | Capture window · devig method | T−45→T+3, mult | LOCKED ×2 | Harden: discard post-commence snapshots (live-odds contamination) |
 | 9C | CLV go-live gate | n=100 | DATA_GATED | Add one-sided t-test (t≥1.7) on post-reform rows; +0.4pp avg ⇒ ~150–200 rows |
@@ -38,23 +38,23 @@
 | 9D | Legality (CO, public news) | — | LOCKED | Legal; known commercial risks: limiting + Rule 6.10 voids. **Ops note: SB26-131 deposit rules effective 2026-08-12** |
 | 9E | Daily Lay structure · thresholds · sizing | 0.50/+100/0.25–0.75u | LOCKED ×4 | +7–10% EV by construction at boundary; 0.58 floor = anti-barbell guard (doc fix); align "3-leg" docs to 2–4 |
 | 9E | Daily Lay validation | 0 graded | DATA_GATED | n=20 leg-level calibration gate (spec in §9E Q5) |
-| 9G | **Longshot leg ranking** | win_prob desc | **NEEDS_CHANGE (low priority)** | EV-factor ranking with WP≥0.60 floor, OR re-document as hit-frequency product — pick one |
+| 9G | **Longshot leg ranking** | win_prob desc, documented | **✅ RESOLVED** (76fbb36, 2026-06-06) | Option (b) chosen: re-documented as intentional hit-frequency product (engagement value, not EV ranking) |
 | 9G | Flat 0.25u · 6/5 legs | — | LOCKED ×2 | Don't raise sizing without data (spans 8–71% of full Kelly) |
 | 9G | Same-game independence | max 2/game + kills | PERIODIC_RECAL | Opportunistic SGP-ρ reuse in build_safest6_parlay() |
-| 9H | **SGP existence gate** | per-leg floors only | **NEEDS_CHANGE** | Add joint-EV floor: copula margin > +0.02–0.03 for ANY slip (4-leg path can currently construct −EV slips) |
+| 9H | **SGP existence gate** | joint-EV floor live | **✅ RESOLVED** (3aad87f, 2026-06-06) | SGP_JOINT_EV_MARGIN=0.025 in BOTH builders (NBA + MLB). ε re-tune DATA_GATED at n=100 scored slips |
 | 9H | Odds window +200–+450 | hard window | PERIODIC_RECAL | 3-leg consistent; 4-leg safe only with joint-EV floor |
 | 9H | Premium gate ≥0.10 | premium sizing | LOCKED | ≈+45% ROI condition vs 16–25%+ SGP hold |
 | 9H | MIN_LEG_WIN_PROB_OUTS=0.62 | tuned to old σ | DATA_GATED | Monitor at n≥40 graded OUTS legs; σ-equivalent floor ≈0.64 if retune fires |
-| 9F | **T1 framing + floors** | "conviction" tiers, 0.03 floor | **NEEDS_CHANGE** | Reframe as stat-routing buckets; floors monotone in calibration quality; restructure now (population already changed) |
-| 9F | **T1 0.90× mult + n=30 checkpoint** | stake-only fix | **NEEDS_CHANGE** | Replace with per-family probability shrinkage (Baker–McHale); retire mult + checkpoint; merge with Kelly-stack consolidation item |
+| 9F | **T1 framing + floors** | STAT_FAMILY_TIER buckets | **✅ RESOLVED** (c4380ca, 2026-06-06) | Tiers reframed as stat-family calibration buckets; floors monotone: T2=0.05 < T1B/T3=0.06 < T1=0.07. R8 reserved slots retired (T1 WR 46.6% < 50% trigger) |
+| 9F | **T1 0.90× mult + n=30 checkpoint** | BM shrinkage live | **✅ RESOLVED** (c4380ca, 2026-06-06) | Baker–McHale shrinkage shipped (per-tier w={.85,.80,.75,.70}, post-Platt, ALL props); PICK_SCORE_TIER_MULT + VAKE_MULT["tier"] + n=30 checkpoint retired. Per-family weight refit DATA_GATED at n≥150/family |
 | 9F | T1B class | 0.03 floor | DATA_GATED | Bootstrap ROI>0 at n≥100; no expansion before |
 | 9F | T3 floor 0.06 | — | LOCKED/PERIODIC_RECAL | Re-derive annually from measured T3 overround |
 | 9J | R4 REB-over shadow | no lift condition | DATA_GATED | Pre-register: n≥50 post-refit, calib bias ±3pp, CLV≥0 |
 | 9J | R7 max-2/game · R10 same-stat cap | hard caps | LOCKED ×2 | R10 best-justified rule in system |
-| 9J | **R9 directional balance · R12 cooldown** | EV-framed | **NEEDS_CHANGE (reclassify, doc-only)** | Label both product rules; monitor R9 score-gap cost; R12 → negative-CLV trigger when data matures |
+| 9J | **R9 directional balance · R12 cooldown** | product rules | **✅ RESOLVED** (76fbb36, 2026-06-06) | Both reclassified product rules in code comments + CLAUDE.md. R9 score-gap monitor at n≥50 forced-over events; R12 → negative-CLV trigger when data matures |
 | 9K | 12u daily cap | ≈0.2–0.3 joint Kelly | LOCKED | Correct conservative side; revisit at NFL go-live |
 | 9K | Sport per-pick caps | never bind | PERIODIC_RECAL | Relabel backstops or convert to per-sport daily budgets |
-| 9K | **0.50u stake floor** (adjacent) | floors 0.20–0.26u → 0.50u | **NEEDS_CHANGE** | Over-stakes weakest picks 2–2.5× vs own Kelly logic; lower to 0.25u or skip below ~0.35u |
+| 9K | **0.50u stake floor** (adjacent) | 0.25u all tiers | **✅ RESOLVED** (76fbb36, 2026-06-06) | Floor lowered to 0.25u for ALL tiers (no skip-below logic — complexity not justified) |
 
 ---
 
@@ -85,12 +85,12 @@ All other plan-doc values matched code exactly (NRFI constants, YRFI min_edge, D
 The **53% game-level baseline is well supported**: published references state ~52–55% of MLB games have a scoreless 1st ([OddsIndex NRFI guide](https://oddsindex.com/guides/nrfi-betting-guide)); Odds Shark 2026 team records and NRFI-Central's 2024 recap bracket the same center. (Caution: the "~70% NRFI average" floating in the literature is the per-team-offense scoreless rate, ~70–73% — a different stat; the engine uses the correct game-level definition.) The 1st is the highest-scoring inning (~5.1 R/9; highest in 91% of seasons since 1945, MLB.com) — a first-inning-specific baseline is required and BASE_LAMBDA_1ST does this correctly.
 
 **However, Poisson is formally the wrong family for per-inning runs.** Woolner ([BP per-inning model](https://legacy.baseballprospectus.com/images/analytica/rpi_model.pdf)) and Dolinar both show per-inning runs are **overdispersed (var ≈ 2× mean)**. The engine sidesteps this *at the baseline* — λ=0.32 is not the true 1st-inning mean (~0.50–0.55 runs/team) but an **effective zero-rate parameter** (e^−0.32 = 0.726 matches the empirical scoreless rate); that's a legitimate log-linear model of P(0). The residual error is the **elasticity**: under the engine, d ln P(scoreless)/d ln(mult) = −0.32; under an NB matched to the 1st inning's mean (~0.55) and zero rate (0.726), implied r ≈ 0.31 and elasticity ≈ −0.20 — the Poisson λ-scaling is **~50–60% too steep**. A strong pitching matchup (mult ~0.8/side) over-predicts P(NRFI) by ~+2pp; symmetrically under-predicts YRFI in high-offense matchups. With min_edge floors 0.06/0.08, a systematic ±2pp tilt at exactly the extremes where picks fire is material.
-**Verdict: LOCKED (baseline) / NEEDS_CHANGE (elasticity).** Fix: (a) NB zero-probability `(r/(r+μ·m))^r` with r fit to first-inning data, or (b) cheaper, exponent dampener `P(scoreless) = exp(−0.32·m^γ)`, γ ≈ 0.6–0.7 — validate against the in-house 8,095-game DB (bucket by predicted multiplier, compare realized NRFI rate per bucket).
+**Verdict: LOCKED (baseline) / NEEDS_CHANGE (elasticity) → ✅ RESOLVED (3aad87f, 2026-06-06).** Fix (b) shipped: `NRFI_GAMMA = 0.65` exponent dampener (`λ = 0.32·m^γ`, multiplier clamped ≥0 before exponentiation). γ=0.65 is the literature default — DATA_GATED recalibration when first-inning-level data exists (bucket predicted multiplier vs realized NRFI rate on the in-house 8,095-game DB).
 
 ### Q2 — ERA/FIP 40/60 blend + lineup quality
 Literature unambiguously favors FIP-family estimators for *future* run prevention: predictive ranking cFIP > kwERA > SIERA > xFIP > FIP > ERA (Judge/BP via [Pitcher List](https://pitcherlist.com/the-relative-value-of-fip-xfip-siera-and-xera-pt-ii/)); [FanGraphs month-ahead r²](https://fantasy.fangraphs.com/quick-all-star-break-study-3-month-to-month-correlation-for-era-and-related-stats/): **ERA 0.019, FIP 0.038, xFIP 0.061** — ERA half as predictive as FIP, a third of xFIP. 40/60 gives ERA 2–4× the weight predictive-validity ratios justify; literature-consistent is **≤25% ERA / ≥75% FIP** (better: xFIP/SIERA). Damage bounded (rates correlate ~0.7+ within-season) but concentrates on high-BABIP/strand-rate outliers — exactly the pitchers NRFI models mis-rate.
 First-inning-specific: league 1st-inning ERA ~4.86 vs ~4.51 overall (+8%, absorbed by BASE_LAMBDA_1ST — no double-count). But team full-game R/G is a weak proxy for **lineup slots 1–3** (the only guaranteed PAs); commercial NRFI models build λ from leadoff OBP / top-3 wOBA vs L/R. 2023 Braves scored in the 1st 39.16% vs league ~27% — dispersion driven by top-of-order quality that team R/G dilutes. Lineup-slot adjustment plausibly worth more than the ERA/FIP weighting choice.
-**Verdict: NEEDS_CHANGE (blend → ≥75% FIP, prefer xFIP/FIP−, July refit) + DATA_GATED (lineup-slot upgrade — backtest top-3 wOBA λ-adjustment on in-house `mlb_batter_game_stats` first).**
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (76fbb36, 2026-06-06): blend shipped at 0.25 ERA / 0.75 FIP (`_LEAGUE_AVG_BLENDED_RATE`=0.4808); xFIP/FIP− upgrade deferred to July refit (needs league HR/FB data not in CSV). + DATA_GATED (lineup-slot upgrade — backtest top-3 wOBA λ-adjustment on in-house `mlb_batter_game_stats` first).**
 
 ### Q3 — Park factor omission
 Valid on the team-runs side (SaberSim inputs park-adjusted; double-applying would double-count Coors ~1.35–1.42×). **No published evidence of a first-inning-specific park effect** distinct from full-game factors — park effects are physical and inning-invariant. One residual inconsistency on the **pitcher side**: raw ERA (and FIP's HR component) embeds the pitcher's own park un-neutralized — a Coors home pitcher is penalized twice. Fixed for free by the Q2 swap to park-adjusted FIP−/xFIP.
@@ -109,8 +109,8 @@ No published study quantifies top-vs-bottom-1st scoring correlation. Mechanistic
 | Item | Current | Verdict | Action |
 |---|---|---|---|
 | Game-level baseline (53%, λ=0.32/team) | exp(−0.64) | LOCKED | Matches published 52–55% |
-| Poisson elasticity | exp(−0.32·m) | NEEDS_CHANGE | NB-overdispersion ⇒ elasticity ~50–60% too steep, ±2pp at pick-firing extremes. NB zero-prob or m^γ (γ≈0.6–0.7) dampener; validate in-house |
-| ERA/FIP blend | 0.40/0.60 | NEEDS_CHANGE | Shift to ≤0.25 ERA / ≥0.75 FIP (prefer xFIP/FIP−) at July refit |
+| Poisson elasticity | exp(−0.32·m^0.65) | ✅ RESOLVED (3aad87f) | NRFI_GAMMA=0.65 dampener shipped; γ DATA_GATED at first-inning data |
+| ERA/FIP blend | 0.25/0.75 | ✅ RESOLVED (76fbb36) | Shipped; xFIP/FIP− upgrade deferred to July refit |
 | Lineup slots 1–3 adjustment | absent | DATA_GATED | Backtest top-3 wOBA vs team-R/G proxy in-house before adding |
 | Park factor omission | omitted | LOCKED | Valid; pitcher-side park bias fixed by FIP−/xFIP swap |
 | BASE_LAMBDA_1ST level | 0.32 | PERIODIC_RECAL | Annual April refit from prior-season 1st-inning zero rate |
@@ -167,7 +167,7 @@ Sign confirmed. Books historically blocked correlated parlays outright and now r
 
 ### Q3 — Other anti-correlation candidates (unblocked)
 - **(a) OUTS over + same-SP HA over**: exposure effect (more BF → more hits) vs the hook (high hit rates → pulled early) largely cancel; expected |ρ| < 0.2. **DATA_GATED** — compute corr(outs, hits_allowed) on 16k starts in-house before any rule; likely no rule needed.
-- **(b) OUTS under + opp TT over**: **positively** correlated (~+0.3–0.4 — SP knocked out early *because* opp scoring). Independence **understates** joint prob → engine under-ranks/under-sizes a combo that's actually better than modeled. Conservative, not dangerous. Key asymmetry: independence on negative-ρ pairs overstates EV (must block — X1 does); on positive-ρ pairs it understates EV (safe to allow). **NEEDS_CHANGE (minor, optional)**: add a +ρ term to the longshot joint-prob estimate for ranking honesty, mirroring mlb_sgp_builder's OUTS-over/HITS-under=+0.30. Never block.
+- **(b) OUTS under + opp TT over**: **positively** correlated (~+0.3–0.4 — SP knocked out early *because* opp scoring). Independence **understates** joint prob → engine under-ranks/under-sizes a combo that's actually better than modeled. Conservative, not dangerous. Key asymmetry: independence on negative-ρ pairs overstates EV (must block — X1 does); on positive-ρ pairs it understates EV (safe to allow). **NEEDS_CHANGE (minor) → ✅ RESOLVED (3aad87f, 2026-06-06)**: +ρ ranking boost shipped in build_safest6_parlay(), mirroring mlb_sgp_builder's OUTS-over/HITS-under=+0.30. Ranking-only; displayed combined_prob stays independence; never blocks.
 - **(c) ER under + same team ML**: positive ρ ~+0.35–0.45 (NFL analogue: Team Win ↔ QB over ρ=0.35, Wizard of Odds). Independence conservative. **DATA_GATED** — fit in-house, fold into copula when convenient; no block.
 - **(d) NBA player PTS/3PM over + same-game TOTAL under** (ρ ≈ −0.2 to −0.4): the most material *unblocked negative* pair if NBA props and totals co-occur in the longshot pool. **DATA_GATED** — check pick_log for actual co-occurrence in longshot legs before adding an NBA X2; per-game cap of 2 bounds exposure. NHL pairs weak/moot (SOG suspended).
 
@@ -186,7 +186,7 @@ Two contexts, and the engine's architecture already splits them correctly:
 | X1 documented ρ for ER | −0.65 to −0.75 | LOCKED | Plausible (0.95 × 0.76 ≈ 0.72) |
 | X1 documented ρ for HA | −0.65 to −0.75 | PERIODIC_RECAL | Overstated; true ≈ −0.45 to −0.60. Re-document + in-house fit at July refit. No behavior change |
 | OUTS over + same-SP HA over | Unblocked | DATA_GATED | In-house corr on 16k starts; expected \|ρ\|<0.2 → no rule |
-| OUTS under + opp TT over | Independent | NEEDS_CHANGE (minor) | Positive ρ understates joint prob (conservative). Optional +ρ in longshot joint-prob; never block |
+| OUTS under + opp TT over | +ρ ranking boost | ✅ RESOLVED (3aad87f) | +ρ ranking boost shipped in build_safest6_parlay() (ranking-only; displayed combined_prob stays independence; never blocks) |
 | ER under + same team ML | Independent | DATA_GATED | ρ ~+0.35–0.45; fit in-house, fold into copula later |
 | NBA player-over + TOTAL-under | Unblocked | DATA_GATED | Check pick_log co-occurrence before adding NBA X2 |
 | Hard block vs copula | Hard block | LOCKED | Breakeven needs 11–20% per-leg edges; engine has 3–8% |
@@ -298,7 +298,7 @@ No per-operator lag measurement exists publicly; the engine is unusually well-po
 | 15–40 min lag estimate | Assumed | DATA_GATED | Event-study ≥30 events/book; passive gate ~50 late-run CLV rows/book from pick_log. |
 | Edge sustainability | Assumed durable | PERIODIC_RECAL | Account-eroding (limits, ~$50 prop caps documented). Log per-book limit events; drop limited books. |
 | Legality (CO, public news) | — | LOCKED | Legal under 1 CCR 207-2. Known commercial risks: limiting + Rule 6.10 obvious-error voids. |
-| SB26-131 ops impact (2026-08-12) | Untracked | NEEDS_CHANGE (ops) | Credit-card deposit ban + 6 deposits/24h cap — adjust bankroll funding workflow before Aug 12, 2026. Not a code change. |
+| SB26-131 ops impact (2026-08-12) | Tracked in CLAUDE.md | ✅ RESOLVED (76fbb36, ops note) | Urgent ops note added to CLAUDE.md (switch to ACH, cache working balances before Aug 12, 2026). Not a code change. |
 
 ---
 
@@ -356,11 +356,11 @@ Both — the structural problem dominates. Two published strands:
 2. **Calibration vs discrimination**: book odds are better *calibrated* than bettor models even when models retain competitive discrimination; profitability requires calibration, not rank-ordering ([Wilkens 2026](https://journals.sagepub.com/doi/10.1177/22150218261416681)).
 
 **The inversion is real**: "T1 = highest conviction" with **min_edge=0.03 — the lowest floor of any tier — on the worst-calibrated stat family** (low-count stats where Normal-vs-NB misspecification was later confirmed) is internally inconsistent. T2 at 0.05 beating T1 at 0.03 is exactly what shrinkage theory predicts. Confound worth stating: the −10.2% T1 aggregate includes now-suspended SOG/HA and shadow HRR — live T1 ≈ AST only (AST 0.5-under independently at 72.7% WR, n=44). The tier-level stat conflates retired components.
-**Verdict: NEEDS_CHANGE** — (a) reframe tiers as *stat-routing buckets with per-family edge floors*, not conviction levels (conviction lives in pick_score); (b) make floors monotone in calibration quality (worst-calibrated = highest floor); (c) Baker–McHale probability shrinkage per family (see Q2).
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (c4380ca, 2026-06-06)** — (a) `STAT_FAMILY_TIER` shipped (tiers = stat-family calibration buckets); (b) floors monotone: T2=0.05 < T1B/T3=0.06 < T1=0.07; (c) Baker–McHale shrinkage shipped (see Q2). NRFI/YRFI/TEAM_TOTAL/F5_TOTAL promoted to T2; AST→T1B; NHLBLK/SOG→T3; R8 reserved slots retired.
 
 ### Q2 — Size multiplier vs raising the threshold
 Kelly theory is unambiguous: if true edge is overstated, **both selection and sizing are corrupted**; a stake multiplier repairs only sizing. Baker–McHale shrinkage on the probability propagates into both coherently. MacLean–Thorp–Ziemba asymmetry: overbetting is the fatal direction, and the first-order damage from overstated edges is *admitting −EV bets*, not staking them 10% heavy. Magnitude: T1 ROI −10.2% against a +3% floor implies edge overstated by >100%; a 0.90× multiplier is a 10% correction to a >100% overstatement — off by an order of magnitude. Same defect class as the KELLY_MARKET_MULT layer (already flagged in the Kelly-stack consolidation item).
-**Verdict: NEEDS_CHANGE** — replace tier multiplier with per-stat-family empirical-Bayes shrinkage of win_prob toward implied prob (weight from each family's graded calibration); merges with the existing DATA_GATED Kelly-stack consolidation item — one mechanism.
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (c4380ca, 2026-06-06)** — `apply_bm_shrinkage()` shipped: `shrunk_p = w·model_p + (1−w)·implied_p`, per-tier w = {T2:0.85, T1:0.75, T1B:0.80, T3:0.70}, applied in evaluate_props post-Platt/pre-gate to ALL props (incl. MLB+combos). PICK_SCORE_TIER_MULT and VAKE_MULT["tier"] retired (VAKE_MULT["variance"] kept, flagged for Kelly-stack consolidation). Per-family weight refit DATA_GATED at n≥150 graded/family.
 
 ### Q3 — T1B as a distinct class
 Justified on two grounds: (1) **distributional** — count stats are NB right-skewed (engine's own refits: var/mu 1.2–1.7); the under side of a high line has bounded body-of-distribution risk while overs are exposed to the misspecified right tail; (2) **market-structure** — documented recreational over-bias that books shade, leaving residual value on unders ([Unabated](https://unabated.com/articles/the-biggest-mistake-youre-making-when-betting-nfl-player-props); [Wizard of Odds — props set at median, not mean](https://wizardofodds.com/article/player-props-understanding-the-math-behind-the-lines/)). T1B's profile (WR 46.9%, ROI +1.7%) — sub-coinflip WR with positive ROI — is the signature of buying the unshaded plus-ish side.
@@ -368,7 +368,7 @@ Justified on two grounds: (1) **distributional** — count stats are NB right-sk
 
 ### Q4 — Deprecate T1?
 The statistics: two-proportion z (46.6% vs 60.3%) needs **~207 picks/tier** at α=0.05/power 0.80; T1-vs-breakeven (52.38%) needs **~580–590**. At the gated n=30 checkpoint, WR SE is ±9.1pp — uninformative. **A WR-significance test will never arrive in useful time**, and the T1 population already changed (SOG/HA suspended, HRR shadow). Testing the historical aggregate tests a tier that no longer exists.
-**Verdict: NEEDS_CHANGE (restructure now, don't wait for n)** — dissolve the conviction framing per Q1; route each stat family on its own calibration record. Keep a bootstrap (n≥150, retire family if P(ROI≥0)<0.10) as the formal record. The n=30 PICK_SCORE_TIER_MULT checkpoint should be retired alongside the multiplier — it tests the wrong instrument at an uninformative n.
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (c4380ca, 2026-06-06)** — conviction framing dissolved; stat families route on their own calibration record. n=30 checkpoint retired with the multiplier. Family bootstrap gate (n≥150, retire family if P(ROI≥0)<0.10) registered in CLAUDE.md as the formal record.
 
 ### Q5 — T3
 WR 51.5% + positive ROI implies plus-money average prices — consistent with composition (3PM, GOALS, ML_DOG, NRFI/YRFI). Specialty markets carry wider vig (−115/−120+ vs −110) and less book pricing effort — wider vig but bigger genuine mispricings; the profile of a tier that clears a higher bar less often and profits when it does. The +1pp floor increment over T2 approximates the incremental vig of thinner markets.
@@ -378,10 +378,10 @@ WR 51.5% + positive ROI implies plus-money average prices — consistent with co
 
 | Item | Current | Verdict | Action |
 |---|---|---|---|
-| T1 framing + min_edge=0.03 | lowest floor, worst-calibrated stats, ROI −10.2% | NEEDS_CHANGE | Reframe tiers as stat-routing buckets; floors monotone in calibration quality |
-| T1 size mult 0.90× | 10% shrink vs >100% overstatement | NEEDS_CHANGE | Per-family probability shrinkage (Baker–McHale); retire tier mult; merge with Kelly-stack consolidation |
+| T1 framing + min_edge=0.03 | STAT_FAMILY_TIER, T1 floor 0.07 | ✅ RESOLVED (c4380ca) | Stat-routing buckets shipped; floors monotone in calibration quality |
+| T1 size mult 0.90× | BM shrinkage on win_prob | ✅ RESOLVED (c4380ca) | Baker–McHale shrinkage shipped; PICK_SCORE_TIER_MULT + VAKE_MULT["tier"] retired |
 | T1B class | WR 46.9%/ROI +1.7% | DATA_GATED | Keep; bootstrap ROI>0 at n≥100; no stat-list expansion |
-| T1 retirement test | n=30 checkpoint (1/30) | NEEDS_CHANGE | n=30 uninformative (SE ±9.1pp); restructure now; formal record = ROI bootstrap at n≥150/family |
+| T1 retirement test | family bootstrap n≥150 | ✅ RESOLVED (c4380ca) | n=30 checkpoint retired; formal record = ROI bootstrap at n≥150/family (in CLAUDE.md gates) |
 | T3 min_edge=0.06 | WR 51.5%/ROI +5.3% | LOCKED / PERIODIC_RECAL | Keep; re-derive annually from measured T3 overround |
 
 ---
@@ -393,7 +393,7 @@ WR 51.5% + positive ROI implies plus-money average prices — consistent with co
 
 ### Q6 — "Safest 6" vs EV-ranked selection
 The literature is consistent ([OddsShopper "Math Behind Profitable Parlays"](https://www.oddsshopper.com/articles/betting-101/how-to-find-the-best-parlay-bets-today-using-expected-value-ev-y10), Unabated): with multiplicative payout, select legs on **per-leg EV ratio**, not standalone safety. Math: a 65%-WP/20%-edge leg contributes factor ≈1.20 to slip EV; a 70%-WP/3%-edge leg ≈1.03 — current ranking picks the 1.03 leg. Across 6 legs: six 1.10 legs → +77% slip EV vs six 1.03 legs → +19%. Mitigations: the pool is gate-filtered (all legs believed +EV), so safest-6 is still +EV — just not EV-maximal; and there's a legitimate *product* argument (a safest-picks longshot hits every ~2–3 weeks — better community content than a max-EV slip hitting every ~8 weeks).
-**Verdict: NEEDS_CHANGE (low priority).** Either rank by (1 + edge/implied) descending with a win_prob ≥0.60 floor, or explicitly re-document Longshot as a hit-frequency marketing product and accept the EV sacrifice. Pick one — the current state is an EV product with a safety objective.
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (76fbb36, 2026-06-06).** Option (b) chosen: Longshot explicitly re-documented as a hit-frequency product (docstring + sort-line comment in build_safest6_parlay()) — selecting by win_prob maximizes how often the card has a winner (engagement value), accepted as intentional. EV-factor ranking rejected as a product-direction change without clear user benefit.
 
 ### Q7 — Kelly for the 6-leg parlay vs flat 0.25u (math)
 Six −150 legs: combined decimal 21.43, implied joint 4.67%. Modest edge (0.625 true vs 0.60/leg): joint p = 0.0596, f* = 0.0136 → full Kelly 1.36u; flat 0.25u = ~1/5.4 Kelly. Strong edge: f* = 0.0302 → 0.25u = 8% of Kelly. **Thin edge** (joint 0.050 vs 0.0467): f* = 0.0035 → 0.35u full Kelly — flat 0.25u is **71% of full Kelly**. With 6×-compounded estimation error, the thin-edge scenario is the planning case — but absolute exposure is 0.25% of bankroll, so the overbet penalty is negligible in absolute terms.
@@ -411,7 +411,7 @@ The EV-decay-per-leg literature (hold compounds 4.5% → ~25% at 6 legs; "stick 
 
 | Item | Current | Verdict | Action |
 |---|---|---|---|
-| Leg ranking | win_prob descending | NEEDS_CHANGE (low priority) | EV-factor ranking with WP ≥0.60 floor, OR re-document as hit-frequency product |
+| Leg ranking | win_prob descending, documented | ✅ RESOLVED (76fbb36) | Re-documented as intentional hit-frequency product |
 | Flat 0.25u sizing | flat | LOCKED | Spans 8–71% of full Kelly; acceptable at 0.25% bankroll. Don't raise without data |
 | Same-game independence | max 2/game + X1/R5 | PERIODIC_RECAL | Residual negative pairs overstate slip prob ~6.5%/pair; opportunistic SGP-ρ reuse |
 | 6-leg / 5-leg fallback | 6/5 | LOCKED | Product-cadence optimal; no EV argument for change |
@@ -426,7 +426,7 @@ The EV-decay-per-leg literature (hold compounds 4.5% → ~25% at 6 legs; "stick 
 
 ### Q10 — Per-leg WP floor vs joint-EV gating
 No published source treats a per-leg WP floor as *the* SGP construction criterion — industry practice (Wizard of Odds SGP correlation math, OpticOdds, Kambi/USPTO correlated-prop pricing) gates on **joint** probability vs offered payout. The per-leg floor is legitimate *variance control* but does not guarantee +EV: a 4-leg slip of exactly-0.65 legs at the +450 cap has independent joint 0.1785 vs implied 0.1818 — **slightly −EV before correlation lift**, and the engine's small cross-type ρ's (0.02–0.15) lift it only a few % relative. The engine already computes the copula joint prob and EV margin — it just uses the margin only for premium sizing, not as an existence condition.
-**Verdict: NEEDS_CHANGE.** Keep the per-leg floors; add a **joint-EV existence floor**: copula joint_prob > implied(parlay odds) + ε, ε ≈ 0.02–0.03 (≈+10–15% ROI at +350) for ANY slip to fire. Premium gate unchanged.
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (3aad87f, 2026-06-06).** Per-leg floors kept; joint-EV existence floor shipped in BOTH builders: copula joint_prob > implied(parlay odds) + `SGP_JOINT_EV_MARGIN` (=0.025) for ANY slip to fire. Premium gate unchanged. ε re-tune DATA_GATED at the 100-scored-slip Platt gate.
 
 ### Q11 — Odds window +200–+450 (math)
 - **3-leg**: per-leg decimal between 3.00^⅓=1.442 (≈−226) and 5.50^⅓=1.765 (≈−131). Legs −135 to −155 combine to +345–+428 — fits. Model-0.65 legs (fair −186) quoted −131…−186 carry positive edge. **Internally consistent.**
@@ -435,7 +435,7 @@ No published source treats a per-leg WP floor as *the* SGP construction criterio
 
 ### Q12 — Premium gate vs published SGP hold
 Published SGP hold: parlays 16–25% (NJ/IL regulated data), SGPs at the top of the range; Wizard of Odds estimates a 3-leg SGP costs ~7× the EV of the same legs straight ("correlation tax" ~15% off independence payouts stacked on per-leg vig). The premium gate margin ≥0.10 at +350 implies **≥+45% ROI** — appropriately strict and rare by design. The 0.25u default is the issue: given 20–30% structural hold, an SGP is only +EV when the model out-prices the book's own copula by the full hold — current leg floors don't enforce that. Empirical note: model→58% vs 69% actual on 52 slips suggests joint probs currently *under*-stated (Platt over-correction) — the safe direction, but by luck not design.
-**Verdict: NEEDS_CHANGE (same fix as Q10)** — gate the 0.25u default on copula margin > +0.02–0.03; re-tune ε at the 100-scored-slip Platt gate.
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (3aad87f, same fix as Q10)** — joint-EV existence floor (ε=0.025) now gates ANY slip incl. the 0.25u default path; re-tune ε at the 100-scored-slip Platt gate (DATA_GATED).
 
 ### Q13 — MIN_LEG_WIN_PROB_OUTS=0.62 after sigma 0.311→0.27 (math)
 For a leg with cushion c at μ≈17 outs: win_prob = Φ(c/σμ). At c=2: 0.647 → 0.668 (**+2.1pp**); a leg at exactly 0.62 old now reads ~0.635. The 0.62 floor used to require c≈1.62 outs of cushion; it now requires c≈1.40 — effectively looser. Monitoring spec:
@@ -449,7 +449,7 @@ For a leg with cushion c at μ≈17 outs: win_prob = Φ(c/σμ). At c=2: 0.647 �
 
 | Item | Current | Verdict | Action |
 |---|---|---|---|
-| Per-leg floors 0.65/0.62 | leg-screen only | NEEDS_CHANGE | Keep floors; add joint-EV existence floor (copula margin > +0.02–0.03) for any slip |
+| Per-leg floors 0.65/0.62 | + joint-EV floor ε=0.025 | ✅ RESOLVED (3aad87f) | Floors kept; SGP_JOINT_EV_MARGIN=0.025 existence floor live in both builders |
 | Odds window +200–+450 | hard window | PERIODIC_RECAL | 3-leg consistent; 4-leg admits −EV legs without the joint-EV floor |
 | Premium gate ≥0.10 + avg_edge ≥0.035 | premium sizing | LOCKED | ≈+45% ROI condition — appropriately strict vs 16–25%+ SGP hold |
 | MIN_LEG_WIN_PROB_OUTS=0.62 | tuned to old σ | DATA_GATED | Monitor per spec; sigma-equivalent floor ≈0.64 if retune fires |
@@ -475,7 +475,7 @@ First-best per theory is joint Kelly with covariance: [Whitrow 2007 JRSS-C](http
 
 ### Q8 — R9 directional balance
 No quantitative justification in portfolio theory, and the over/under shading literature actively argues against it: a model leaning under on a slate may be correctly harvesting the over-shade — the skew is *signal*, and forcing an over dilutes it. The "hedges systematic bias" steelman fails on mechanism (the fix for directional bias is calibration measurement, not card composition), and the forced over displaces a higher-scored pick — strictly EV-negative under the model's own ranking. Mitigation: the forced over passed all gates (+EV by model), so the cost is the score gap — small but systematically negative.
-**Verdict: NEEDS_CHANGE (reclassification)** — document R9 honestly as a product/optics rule (card variety for subscribers), not an EV rule. Add a cheap monitor: cumulative score-gap + realized P&L of forced-in overs vs displaced picks. Keep it if the product value is judged worth the measured cost.
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (76fbb36, 2026-06-06)** — R9 reclassified in code comments + CLAUDE.md as a product/optics rule, not EV. Score-gap + P&L monitor registered for n≥50 forced-over events; negative-CLV trigger long-term.
 
 ### Q9 — R10 same-stat cap
 **Stronger basis than R7.** Same-stat picks share a projection model — textbook common-factor exposure: portfolio variance is dominated by the shared stat-model error factor when several positions load on it. Unlike game-level ρ (estimable from outcomes), *model-error* correlation is nearly impossible to estimate online — precisely the condition where a hard cap beats covariance sizing. The cap also self-limits the observed systemic failure mode (a miscalibrated family — e.g., pre-fix REB — can't put >1 losing pick per card).
@@ -483,7 +483,7 @@ No quantitative justification in portfolio theory, and the over/under shading li
 
 ### Q10 — R12 5-day loss cooldown
 Not evidence-based as risk control: one loss on a 55–60% pick has probability 0.40–0.45 *with the model correct* — likelihood ratio ≈ 1, posterior edge essentially unchanged. Conditioning selection on it is gambler's-fallacy-family behavior ([Croson & Sundali, JDM](https://www.cambridge.org/core/journals/judgment-and-decision-making/article/biases-in-casino-betting-the-hot-hand-and-the-gamblersfallacy/8A9D1813D42FFA25634E7FD26A46D484); [Cognition 2014](https://www.sciencedirect.com/science/article/pii/S0010027714000031)). Distinguish from the legitimate cousin: **persistent adverse line movement / negative CLV is information** (market disagreeing repeatedly = Bayesian evidence; a graded loss is not). Subtle selection cost: cooldown removes players exactly when the book may have moved the line *toward* you off the visible miss — sometimes the best re-entry. Honest classification: product-driven (not re-posting a player who just burned the card) with a real but unmeasured EV cost.
-**Verdict: NEEDS_CHANGE (reclassify + replace trigger)** — document as product rule; when CLV data matures, replace trigger with negative-CLV condition (e.g., CLV ≤ −2pp on last pick, or 2+ consecutive losses with negative CLV).
+**Verdict: NEEDS_CHANGE → ✅ RESOLVED (76fbb36, 2026-06-06)** — R12 documented as product rule (gambler's-fallacy-adjacent) in code comments + CLAUDE.md; trigger replacement with negative-CLV condition registered for when CLV data matures (CLV ≤ −2pp on last pick, or 2+ consecutive losses with negative CLV).
 
 ### §9J Verdicts
 
@@ -491,9 +491,9 @@ Not evidence-based as risk control: one loss on a 55–60% pick has probability 
 |---|---|---|---|
 | R4 REB-over shadow | post-fix shadow, no lift condition | DATA_GATED | Pre-register lift: n≥50 post-refit, calibration bias ±3pp, mean CLV ≥0 |
 | R7 max-2/game | hard count cap | LOCKED | Sound heuristic under ρ-estimation error; optional per-game stake budget (~2u) |
-| R9 directional balance | force best over | NEEDS_CHANGE (reclassify) | Product rule, not EV; monitor forced-over score-gap + P&L |
+| R9 directional balance | product rule (documented) | ✅ RESOLVED (76fbb36) | Reclassified; monitor forced-over score-gap + P&L at n≥50 events |
 | R10 same-stat cap | 1/stat on Premium 5 | LOCKED | Best-justified rule — unestimable common-factor ρ is where caps beat sizing |
-| R12 5-day loss cooldown | loss-triggered skip | NEEDS_CHANGE (reclassify) | Gambler's-fallacy-adjacent; label product rule; replace trigger with negative-CLV when data matures |
+| R12 5-day loss cooldown | product rule (documented) | ✅ RESOLVED (76fbb36) | Reclassified gambler's-fallacy-adjacent product rule; negative-CLV trigger replacement when data matures |
 
 ---
 
@@ -516,7 +516,7 @@ Liquidity tiering is standard sharp practice (lower-liquidity markets: wider vig
 - **The 0.50u floor binds far more often than any cap — and in the wrong direction.** A typical 3–4% edge at −110 gives f* ≈ 3.3–4.4% → stake = f*×6 ≈ 0.20–0.26u, floored UP to 0.50u: **~2–2.5× the Kelly-coherent stake on the weakest admitted picks** — the one place the sizing system over-bets relative to its own Kelly logic (the MTZ-fatal direction). More material than anything about the caps themselves.
 - **12u daily cap binds intermittently** — multi-sport days plausibly sum 12–18u pre-cap; single-sport days run 5–8u.
 - Settling query (one-liner on pick_log.csv): count days with sum(size) ≥ 11.5u; count picks where size==0.50 and the unfloored Kelly stake < 0.40u (floor inflation rate).
-**Verdicts: 12u LOCKED · per-pick sport caps PERIODIC_RECAL (relabel backstops) · 0.50u floor NEEDS_CHANGE (flagged — adjacent finding).**
+**Verdicts: 12u LOCKED · per-pick sport caps PERIODIC_RECAL (relabel backstops) · 0.50u floor NEEDS_CHANGE → ✅ RESOLVED (76fbb36, 2026-06-06: floor lowered to 0.25u for ALL tiers).**
 
 ### §9K Verdicts
 
@@ -524,4 +524,4 @@ Liquidity tiering is standard sharp practice (lower-liquidity markets: wider vig
 |---|---|---|---|
 | 12u daily cap | ≈0.2–0.3 joint full Kelly | LOCKED | Correct conservative side; revisit at NFL go-live volume |
 | Sport per-pick caps 8/8/5/5/4u | never bind | PERIODIC_RECAL | Ordering correct; relabel as bug backstops or convert to per-sport daily budgets |
-| 0.50u stake floor (adjacent finding) | rounds 0.20–0.26u stakes up 2–2.5× | NEEDS_CHANGE | The actually-binding sizing constraint, over-stakes weakest picks; lower to 0.25u or skip picks with Kelly stake < ~0.35u |
+| 0.50u stake floor (adjacent finding) | 0.25u all tiers | ✅ RESOLVED (76fbb36) | Floor lowered to 0.25u for ALL tiers; skip-below-0.35u logic rejected (complexity not justified) |
