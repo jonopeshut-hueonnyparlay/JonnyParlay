@@ -210,7 +210,7 @@ SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_bui
 # v2 was internally dead (0 KILLSHOTs in 5+ weeks): PTS is T2 so PTS ∧ tier=T1 was
 # unsatisfiable, SOG is suspended — only NBA AST could ever fire. v3 changes:
 #   - tier requirement dropped (T1 WR=46.6% < T2=60.3%; selection on floors is
-#     strictly better — tier already enters via PICK_SCORE_TIER_MULT)
+#     strictly better — tier already enters via BM shrinkage on win_prob, Plan 9 §9F)
 #   - static wp floor replaced by odds-dependent: wp >= implied_prob(odds) + MARGIN
 #     (closes the latent −EV window: wp=0.65 at −200 was −2.5%/unit)
 #   - manual path now also enforces the odds range + wp floor (was score-only)
@@ -723,16 +723,41 @@ BLEND_ALPHA = 0.25
 # var/mu=2.261 (pooled); r = mu^2/(var-mu) = 3.548. Used for team-total NB CDF and ML NB sum.
 MLB_TEAM_RUN_R = 3.548
 
+# Plan 9 §9F tier restructure (2026-06-06): tiers are stat-routing buckets keyed
+# by empirical calibration quality — NOT conviction levels. T2 = best-calibrated
+# families → lowest floor. Floors monotone in calibration: T2 0.05 < T1B/T3 0.06 < T1 0.07.
+# The old framing was inverted: "T1 = highest conviction" had the LOWEST floor (0.03)
+# on the WORST-calibrated families (T1 WR 46.6%, ROI −10.2% vs T2 WR 60.3%).
+STAT_FAMILY_TIER = {
+    # T2 — well-calibrated families
+    "PTS": "T2", "OUTS": "T2", "PA": "T2", "PR": "T2", "PRA": "T2", "RA": "T2",
+    "NRFI": "T2", "YRFI": "T2", "TEAM_TOTAL": "T2", "F5_TOTAL": "T2",
+    "YARDS": "T2", "TB": "T2", "SV": "T2", "RBI": "T2", "RUNS": "T2",
+    "ER": "T2", "GA": "T2", "BB": "T2", "PC": "T2",
+    # T1B — binary/low-line
+    "AST": "T1B", "HITS": "T1B", "HA": "T1B",
+    # T1 — moderate calibration, needs monitoring
+    "REB": "T1", "HRR": "T1", "REC": "T1",
+    # T3 — specialty/low-n
+    "3PM": "T3", "SOG": "T3", "NHLPTS": "T3", "NHLBLK": "T3",
+    "TDS": "T3", "GOALS": "T3", "ML_DOG": "T3",
+}
+
 TIERS = {
-    # Prop stats only — game lines (SPREAD, TOTAL, TEAM_TOTAL, ML_*, F5_*) are NOT routed
-    # through get_tier(); their tier is set directly at pick creation (sport-aware).
-    "T1":  {"stats": {"AST", "SOG", "REC", "HRR"}, "min_edge": 0.03},
-    "T1B": {"stats": {"REB", "HITS", "HA"},              "min_edge": 0.03},  # unders 3.5+ only / low volume
-    "T2":  {"stats": {"PTS", "PRA", "PR", "PA", "RA", "YARDS", "TB", "OUTS",
-                      "NHLBLK", "SV", "RBI", "RUNS", "ER", "GA", "BB", "PC"}, "min_edge": 0.05},
-    "T3":  {"stats": {"TDS", "GOALS", "NHLPTS", "3PM", "ML_DOG", "NRFI", "YRFI"}, "min_edge": 0.06},
+    # min_edge floors only — stat membership lives in STAT_FAMILY_TIER (Plan 9 §9F).
+    "T1":  {"min_edge": 0.07},   # was 0.03 — raised to match G9B NBA floor
+    "T1B": {"min_edge": 0.06},   # was 0.03 — binary/low-line needs a higher floor
+    "T2":  {"min_edge": 0.05},   # unchanged (G9 universal floor)
+    "T3":  {"min_edge": 0.06},   # unchanged
     # T4 (GOLF_WIN) removed — see archived_golf_code.py
 }
+
+# Baker–McHale (2013) shrinkage weight per tier: shrunk_p = w·model_p + (1−w)·implied_p.
+# Replaces PICK_SCORE_TIER_MULT + VAKE_MULT["tier"] — one mechanism that moves win_prob,
+# edge, pick_score AND Kelly stake coherently (Plan 9 §9F).
+# DATA_GATED: refit per-family from pick_log calibration at n≥150 graded picks/family.
+BM_SHRINKAGE_WEIGHT = {"T2": 0.85, "T1": 0.75, "T1B": 0.80, "T3": 0.70}
+BM_SHRINKAGE_DEFAULT = 0.80
 
 KELLY_FRACTION = 6.0  # Units converter for Kelly sizing under the 100u bankroll convention:
                       # units = f* × 6, so stake fraction = f* × 6/100 ≈ 1/16.7 Kelly —
@@ -759,9 +784,12 @@ KELLY_MARKET_MULT = {
 }
 DEFAULT_MARKET_MULT = 0.75
 
+# "tier" key retired 2026-06-06 (Plan 9 §9F) — replaced by BM shrinkage on win_prob.
+# "variance" kept as a legacy tier-keyed sizing damper; candidate for the DATA_GATED
+# Kelly multiplier-stack consolidation (single empirical-Bayes per-market mult at
+# n≥50 graded/market — see CLAUDE.md).
 VAKE_MULT = {
     "variance":    {"T1": 1.00, "T1B": 1.00, "T2": 0.85, "T3": 0.65},
-    "tier":        {"T1": 1.00, "T1B": 1.00, "T2": 0.90, "T3": 0.60},
 }
 
 PICK_SCORE_MODES = {
@@ -770,15 +798,10 @@ PICK_SCORE_MODES = {
     "Aggressive":   (0.30, 0.70),
 }
 
-# Tier multiplier applied to final pick_score.
-# T2 is the reference tier (best empirical win rate, 61.1% vs T1=45.1% at n=51/54).
-PICK_SCORE_TIER_MULT = {
-    "T1":       0.90,
-    "T1B":      0.93,
-    "T2":       1.00,
-    "T3":       0.95,
-    "KILLSHOT": 1.00,
-}
+# PICK_SCORE_TIER_MULT retired 2026-06-06 (Plan 9 §9F): the 0.90× T1 mult was a 10%
+# patch on a >100% win_prob overstatement, and the n=30 checkpoint was uninformative
+# (SE ±9.1pp). Tier calibration quality now enters via BM_SHRINKAGE_WEIGHT, which
+# adjusts win_prob/edge/score/stake coherently.
 
 # Additive score penalties for cold_start sub-types (lower projection reliability).
 COLD_START_SCORE_PENALTY = {
@@ -1201,7 +1224,8 @@ def pick_score(win_prob, edge, mode="Default", tier=None,
 
     Weights (wp/edge): Default=40/60, Conservative=55/45, Aggressive=30/70.
     Edge ceiling lowered to 15% (from 20%) to match actual p90 of the distribution.
-    Tier multiplier: T1=0.90×, T1B=0.93×, T2=1.00× (reference), T3=0.95×.
+    Tier multiplier retired 2026-06-06 (Plan 9 §9F) — tier calibration quality now
+    enters upstream via BM shrinkage on win_prob; ``tier`` kwarg kept for caller compat.
     Cold-start penalty: taxi=-15, returner=-10, extended_absence=-8, new_acquisition=-5.
     Injury trigger bonus: +7 for redistribution-bump picks.
 
@@ -1223,11 +1247,23 @@ def pick_score(win_prob, edge, mode="Default", tier=None,
                             # optimizer's curse amplify those errors to the top of the card.
                             # ([LARGE-EDGE] warning still fires; Kelly sizing uses raw edge.)
     score = sw * wp_n + ew * e_n
-    score *= PICK_SCORE_TIER_MULT.get(tier, 1.00)
     score += COLD_START_SCORE_PENALTY.get(cold_start_subtype, 0)
     if injury_trigger:
         score += INJURY_TRIGGER_BONUS.get(stat, INJURY_TRIGGER_BONUS_DEFAULT) if stat else INJURY_TRIGGER_BONUS_DEFAULT
     return score
+
+def apply_bm_shrinkage(win_prob, odds, tier):
+    """Baker–McHale (2013) shrinkage of model win_prob toward market implied prob.
+
+    shrunk_p = w·model_p + (1−w)·implied_p, with w = BM_SHRINKAGE_WEIGHT[tier].
+    Replaces PICK_SCORE_TIER_MULT + VAKE_MULT["tier"] — one mechanism that moves
+    win_prob, edge, pick_score and Kelly stake coherently (Plan 9 §9F).
+    Shrinks toward the VIGGED implied prob (the actual market quote); edge is
+    still measured against the no-vig prob downstream, so a model at exactly
+    market-implied retains the vig margin as residual edge.
+    """
+    w = BM_SHRINKAGE_WEIGHT.get(tier, BM_SHRINKAGE_DEFAULT)
+    return w * win_prob + (1.0 - w) * implied_prob(odds)
 
 def kelly_units(win_prob, odds):
     """Continuous Kelly base sizing: f* = (b*p - q) / b, scaled by KELLY_FRACTION.
@@ -1267,35 +1303,20 @@ def get_market_mult(sport, stat, direction):
     return m if m is not None else DEFAULT_MARKET_MULT
 
 def get_tier(stat, direction="over", sport="NBA"):
-    """Determine tier for a stat + direction.
-    FIX H1: T1B must be checked before T1/T2/T3 fallthrough.
-    HITS and HA are in T1B (unders only, 3% min edge).
-    Sport-aware overrides:
-      - NHL AST → T3 (Bernoulli at 0.5 line, CV >1.0, 20%+ hold)
-      - NBA/MLB TEAM_TOTAL → T1B (3% min edge; derivative pricing lags game total)
-      - MLB F5_TOTAL → T1B (softest MLB game line; pitcher signals clean)
+    """Route a stat family to its calibration-quality tier (Plan 9 §9F).
+
+    STAT_FAMILY_TIER is the single source of truth — direction-independent
+    except the REB-over shadow route. The old under-only T1B rule and the
+    TEAM_TOTAL/F5_TOTAL T1B overrides are retired (both now T2, floor 0.05).
+    Sport-aware override kept: NHL AST → T3 (Bernoulli at 0.5 line, CV >1.0,
+    20%+ hold; G_NHL_AST gates it to 0.5-under anyway).
     """
-    if stat == "REB":
-        if direction == "over":
-            return "T2"  # routed to shadow via apply_hard_rules R4_REB_OVER (was None/banned)
-        return "T1B"
-    if stat in TIERS["T1B"]["stats"] and direction == "under":
-        return "T1B"
-    # Sport-specific overrides
+    if stat == "REB" and direction == "over":
+        return "T2"  # routed to shadow via apply_hard_rules R4_REB_OVER (was None/banned)
     if stat == "AST" and sport == "NHL":
-        return "T3"  # Binary-adjacent at 0.5 line; CV >1.0; 20%+ hold
-    if stat == "TEAM_TOTAL" and sport in ("NBA", "MLB"):
-        return "T1B"  # Derivative pricing lags; softer than game total
-    if stat == "F5_TOTAL":
-        return "T1B"  # Softest MLB game line; pitcher signals clean pre-bullpen
-    if stat in TIERS["T1"]["stats"]:
-        return "T1"
-    if stat in TIERS["T2"]["stats"]:
-        return "T2"
-    if stat in TIERS["T3"]["stats"]:
         return "T3"
-    # Game lines
-    return "T2"
+    # Unmapped stats (remaining game lines: SPREAD, TOTAL, ML_FAV, F5_ML, F5_SPREAD) → T2
+    return STAT_FAMILY_TIER.get(stat, "T2")
 
 def get_tier_min_edge(tier):
     """Get minimum edge for a tier."""
@@ -1408,7 +1429,7 @@ def check_prop_gates(pick):
     # SaberSim projects a very short outing and market line is set high.
     if stat == "OUTS" and direction == "under" and prob < 0.60:
         return False, "G_OUTS_UNDER"
-    # HA / HITS: T1B tier definition is unders 3.5+ only. Block overs — they fall to T2 with no research basis.
+    # HA / HITS: researched as unders-only plays (3.5+ lines). Block overs — no research basis.
     if stat in ("HA", "HITS") and direction == "over":
         return False, "G_HA_DIR"
 
@@ -1627,21 +1648,18 @@ MIN_WIN_PROB      = 0.50  # floor removed 2026-05-27 — probability calibration
 
 def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     """
-    Apply R6, R7, R8, R9, R10 to build the Premium card.
+    Apply R6, R7, R9, R10 to build the Premium card.
 
-    R8 (updated): Reserve first 2 slots for T1/T1B (by PS desc).
-    Fill remaining slot by pure Pick Score from ALL tiers.
-    This ensures T1 dominance while letting strong T2/T3 picks break through.
+    R8 (reserved T1/T1B slots) RETIRED 2026-06-06 (Plan 9 §9F): T1 WR 46.6% < 50%
+    hit the pre-registered removal trigger. Tiers are now calibration-quality
+    routing buckets, not conviction levels — reserving card slots for the
+    moderate-calibration bucket was backwards. All slots fill by pure Pick Score.
 
     R9 is a product/optics rule, not an EV rule (Plan 9 §9J) — see the
     comment at the R9 block below.
 
     max_per_game — R7 override (default 2). Thin-slate nights can raise this.
     """
-    T1_RESERVED = 2  # slots reserved for T1/T1B
-
-    t1_picks = sorted([p for p in all_qualifying if p["tier"] in ("T1", "T1B")],
-                       key=lambda p: p["pick_score"], reverse=True)
     all_by_ps = sorted(all_qualifying, key=lambda p: p["pick_score"], reverse=True)
 
     # Count how many overs passed all gates
@@ -1696,14 +1714,8 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
             over_count += 1
             has_over = True
 
-    # Phase 1: Fill up to T1_RESERVED slots with T1/T1B picks
-    for p in t1_picks:
-        if len(premium) >= T1_RESERVED:
-            break
-        if can_add(p):
-            add_pick(p)
-
-    # Phase 2: Fill remaining slots (up to MAX_PREMIUM_PICKS) by pure Pick Score from ALL tiers
+    # Fill all slots (up to MAX_PREMIUM_PICKS) by pure Pick Score from ALL tiers
+    # (R8 T1/T1B reservation retired 2026-06-06, Plan 9 §9F)
     for p in all_by_ps:
         if len(premium) >= MAX_PREMIUM_PICKS:
             break
@@ -1854,9 +1866,9 @@ def size_bonus_pick(pick):
     """VAKE-style sizing for a standalone bonus drop.
 
     Bonus drops are posted in isolation — no correlation or exposure penalty
-    applies (those are for a 5-pick card). But we still apply variance + tier
-    multipliers so a T3 3PM bonus doesn't end up at 1.25u while the same stat
-    on the Premium card is 0.50u.
+    applies (those are for a 5-pick card). But we still apply the variance
+    multiplier so a T3 3PM bonus doesn't end up at 1.25u while the same stat
+    on the Premium card is 0.50u. (Tier mult retired Plan 9 §9F — BM shrinkage.)
 
     Floor mirrors size_picks_base (uniform 0.25u, Plan 9 §9K). Cap stays
     at 1.25u. High-variance (<50% win prob) bets cap at 0.75u.
@@ -1871,9 +1883,9 @@ def size_bonus_pick(pick):
     tier = pick.get("tier", "T2")
     base = kelly_units(pick.get("win_prob", 0), pick.get("odds", 0))
     base *= get_market_mult(pick.get("sport", "NBA"), pick.get("stat", ""), pick.get("direction"))
-    var_m  = VAKE_MULT["variance"].get(tier, 0.85)
-    tier_m = VAKE_MULT["tier"].get(tier, 0.90)
-    raw = base * var_m * tier_m
+    # Tier mult retired 2026-06-06 (Plan 9 §9F) — BM shrinkage on win_prob upstream.
+    var_m = VAKE_MULT["variance"].get(tier, 0.85)
+    raw = base * var_m
     final = round_units(raw)
     floor = 0.25  # Plan 9 §9K: uniform floor (was 0.50u non-T3)
     # H-9: drop rather than clamp. The floor is a safety net for legitimate
@@ -1915,10 +1927,9 @@ def size_picks_vake(premium):
         base = kelly_units(p["win_prob"], p["odds"])
         market_m = get_market_mult(p.get("sport", "NBA"), p["stat"], p.get("direction"))
 
-        # Variance multiplier
+        # Variance multiplier (tier mult retired 2026-06-06, Plan 9 §9F —
+        # tier calibration now enters via BM shrinkage on win_prob upstream)
         var_m = VAKE_MULT["variance"].get(tier, 0.85)
-        # Tier multiplier
-        tier_m = VAKE_MULT["tier"].get(tier, 0.90)
 
         # Correlation multiplier (general same-game)
         game_seen[game] += 1
@@ -1933,13 +1944,13 @@ def size_picks_vake(premium):
         stat_seen[stat] += 1
         exp_m = 1.00 if stat_seen[stat] == 1 else 0.70
 
-        raw = base * market_m * var_m * tier_m * corr_m * exp_m
+        raw = base * market_m * var_m * corr_m * exp_m
         final = min(round_units(raw), 1.25)
         final = max(final, 0.25)  # minimum 0.25u (Plan 9 §9K — was 0.50u, which over-staked weakest picks 2-2.5× vs own Kelly)
 
         p["size"] = final
         p["size_detail"] = {
-            "base": base, "market": market_m, "var": var_m, "tier": tier_m,
+            "base": base, "market": market_m, "var": var_m,
             "corr": corr_m, "exp": exp_m, "raw": raw
         }
 
@@ -2779,14 +2790,22 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
             if odds is None or odds == 0:
                 continue
 
+            # Tier first — BM shrinkage weight is tier-keyed (sport-aware: NHL AST → T3)
+            tier = get_tier(stat, direction, sport=_sport)
+            if tier is None:
+                continue  # banned
+
+            # Plan 9 §9F: Baker–McHale shrinkage toward market-implied prob.
+            # Applied to ALL props including MLB and combos — those skip Platt and
+            # are the LEAST calibrated paths (MLB uncalibrated, combos ~5pp inflated),
+            # so shrinkage toward market is most defensible exactly there.
+            # Edge recomputed from the shrunk prob (same formula: model_p − no-vig_p).
+            win_prob = apply_bm_shrinkage(win_prob, odds, tier)
+            raw_edge = win_prob - nv_prob
+
             adj_edge = raw_edge * conf
             # Confidence already applied to over_p/under_p before Platt; adj_wp == win_prob.
             adj_wp = win_prob
-
-            # Get tier (sport-aware: NHL AST → T3, NBA/MLB TEAM_TOTAL → T1B)
-            tier = get_tier(stat, direction, sport=_sport)
-            if tier is None:
-                continue  # banned (REB overs)
 
             # Custom-engine pick_score signals (absent/None for SaberSim CSV runs).
             _cold_start_subtype = proj_player.get("cold_start_subtype")
@@ -3222,10 +3241,10 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
             nv = nv_over if direction == "over" else nv_under
             book = tt.get("book_over", "") if direction == "over" else tt.get("book_under", "")
 
-            # NBA/MLB TEAM_TOTAL: T1B (3% min edge) — derivative pricing lags game total.
-            # NHL TEAM_TOTAL: T2 (5%) — less signal quality; monitor CLV before promoting.
-            tt_tier = "T1B" if sport in ("NBA", "MLB") else "T2"
-            tt_min_edge = 0.03 if sport in ("NBA", "MLB") else 0.05
+            # TEAM_TOTAL → T2 all sports (Plan 9 §9F — was T1B/0.03 for NBA/MLB;
+            # the 0.03 floor on a derivative line was the inverted-conviction problem).
+            tt_tier = "T2"
+            tt_min_edge = TIERS["T2"]["min_edge"]
             pick = {
                 "player": f"{team} Team Total",
                 "team_abbrev": get_team_abbrev("", team) if team else "",
@@ -3384,12 +3403,12 @@ def evaluate_f5_lines(f5_lines, players, mode="Default"):
                                     "raw_edge": edge, "adj_edge": edge, "conf": 1.0,
                                     "odds": odds, "nv_prob": nv, "book": book,
                                     "game": game, "sport": "MLB",
-                                    "tier": "T1B", "pick_type": "game_line",  # T2→T1B: softest MLB line, pitcher signals clean
+                                    "tier": "T2", "pick_type": "game_line",  # Plan 9 §9F: T1B→T2 (floor 0.05; was 0.03)
                                     "sigma": sigma, "missing_side": False,
                                 }
                                 passed, gate = check_game_gates(pick)
                                 pick["gate_result"] = "PASS" if passed else gate
-                                if passed and edge >= 0.03:  # T1B: 3% min edge
+                                if passed and edge >= TIERS["T2"]["min_edge"]:
                                     pick["pick_score"] = pick_score(wp, edge, mode, tier=pick["tier"])
                                 else:
                                     pick["size"] = 0
@@ -3727,8 +3746,9 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
 
             raw_edge = win_prob - nv_prob
 
-            # Tier T3 gate — R5: YRFI requires 8% min edge (higher bar until sample is built)
-            min_edge = 0.08 if stat_label == "YRFI" else TIERS["T3"]["min_edge"]
+            # Plan 9 §9F: NRFI/YRFI → T2 (was T3). R5: YRFI keeps its deliberate 8% bar
+            # until sample is built; NRFI follows the T2 floor (0.05).
+            min_edge = 0.08 if stat_label == "YRFI" else TIERS["T2"]["min_edge"]
             if raw_edge < min_edge:
                 continue
 
@@ -3741,7 +3761,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
                 "raw_edge": raw_edge, "adj_edge": adj_edge, "conf": 1.0,
                 "odds": odds, "nv_prob": nv_prob, "book": book,
                 "game": game, "sport": "MLB",
-                "tier": "T3", "pick_type": "game_line",
+                "tier": "T2", "pick_type": "game_line",  # Plan 9 §9F: T3→T2
                 "sigma": 0, "missing_side": False,
                 "nrfi_detail": {
                     "home_pitcher": home_pitcher["name"],
@@ -4620,8 +4640,8 @@ def log_candidates(candidates, mode, today_str):
     def _5050_score(p):
         wp_n = (p.get("win_prob", 0.5) * 100 - 50) / 25 * 100
         e_n  = (p.get("adj_edge", p.get("edge", 0)) * 100) / 15 * 100
-        tier = p.get("tier")
-        return (0.50 * wp_n + 0.50 * e_n) * PICK_SCORE_TIER_MULT.get(tier, 1.00)
+        # Tier mult retired 2026-06-06 (Plan 9 §9F) — BM shrinkage upstream.
+        return 0.50 * wp_n + 0.50 * e_n
 
     with _pick_log_lock(path):
         with open(path, "a", newline="", encoding="utf-8") as f:
@@ -6129,7 +6149,7 @@ def _passes_killshot_v2_gate(pick):
     """v3 auto-qualify gate (name kept for test/API stability). ALL must pass:
     score floor, odds range, odds-dependent wp floor, stat allowlist.
     Tier requirement dropped in v3 — T1 WR (46.6%) < T2 (60.3%); selection on
-    floors is strictly better, and tier already enters via PICK_SCORE_TIER_MULT.
+    floors is strictly better, and tier already enters via BM shrinkage (Plan 9 §9F).
     Returns (True, "") on pass, (False, reason) on fail.
     Manual promotes bypass score/stat but NOT the odds/wp checks.
     """
@@ -6162,13 +6182,10 @@ def _assert_killshot_invariants():
         f"dead entries can never fire. Remove them from the allowlist (or lift "
         f"the suspension in SUSPENDED_STATS) before starting the engine."
     )
-    tier_universe = set()
-    for _tier_def in TIERS.values():
-        tier_universe |= set(_tier_def.get("stats", ()))
-    orphans = KILLSHOT_STAT_ALLOW - tier_universe
+    orphans = KILLSHOT_STAT_ALLOW - set(STAT_FAMILY_TIER)
     assert not orphans, (
-        f"KILLSHOT_STAT_ALLOW contains stat(s) {sorted(orphans)} not present in "
-        f"any tier's stat set — they can never reach the qualified pool."
+        f"KILLSHOT_STAT_ALLOW contains stat(s) {sorted(orphans)} not routed to any "
+        f"tier in STAT_FAMILY_TIER — they can never reach the qualified pool."
     )
 
 
