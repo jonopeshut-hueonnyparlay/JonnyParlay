@@ -65,17 +65,7 @@
 - **`_POS_FLOW` PG receiver fix** (2026-05-10): NBA API never returns position=PG, so the PG receiver slot in every `_POS_FLOW` row was always skipped → SG injuries silently redistributed only 78% of missing minutes. PG weight folded into SG; same-position weights unchanged. Empirical surplus analysis (84k rows, 3 seasons) attempted but methodology flawed for same-position flows: 64% of C-absent events have no rotation-quality backup C (teams go small ball), diluting C→C empirical signal to near-zero. Intuitive same-position weights correct for the cases the code actually handles.
 
 ## Closed Audits
-Full fix-pass details: `docs/audits/AUDIT_HISTORY.md`
-
-| Audit | Findings | Status |
-|-------|----------|--------|
-| 2026-05-29 accuracy overhaul | 4 tracks | ALL CLOSED (commit 9712b5b). NRFI Poisson rewrite, cross-type correlation kills, F5 scalar 0.503→0.540, MLB SGP builder. 1038 tests passing. |
-| 2026-05-28 full re-audit (7-agent) | 1C/8H/16M | ALL CLOSED (commit 2e3738a). Key: post_nrfi_bonus MLB routing, F5 projection lookup, ks_record_line, MLB results_graphic. |
-| 2026-05-27 full system | 2C/11H/10M | ALL CLOSED. Shadow-stats system (10 new markets), NRFI pitcher fix, card filter relaxation. |
-| 2026-05-26 gate/rule/filter | 2C/5H/6M | ALL CLOSED (commit 89c9605). Full detail: `docs/audits/gate_audit_2026-05-26.md`. |
-| 2026-05-25 full system (12-track) | 2C/10H/23M | ALL CLOSED (18 commits). REB→NB(r=10.18) post-audit. |
-| 2026-06-02 K retirement | Retire K from eligible universe | CLOSED (commit 88a6e41). K permanently removed from all sport pipelines. mlb_sgp_builder K stat dropped. G_K_NO_UNDERS + G_K_MIN_LINE gates retired. |
-| Pre-2026-05-25 | multiple audits | All C/H/M closed. See `docs/audits/AUDIT_HISTORY.md`. |
+Full details: `docs/audits/AUDIT_HISTORY.md` — all pre-2026-06 audits closed.
 
 ---
 
@@ -203,9 +193,6 @@ Two functions in run_picks.py run before `build_safest6_parlay()` to prevent ant
 
 **SGP hard kills** (in sgp_builder.py and mlb_sgp_builder.py) are separate — they operate within a single SGP slip, not the main card/longshot pool. MLB-specific kills:
 - R2_MLB: OUTS-under + HITS-under same game → kill (pitcher struggles = more hits; negative correlation).
-
-## Context Sanity System
-**DELETED 2026-05-23.** All context system code removed from run_picks.py. The `context_verdict` column in pick_log.csv remains (existing rows carry "disabled" value). The `--context` flag no longer exists.
 
 ## MLB Status
 **LIVE as of 2026-05-20.** Picks post to Discord and log to `pick_log.csv`. CLV captured automatically by daemon. Historical shadow log at `data/pick_log_mlb.csv` (Apr 12–May 19, pre-go-live).
