@@ -50,9 +50,9 @@ from projections_db import get_team_tov_rate
 from nba_projector import (
     compute_shooting_rates, compute_per_minute_rates, compute_reb_rates,
     compute_ast_rate, compute_stl_blk_rates,
-    EWMA_SPAN, LEAGUE_AVG_PACE, MATCHUP_CLIP,
+    LEAGUE_AVG_PACE, MATCHUP_CLIP,
     PTS_BLEND_ALPHA, BLEND_BIAS_CORRECTION,
-    _REB_POS_OREB_PRIOR, _REB_POS_DREB_PRIOR, REB_ALPHA,
+    REB_ALPHA,
     AST_ALPHA, LEAGUE_AVG_TOV_RATE,
     _STL_POS_PRIOR, _STL_PRIOR_N,
     project_minutes, classify_role, _ROLE_MIN_MINUTES, MIN_GAMES_FOR_TIER,
@@ -211,7 +211,7 @@ def _compute_pts_components(player_id: int, team_id: int, opp_team_id: int,
 def project_3pm(player_id: int, team_id: int, opp_team_id: int,
                 position: str, game_date: str,
                 season: str, proj_min: float, db_path: Path,
-                alpha: float = 0.50) -> float | None:
+                alpha: float = 0.60) -> float | None:
     """Project 3PM using alpha-weighted blend of FGA-decomp + per-min baseline.
 
     FGA path: proj_3pa * fg3_pct * matchup_pts (extracted from PTS decomposition).
