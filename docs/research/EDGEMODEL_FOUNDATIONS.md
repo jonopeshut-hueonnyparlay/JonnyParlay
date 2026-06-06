@@ -462,3 +462,227 @@ Overall section verdict: **PERIODIC_RECAL** for the architecture, with one **NEE
 - **FG% padding test:** at the July offseason refit, run the FG3M-style grid for a PAD_FG=103 (or PAD_2P=127) career-padded blend on the FG%/PTS decomp path; deploy only on MAE/bias improvement over span-10 EWMA alone. If, as with 3P%, the residual bias proves shared across blend components, mark FG% LOCKED and close.
 - **FG3A-rate responsiveness:** if post-trade/rotation-change FG3M projection lag is observed (systematic mis-projection in a player's first ~4 games after a confirmed role change), consider a shorter span or a role-change reset for FG3A rate only.
 - **OT_MIN_CAP:** revisit only if the NBA changes OT format, or if any projected minute mean ever exceeds ~42 (would indicate an upstream minutes-model error, not a cap problem).
+
+---
+---
+
+# PLAN 8 — Player Context Adjustments (2026-06-06)
+# Files: EdgeModel/engine/nba_projector.py + EdgeModel/engine/injury_parser.py
+# Research model: claude-opus-4-8 with web search (one agent per section)
+
+Validates every player-context adjustment — home/away deltas, blowout model,
+days-rest model, Bayesian REB priors, role classification, cold-start treatment,
+injury redistribution, and injury status probabilities — against published
+sports-analytics and sports-science literature. Same format and verdict
+vocabulary as Plan 7 above.
+
+### Code ground-truth corrections found during source verification
+Documented here because the planning doc (plans_7_8_9.md) stated otherwise or omitted them:
+
+- **8C:** `DAYS_REST_HALF_LIFE=1.5` is an **e-folding time**, not a half-life. The decay is `exp(−days_rest/1.5)` → true half-life ≈ 1.04 days. (Already flagged in STATISTICAL_FOUNDATIONS ground-truths; restated because 8C evaluates the recovery curve directly.)
+- **8D:** there are **two** REB prior systems, not one. (1) per-minute **baseline** path priors `_REB_RATE_PRIOR_RS/PO` with `_REB_RATE_PRIOR_N=12`; (2) decomposed **OREB/DREB** path priors `_REB_POS_{O,D}REB_PRIOR_{RS,PO}` with `_REB_PRIOR_N_OREB=_REB_PRIOR_N_DREB=5` (12 was tried and rolled back as too aggressive). The plan doc only mentioned N=12. **Further discovery (8D agent):** the N=12 baseline prior is applied *only* at `_reb_n_games==0` (cold-start) — for any player with real data the raw observed rate is used, so N=12 never partial-pools; it is effectively a dead parameter and the prior *value* is the entire cold-start anchor. And that value is **deflated ~1.8–2.4×** by a per-game-vs-per-36 units error in its derivation (see §8D NEEDS_CHANGE).
+- **8A:** STL is **deliberately excluded** from `_HOME_AWAY_DELTA` — measured within-player delta was −1.59% (away > home, unexpected direction, judged noise). Not an omission.
+- **8G:** `_POS_FLOW` PG column is always 0.00 because the NBA API never returns position=PG; PG receiver weight was folded into SG (2026-05-10 fix). Flow weights are renormalized to position groups that actually have eligible players; M05 adds a C-fallback at a 5.0-min threshold when no backup C qualifies at 8.0; bumps are M16-clamped to 48.0 and per-player capped by `ROLE_MAX_MIN`.
+- **8H:** binary in/out (`questionable`/`GTD`/`probable` → play_prob 1.00) is a deliberate product decision (2026-05-06) grounded in void-grading: NBA props at all major CO books VOID on DNP, so probabilistic discounting generates structurally −EV unders against Q-listed players.
+
+### Verified source values (read 2026-06-06)
+
+| § | Constants | Location |
+|---|---|---|
+| 8A | `_HOME_AWAY_DELTA`: pts +0.0235, reb +0.0088, ast +0.0333, fg3m +0.0452, blk +0.0439, tov −0.0122 (multiplicative half-deltas: home ×(1+δ), away ×(1−δ)); STL excluded | nba_projector.py:352-359 |
+| 8B | Margins 15/25; weights bench 0.55/0.75, star 0.75/0.90; `_BLOWOUT_MIN_VALID_GAMES=12`; sigmoid k=0.15, mid=20.0, max_reduction=0.19 (refit 2026-05-06, 24,600 rows, MSE 0.00008) | nba_projector.py:139-202, 564-617, 1102-1105 |
+| 8C | `DAYS_REST_MAX_REDUCTION=0.10`, `DAYS_REST_HALF_LIFE=1.5` (e-folding); role scalars 1.0/0.95/0.90/0.75/0.90; formula `0.10 × role_scalar × exp(−days_rest/1.5)`; comment: "calibrated from NBA literature (~3 games data)" | nba_projector.py:205-222, 1060-1063 |
+| 8D | Baseline path `_REB_RATE_PRIOR_RS` PG=.053/SG=.057/SF=.079/PF=.111/C=.165 (N=12, cold-start only); decomposed OREB/DREB priors RS & PO (N=5); `REB_ALPHA=0.45` | nba_projector.py:385-398, 1466-1494 |
+| 8E | starter: sr≥0.60 AND avg_min≥26; sixth_man ≥20; rotation ≥12; spot ≥5; else cold_start. Trailing-10-game window. Refit 2026-05-09 on 76,604 snapshots | nba_projector.py:488-518 |
+| 8F | taxi cap 12.0; returner (≥180d) min(career,22) else 14; ext_absence (60–179d) min(career×0.70,25) else 14; new_acq (<60d) min(career,28) else 16; `COLD_START_PLAYOFF_SCALAR` .400/.400/.700/.750; `MIN_GAMES_FOR_TIER=10` | nba_projector.py:278-283, 1158-1198 |
+| 8G | `_POS_FLOW` (PG col dead); `REDISTRIB_PRIMARY_SHARE=0.50`, `REDISTRIB_EFFICIENCY=0.90`, `REDISTRIB_MIN_ELIGIBLE=8.0`, C-fallback 5.0 | injury_parser.py:74-88, 363-402 |
+| 8H | `_STATUS_MAP`: out=(O,0.00), doubtful=(O,0.10), questionable=(Q,1.00), GTD=(GTD,1.00), probable=(P,1.00); `_TRADED_AWAY_DAYS=30` | injury_parser.py:16, 44-59 |
+
+### VERDICT SUMMARY (sections 8A–8H)
+
+| § | Topic | Verdict |
+|---|---|---|
+| 8A | Home court advantage deltas | MIXED — AST/BLK/TOV/REB CONFIRMED; PTS CONFIRMED_WITH_CAVEAT; **FG3M PERIODIC_RECAL** (9% spread exceeds published ~3%); STL exclusion CONFIRMED_WITH_CAVEAT; deltas-as-set PERIODIC_RECAL (secular HCA decline) |
+| 8B | Blowout adjustment | MIXED — cutpoints 15/25 + star weights + sigmoid (k/mid) CONFIRMED/LOCKED; bench weights + min-games ACCEPTABLE; max_reduction PERIODIC_RECAL; PBP filtering DATA_GATED upgrade |
+| 8C | Days-rest model | **MIXED — `max_reduction=0.10` NEEDS_CHANGE (overstates played-game effect); travel/altitude/density omissions NEEDS_CHANGE (material); naming mislabel NEEDS_CHANGE (cosmetic)**; decay form CONFIRMED; role gradient + channel CONFIRMED_WITH_CAVEAT |
+| 8D | Bayesian REB priors | **MIXED — `_REB_RATE_PRIOR` (System 2) NEEDS_CHANGE (deflated ~2×, all positions — extends H01)**; decomposed priors + N=5 + denominator CONFIRMED; PO-vs-RS CONFIRMED_WITH_CAVEAT (SF over-deflated); REB_ALPHA LOCKED |
+| 8E | Role classification thresholds | *(batch 2)* |
+| 8F | Cold start treatment | *(batch 2)* |
+| 8G | Injury redistribution model | *(batch 2)* |
+| 8H | Injury status probabilities | *(batch 2)* |
+
+---
+
+## SECTION 8A — Home Court Advantage Deltas
+
+**Question:** Are the six `_HOME_AWAY_DELTA` half-deltas (PTS +2.35%, REB +0.88%, AST +3.33%, FG3M +4.52%, BLK +4.39%, TOV −1.22%), the multiplicative symmetric form, the STL exclusion, and the same-delta-RS-and-playoffs assumption consistent with published NBA home-court-advantage and scorekeeper-bias research?
+
+**Code ground truth:** `nba_projector.py:345-359` — within-player empirical deltas `(home_avg − away_avg)/player_avg`, averaged across players, applied multiplicatively and symmetrically: `home_proj = proj × (1+δ)`, `away_proj = proj × (1−δ)`. Implied full home-vs-away spreads: PTS ~4.7%, REB ~1.8%, AST ~6.7%, FG3M ~9.0%, BLK ~8.8%, TOV ~−2.4%. STL measured at −1.59% and excluded. Same deltas in RS and playoffs.
+
+**Findings:**
+
+1. **Team-level HCA baseline matches direction; PTS magnitude is on the high side.** Published team splits: home teams scored ~3.4% more and committed ~3.1% fewer turnovers (2003–2011, [Bleacher Report](https://bleacherreport.com/articles/1520496-how-important-is-home-court-advantage-in-the-nba)); an all-time-leaders study found players scored 2.8% more at home ([Jeffrey Fan, "Biased Stats in the NBA"](https://jeffreyfan.com/2019/12/08/biased-stats-in-the-nba/)). Modern HCA has shrunk to <2 net points ([Marc Stein](https://marcstein.substack.com/p/what-has-happened-to-homecourt-advantage); [Sparkle Technologies 43-yr analysis](https://sparkletechnologies.com/blog/nba-disappearing-home-court-advantage)). The model's ~4.7% PTS full spread is ~1.4–2× the published 2.8–3.4% team gap — legitimately inflatable by an *unweighted within-player* mean (bench players show outsized relative home boosts, [NBC Sports](https://www.nbcsports.com/fantasy/basketball/news/article-numbers-game-home-vs-away-fantasy-splits-0)), but warrants an SE check at refit.
+
+2. **AST +6.67% spread is squarely confirmed.** Career-leader analysis found assists carry a 6.4% relative home bias on top of the ~2.8% scoring baseline ([Fan](https://jeffreyfan.com/2019/12/08/biased-stats-in-the-nba/)); other analyses put home assist inflation at "nearly 8 percent" ([Daily Thunder](https://www.dailythunder.com/nba-scorekeepers-inflated-stats-and-the-thunder/)); 2019-20 league data confirm superior home assists ([systematic review, PMC11503446](https://pmc.ncbi.nlm.nih.gov/articles/PMC11503446/)). Model 6.67% is in-range, slightly conservative.
+
+3. **BLK +8.78% spread is directionally confirmed and conservative.** Home block inflation is the largest of any stat: 12.3% relative bias ([Fan](https://jeffreyfan.com/2019/12/08/biased-stats-in-the-nba/)), "more than 15 percent" in scorekeeper analyses ([Daily Thunder](https://www.dailythunder.com/nba-scorekeepers-inflated-stats-and-the-thunder/)). Blocks and assists are exactly the two stats van Bommel & Bornn identify as most scorekeeper-discretionary ([arXiv:1602.08754](https://arxiv.org/abs/1602.08754); [DMKD 2017](https://link.springer.com/article/10.1007/s10618-017-0497-y)).
+
+4. **TOV −2.4% spread and REB +1.76% spread both match published splits.** Home teams committed 3.1% fewer turnovers (refs call fewer discretionary turnovers on home teams — Moskowitz & Wertheim *Scorecasting*, via [Chicago Booth Review](https://www.chicagobooth.edu/review/home-field-advantage-facts-and-fiction)); rebounds show the lowest home bias of any stat (~1.4% relative, [Fan](https://jeffreyfan.com/2019/12/08/biased-stats-in-the-nba/)).
+
+5. **FG3M +9.04% spread is the least externally corroborated constant.** Published shooting splits show road teams shoot only ~1 pp worse from three (~3% relative on makes; [Marc Stein](https://marcstein.substack.com/p/what-has-happened-to-homecourt-advantage)), and FT% is essentially identical home/away (*Scorecasting*) — arguing against large *real* crowd shooting effects. A 9% FG3M gap likely combines an attempt-ecology effect (home teams generate 12.7% more fast-break points → more assisted/transition threes, [Bleacher Report](https://bleacherreport.com/articles/1520496-how-important-is-home-court-advantage-in-the-nba)) with low-count noise (small per-game FG3M makes within-player ratios high-variance). Direction confirmed; magnitude needs SE verification.
+
+6. **STL exclusion is defensible but the measured sign is anomalous.** Published steal home bias is small-*positive* (+3.2% relative, [Fan](https://jeffreyfan.com/2019/12/08/biased-stats-in-the-nba/)); steals are far less scorekeeper-discretionary than AST/BLK (van Bommel & Bornn model only assists and blocks, [project page](https://www.matthewvanbommel.com/projects/nba_scorekeeper_bias.html)). The model's −1.59% conflicts in sign with the small published positive; applying zero is the correct conservative call when the measured sign contradicts the literature and the magnitude is marginal.
+
+7. **Playoff stability: HCA *strengthens* in playoffs, so a flat delta is conservative, never anti-directional.** RS HCA ~2.7 points rises to ~4.5 in playoffs ([SportsHandle](https://sportshandle.com/court-advantage-nba-playoffs/); [SI](https://www.si.com/nba/what-does-home-court-advantage-mean-historically-nba-playoffs)); scorekeeper bias persists in playoffs (home-hired scorekeepers, season-to-season generosity r≥0.776, [van Bommel & Bornn](https://www.matthewvanbommel.com/projects/nba_scorekeeper_bias.html)). But secular decline is real (home win% 66.2% in the 1980s → ~55% in the 2020s; COVID empty-arena natural experiment showed ~2 crowd-driven points, [AIP](https://www.aip.org/inside-science/the-subtle-biases-that-influence-home-court-advantage)) — trailing-window fits track this only if refit.
+
+8. **CRITICAL — scorekeeper artifact validates the adjustment rather than invalidating it.** AST/BLK home inflation is substantially a *recording* artifact (one player's potential assists 27.41% more likely to be credited; persistence r≥0.776, [van Bommel & Bornn 2017](https://link.springer.com/article/10.1007/s10618-017-0497-y)). Player props settle on the **official recorded box score**, so the model *should* predict recorded stats, artifact and all — the +3.33% AST and +4.39% BLK deltas are correct in kind *because* of the artifact, not despite it. One refinement left on the table: scorekeeper bias is venue-specific, so a league-average delta blurs real per-arena variance.
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| AST +3.33% | CONFIRMED | Published home assist inflation 6.4–9% full spread; model conservative |
+| BLK +4.39% | CONFIRMED | Published 12–15% full spread; model conservative; scorekeeper literature directly supports |
+| TOV −1.22% | CONFIRMED | Published −3.1%/game turnover reduction; discretionary-call mechanism |
+| REB +0.88% | CONFIRMED | Published rebound home bias smallest of all stats (~1.4% rel) |
+| PTS +2.35% | CONFIRMED_WITH_CAVEAT | Direction solid; 4.7% spread ~1.4–2× team-level 2.8–3.4%; verify SE at refit |
+| FG3M +4.52% | PERIODIC_RECAL | Direction confirmed; 9% spread exceeds published ~3% shooting-split; low-count noise — re-estimate with SE |
+| Multiplicative symmetric form | ACCEPTABLE | Standard projection practice; equal relative / larger absolute for stars is fair |
+| STL exclusion | CONFIRMED_WITH_CAVEAT | Published bias small-positive vs model's −1.59%; zero is right conservative call; re-measure each refit |
+| Same delta RS vs PO | ACCEPTABLE | Playoff HCA *stronger*; flat delta conservative, never anti-directional |
+| Deltas as a set (refit cadence) | PERIODIC_RECAL | NBA HCA declining secularly; trailing-window fits track only if refit annually |
+
+**Condition to Revisit:**
+1. **July 2026 refit:** re-estimate all six deltas on the trailing 3-season window with SEs; flag FG3M specifically — if its spread stays >7% with SE excluding ~3–4%, decompose attempt-volume vs accuracy before keeping 0.0452.
+2. **STL re-measurement each refit:** add it if the within-player delta turns positive >+1.5% with |t|>2; if it stays negative at |t|>2 across two refits, audit home/away game tagging.
+3. **Playoff-specific deltas:** once the playoff sample reaches ~2,500 player-games, test whether PO deltas exceed RS (literature predicts they do); a separate PO set is justified if PTS/AST PO deltas exceed RS by >50% relative.
+4. **Venue-specific scorekeeper adjustment (DATA_GATED):** if per-arena AST/BLK prop samples reach ~100 player-games/venue, evaluate per-arena coefficients (persistence r≥0.776 makes venue effects stable enough to fit).
+5. **HCA regime change:** league-wide home win% <53% or >58% for a full season triggers an out-of-cycle delta refit.
+
+---
+
+## SECTION 8B — Blowout Adjustment
+
+**Question:** Are the model's two blowout mechanisms — (1) historical down-weighting of blowout games in the EWMA baseline, and (2) forward-looking sigmoid minutes reduction keyed to the Vegas spread — consistent with published garbage-time research and spread-to-margin distributions?
+
+**Code ground truth:** Mechanism 1 (`nba_projector.py:139-202`): final margin ≥25 ("heavy") / ≥15 ("light") down-weights the game in the EWMA — bench 0.55/0.75, starters 0.75/0.90 — only when ≥12 non-blowout games remain. Mechanism 2 (`:564-617, 1102-1105`): today's projected minutes reduced by `0.19 / (1 + exp(−0.15·(|spread| − 20)))` — refit 2026-05-06 on 24,600 player-games (MSE 0.00008) against margin-conditional anchors (20–25: 11.2%, 25–30: 13.8%, 35+: 18.9%). The sigmoid input is the pre-game **spread**, calibrated to **final-margin** anchors — correct, because margin ≈ Normal(spread, σ≈12), so the spread response must be flatter.
+
+**Findings:**
+
+1. **Cutpoints 15/25 match the industry-standard garbage-time definition.** Cleaning the Glass / Ben Falk use margin ≥25 at start of Q4 as the canonical garbage-time threshold ([CTG garbage-time guide](https://cleaningtheglass.com/stats/guide/garbage_time); [NBA-in-R implementation](https://nbainrstats.netlify.app/post/identifying-garbage-time-on-nba-play-by-play/)). The model's **25-pt heavy cutpoint matches exactly**; the 15-pt light cutpoint matches the published coach-rest threshold entering Q4 ([The Wager Theorem](https://thewagertheorem.com/nba-player-props-risk-adjustment/); [LSports](https://www.lsports.eu/blog/the-30-point-problem-how-basketball-blowouts-expose-trading-vulnerabilities/)). [Kubatko et al. 2007](https://www.degruyter.com/abstract/j/jqas.2007.3.3/jqas.2007.3.3.1070/jqas.2007.3.3.1070.xml) grounds the per-minute normalization; CTG is the operative garbage-time standard.
+
+2. **Star weight 0.75 in 25+ games brackets the data.** A starter typically loses the entire Q4 (~12 min, ~33%) once a blowout is established entering Q4 ([Wager Theorem](https://thewagertheorem.com/nba-player-props-risk-adjustment/)), but averaged over all 25+ *final-margin* games (many close until late) the model's own refit found 13.8–18.9% average reduction. A 25% information discount sits between the average and the worst case — a minutes-proportional discount. Bench 0.55 is also directionally supported (bench more present in garbage time, largest distortions, [82games](http://www.82games.com/comm14.htm); [VDG Sports](https://vdgsports.com/player-efficiency-rating/)).
+
+3. **Sigmoid k=0.15, mid=20 reproduces the correct Bayesian expectation.** Final margin ≈ Normal(spread, σ≈12) (Winston first-principles, [waynewinston.com](https://waynewinston.com/wordpress/p_2333/); Stern normal-margin framework, [arXiv:1902.10067](https://arxiv.org/pdf/1902.10067)). Under N(spread,12): P(margin≥25) = 4.8% at spread 5, 10.6% at 10, 20.2% at 15, 33.9% at 20. Marginalizing the model's margin-conditional anchors over this distribution gives E[reduction|spread] ≈ 3.5%/5.7%/8–9% at spreads 10/15/20 — the sigmoid outputs 3.5%/6.1%/9.5%. The shallow shape is *mathematically required*, not a tuning artifact; the old steep k=0.40/mid=12 would have double-counted realization risk. ([Boyd's Bets](https://www.boydsbets.com/ats-margin-standard-deviations-by-point-spread/): ATS variance doesn't grow with NBA spread, so a single σ is safe.)
+
+4. **max_reduction=0.19 matches the 18.9% margin-35+ asymptote and is conservative on a spread input** (sigmoid output only ~12.9% at spread 25, ~17.1% at spread 35 — spreads that essentially never print). Blowout base rates are *rising* (34% of April 2026 games decided by 20+, [Sportico](https://www.sportico.com/leagues/basketball/2026/nba-tanking-data-draft-lottery-odds-1234890511/); [ESPN "20 is the old 12"](https://www.espn.com/nba/story/_/id/39698420/no-lead-safe-nba-big-comebacks-blown-leads)) — if anything the cap may drift slightly low, not high.
+
+5. **MIN_VALID_GAMES=12 prevents the filter from amplifying small-sample noise** — consistent with the stabilization/padding literature's small-sample warnings ([Medvedovsky](https://kmedved.com/2020/08/06/nba-stabilization-rates-and-the-padding-approach/)). No published value for this exact guard; 12 is a reasonable convention. The model down-weights rather than excludes, so even when active the sample shrinks by at most ~25–45% of the blowout games' weight.
+
+6. **Whole-game down-weighting is the correct-direction second-best; PBP stint exclusion is the published upgrade.** Garbage time inflates counting-stat *rates*, not just minutes (PER "artificially inflated", [VDG](https://vdgsports.com/player-efficiency-rating/); fantasy "volume up, efficiency down", [PFF](https://www.pff.com/news/fantasy-composting-digging-into-garbage-time)) — exactly what matters for PTS/REB/AST props. CTG's best practice drops the garbage-time *possessions* and keeps the rest of the game at full weight; whole-game down-weighting (a) discounts the competitive 36 min along with the contaminated 6, and (b) uses final margin as a noisy proxy for *when* the game went non-competitive. Defensible given the engine consumes box scores, not PBP.
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| Margin cutpoints 15/25 | CONFIRMED | 25 = CTG start-of-Q4 garbage-time threshold exactly; 15 = published coach-rest threshold |
+| Star weights 0.75/0.90 | CONFIRMED | 25% discount brackets empirical 13.8–18.9% avg loss + ~33% full-Q4 tail |
+| Bench weights 0.55/0.75 | CONFIRMED_WITH_CAVEAT | Direction/asymmetry supported; exact magnitudes are judgment values — validate vs held-out bench MAE |
+| Sigmoid k=0.15, mid=20.0 | LOCKED | Reproduces E[reduction\|spread] under margin~N(spread,12) to within ~1pp; flattening is required, not tuned |
+| max_reduction=0.19 | PERIODIC_RECAL | Matches 18.9% anchor; conservative on spread input; recalibrate with rising league blowout rate |
+| MIN_VALID_GAMES=12 | ACCEPTABLE | Consistent with small-sample stabilization warnings; convention, not a calibrated constant |
+| Down-weighting vs PBP filtering | DATA_GATED (upgrade) | Correct-direction second-best; PBP stint exclusion is published best practice, gated on acquiring PBP data |
+
+**Condition to Revisit:**
+1. If the 20+-margin game rate stays ≥25–30% over a full season, re-run the 24.6k-row sigmoid refit (anchors and cap shift upward).
+2. Sigmoid shape is conditional on σ≈12; if realized margin SD exceeds ~13.5–14 (pace/3PT), re-derive the E[reduction|spread] convolution (curve flattens further).
+3. If play-by-play feeds are ever ingested, replace Mechanism 1 with CTG-style stint exclusion.
+4. At next minutes-scalar refit, test the 0.55/0.75 bench weights vs held-out bench MAE (only weights lacking a direct empirical anchor).
+5. If books regularly post spreads ≥22–25 (tanking matchups), verify the sigmoid tail against realized starter minutes — current fit has almost no training mass there.
+
+---
+
+## SECTION 8C — Days-Rest / Fatigue Model
+
+**Question:** Does the days-rest adjustment — 10% max minutes reduction at 0 days rest decaying as `exp(−days/1.5)`, scaled by a role gradient (starter 1.0 → spot 0.75) — match published NBA back-to-back, recovery-kinetics, role-sensitivity, and travel/altitude/density evidence?
+
+**Code ground truth:** `reduction = 0.10 × role_scalar × exp(−days_rest/1.5)`, applied to projected **minutes** only (stats scale downstream). The 1.5 constant is labeled "half-life" but is an **e-folding time** (true half-life = 1.5·ln2 ≈ 1.04 d): 10.0% at 0 days, 5.1% at 1, 2.6% at 2, 1.4% at 3. Role gradient starter 1.0 / sixth_man 0.95 / rotation 0.90 / spot 0.75 / cold_start 0.90. Comment: "calibrated from NBA literature (~3 games data)."
+
+**Findings:**
+
+1. **Team-level B2B scoring effect is small and the modern increase is DNP-driven, not fatigue.** Second-night penalty ~0.5–1.0 pts in the mid-2010s, rising to ~1.0 (home)/~2.5 (road) by 2022-23 — attributed to **strategic star rest (DNP), not played-game fatigue** ([The Data Jocks](https://thedatajocks.com/the-stats-behind-back-to-back-nba-games/); [HeatCheckHQ](https://heatcheckhq.io/blog/nba-back-to-back-rest-analysis)). Efficiency splits tiny: 4th-in-5 ≈ −1.0 pts/100, 3rd-in-4 ≈ −0.1, 2-days-rest ≈ +0.3 ([NBAstuffer](https://www.nbastuffer.com/how-rest-day-stats-can-give-you-the-edge-in-your-nba-predictions/)).
+
+2. **Peer-reviewed congestion effects on PLAYED performance are real but tiny and live in efficiency, not minutes.** Esteves et al. (2021, *Eur J Sport Sci*) found shooting-efficacy stats carried the B2B-vs-rest discrimination ([Tandfonline](https://www.tandfonline.com/doi/abs/10.1080/17461391.2020.1736179)); the 1,230-game congestion study found paint/3PT higher with rest but **trivial effect sizes (Cohen's d ≈ 0.05–0.08)**, possession-normalized, and did **not analyze minutes** ([PMC7925613](https://pmc.ncbi.nlm.nih.gov/articles/PMC7925613/)). Teramoto & Cross (2016): B2B alone did not raise injury rate; away + B2B did ([PubMed 27622705](https://pubmed.ncbi.nlm.nih.gov/27622705/)).
+
+3. **A direct fatigue-modeling paper argues the effect is overstated.** "Tired of Misattribution: Modeling Player Fatigue in the NBA" concluded cumulative fatigue's impact on outcomes is **minimal and overstated** once existing rest management is accounted for ([arXiv:2112.14649](https://arxiv.org/abs/2112.14649)).
+
+4. **Recovery-kinetics literature supports the exponential decay FORM with a ~1-day functional half-life.** Neuromuscular decrements (CMJ) are largest within 24h and **largely recover by ~48h**; biochemical markers (CK) persist ≥72h ([PMC5841509](https://pmc.ncbi.nlm.nih.gov/articles/PMC5841509/)). The Banister fitness-fatigue model is itself two exponential decays with the fatigue constant the shorter ([Humankinetics IJSPP](https://journals.humankinetics.com/view/journals/ijspp/17/5/article-p810.xml)). The model's 1.04-day half-life (~50% by 1 day, ~94% by 4) is consistent; the residual 2.6% at 2 days is mildly high but within noise.
+
+5. **Role gradient direction (starters > bench) is supported; the mechanism risks double-counting.** DFS data: premium ($7k+) players posted −0.44 Plus/Minus on 1-day rest vs +0.72 for the general pool ([FantasyLabs](https://www.fantasylabs.com/articles/nba-the-numbers-on-back-to-backs/)). But much of the star effect is **full DNP-rest (handled by injury status, not this scalar)**; among games stars actually play, the minutes change is modest — so a 10% minutes haircut on a played starter may double-count what the DNP path already removed.
+
+6. **Omitted factors are MATERIAL — several rival or exceed the 10% B2B effect.** Roy & Forest (2018, *J Sleep Res*): NBA road teams traveling eastward won 45.4% vs 36.2% westward — a **~9pp swing** ([Wiley](https://onlinelibrary.wiley.com/doi/abs/10.1111/jsr.12565)); Charest et al. (2021, *JCSM*): eastward travel significantly raises B2B win probability ([JCSM](https://jcsm.aasm.org/doi/10.5664/jcsm.9446)); Denver altitude produces the **largest home edge in major sports (~67% win prob), ~5 days to acclimate** ([Sportico](https://www.sportico.com/leagues/basketball/2024/denver-nuggets-home-court-advantage-1234777526/)). 4th-in-5 ≈ −1 pt/100 ([NBAstuffer](https://www.nbastuffer.com/rest-days-factor-nba-scheduling/)). The model intentionally omits all three.
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| `max_reduction=0.10` (minutes) | **NEEDS_CHANGE** (likely too high for *played* games) | Published played-game B2B effects ~0.5–1 pt / d≈0.05–0.08; "Tired of Misattribution" finds impact minimal; most of the visible 10%+ swing is DNP-driven (handled elsewhere) |
+| Decay FORM (exponential) | CONFIRMED | Banister fitness-fatigue + team-sport recovery kinetics are exponential |
+| 1.5 e-folding / ~1.04-d half-life | CONFIRMED_WITH_CAVEAT | Implied curve (~50% by 1d, ~94% by 4d) consistent with neuromuscular recovery by ~48h; 2.6% at 2 days mildly high |
+| Role gradient (starter 1.0 > spot 0.75) | CONFIRMED_WITH_CAVEAT | DFS data confirm direction; star effect largely realized as DNP → double-count risk on played starters |
+| Minutes-only channel | CONFIRMED_WITH_CAVEAT | Minutes (coach rest-mgmt) is the dominant box-score channel; tiny per-minute shooting decline uncaptured (acceptable given effect size) |
+| Travel / altitude / density omissions | **NEEDS_CHANGE** (material) | Westward ~9pp swing; Denver altitude largest HCA in sports; 4-in-5 ≈ −1 pt/100 — each rivals the modeled B2B effect |
+| "half_life" naming | **NEEDS_CHANGE** (cosmetic/doc) | Constant is e-folding time, not half-life (off by ln2); rename or convert |
+| Overall calibration ("~3 games data") | DATA_GATED | Literature-derived prior defensible *as a prior*; in-sample validation essentially absent |
+
+**Condition to Revisit:**
+1. **Validate at n≥500 B2B player-games:** regress actual-minus-projected MINUTES residual by days-rest bucket (0/1/2/3+), restricting to players who appeared (exclude DNPs to avoid double-counting the injury path). If the played-game 0-day residual is materially below 10%, cut `max_reduction` toward the empirical value.
+2. **Decompose the channel:** check per-minute PTS/3PM efficiency residuals by rest bucket; if non-trivial, add a small per-minute efficiency multiplier rather than loading everything onto minutes.
+3. **Re-examine the role gradient** at n≥100/role on *played-game* residuals; compress the spread if it flattens (star rest absorbed by DNP).
+4. **Add the material omissions:** altitude flag (Denver/Utah), eastward/westward travel term, 3-in-4 / 4-in-6 density. Prioritize altitude and westward travel.
+5. **Rename `DAYS_REST_HALF_LIFE`** to e-folding semantics (or `/ln2` to a true half-life) at the next calibration touch.
+6. Immediate review if a graded-pick audit shows systematic over/under on B2B props keyed to days_rest, or after any Player Participation Policy change.
+
+---
+
+## SECTION 8D — Bayesian Positional REB Priors
+
+**Question:** Do the two Bayesian rebounding prior systems — the decomposed OREB%/DREB% path (System 1, N=5) and the per-minute total-REB baseline path (System 2, N=12, cold-start only) — match published positional rates, stabilization/padding research, and standard ORB%/DRB% decomposition?
+
+**Code ground truth:** `proj_reb = 0.45·decomposed + 0.55·baseline`. System 1 (`nba_projector.py:675-725`) shrinks an EWMA(span=10) of `oreb/(team_misses·min/48)` and `dreb/(opp_misses·min/48)` toward positional priors **for every player**: `rate = (n·ewma + 5·prior)/(n+5)`. System 2 (`:1466-1494`) applies `_REB_RATE_PRIOR` **only at `_reb_n_games==0`** (cold-start) — so N=12 never partial-pools and the prior value is the entire cold-start anchor. Implied per-36 from System 2: PG 1.91 / SG 2.05 / SF 2.84 / PF 4.00 / C 5.94.
+
+**Findings:**
+
+1. **System 2 per-minute priors are deflated ~1.8–2.4× by a per-game-vs-per-36 units error — broader than the H01 "C needs re-query" note.** Real positional REB/36 ([StatMuse 2024-25](https://www.statmuse.com/nba/ask/average-rebounds-per-36-minutes-by-position-in-the-2024-25-regular-season)): PG 4.6 / SG 4.75 / SF 6.04 / PF 7.57 / **C 11.17**; 2023-24 and 2025-26 nearly identical. Model implied per-36: 1.91 / 2.05 / 2.84 / 4.00 / **5.94** — roughly half. The model's own DB (per-player, min≥10, equal-weight) confirms reality not the prior: SG 4.67 / SF 6.60 / PF 10.07 / **C 11.36 per-36** — bench inclusion does *not* explain the gap. The code comment's "REB/36: PG=2.6…C=6.0" matches StatMuse's **per-game** column, not per-36 — i.e. per-game figures were treated as per-36 and divided by 36. **All five positions** are deflated; C should be ≈0.30, not 0.165. Blast radius is bounded (value feeds only cold-start n=0 players' baseline path at 0.55 weight) but it under-projects rebounds for those players, worst for bigs.
+
+2. **N=5 (decomposed, live) is consistent with published REB% stabilization; 12→5 rollback correct; N=12 (baseline) is moot.** [kmedved's padding table](https://kmedved.com/2020/08/06/nba-stabilization-rates-and-the-padding-approach/): orb_pct padding = 98.55 possessions, drb_pct = 108.26 (vs fg3_pct 242.61) — rebounding stabilizes *fast*, ≈1.3–1.8 games of league-average prior at ~60–75 poss/game. Rebounding evaluable in [~8–10 games](https://www.breakthroughbasketball.com/stats/rebounding-stats). N=5 sits slightly above kmedved's ~1.5-game equivalent — defensible, mildly conservative. N=12 on System 2 is academic (n>0 bypasses it).
+
+3. **Playoff direction correct in aggregate (centers/PF down, guards flat-to-up), with one positional miss.** Per-36 RS→PO ([2025 PO](https://www.statmuse.com/nba/ask/average-rebounds-per-36-minutes-by-position-in-the-2024-playoffs)): C 11.17→9.82 (−12%), PF 7.57→6.85 (−10%), SF 6.04→6.03 (flat), SG 4.75→5.0 (+5%), PG ~flat. Model PO/RS ratios: C −19%, PF −17%, **SF −16% (but SF is empirically flat)**, SG +5% (spot-on), PG +6% (slightly high). Mechanism (lower playoff pace → fewer chances/min for bigs; guard gang-rebounding rises) is real and borne out, except SF is over-deflated.
+
+4. **Uniform N=5 across positions is acceptable, not optimal.** Hierarchical theory shrinks ∝ within-player-noise/between-player-signal; bigs have larger between-player rebounding variance → theory favors *lower* N for C. But published practice uses a single per-stat padding ([kmedved](https://kmedved.com/2020/08/06/nba-stabilization-rates-and-the-padding-approach/)), and the [Bayesian two-stage rebounding paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC12671482/) uses a uniform prior SD with no position split. At N=5 with ~20-game samples the prior is only ~20% of the estimate — second-order.
+
+5. **REB_ALPHA=0.45 — nothing rebounding-specific overturns Plan 7 §7G LOCKED.** Shared minutes input → correlated errors → flat combination-loss surface. The only nuance (baseline path mis-anchored for cold-start) is fixed by correcting the prior value, not by retuning a global alpha.
+
+6. **Opportunity-denominator design is the published standard.** Basketball-Reference defines ORB% over `Tm ORB + Opp DRB` (team misses) and DRB% over `Tm DRB + Opp ORB` (opponent misses), per Oliver/Kubatko ([B-Ref glossary](https://www.basketball-reference.com/about/glossary.html)). The code's `team_misses = tm_fga − tm_fgm + 0.44·tm_fta` scaled by `min/48` is precisely the missed-FG-equivalent availability pool. Separate OREB/DREB rates with distinct timescales also match kmedved.
+
+**VERDICT:**
+
+| Item | Verdict | Basis |
+|---|---|---|
+| System 1 OREB%/DREB% prior values | CONFIRMED | C OREB 0.070 / DREB 0.172 plausible vs kmedved league avg orb 0.051 / drb 0.148; rate-basis calibration unaffected by the per-game mislabel |
+| System 2 per-minute prior values (incl. H01) | **NEEDS_CHANGE** | Deflated ~1.8–2.4× vs true per-36 (C 5.94 vs ~11.2); quoted "REB/36" ratios are actually per-game; **all five positions** need re-derivation, not just C |
+| N=5 (decomposed, live) | CONFIRMED | kmedved orb/drb padding ≈100 poss (~1.5 games); 12→5 rollback evidence-backed |
+| N=12 (baseline path) | ACCEPTABLE | Dead parameter — only n=0 hits this branch, where shrunk≡prior |
+| PO-vs-RS direction | CONFIRMED_WITH_CAVEAT | C/PF down, SG up confirmed (SG +5% spot-on); model drops SF −16% but SF is empirically flat; PG slightly high |
+| Uniform-N across positions | ACCEPTABLE | Theory mildly favors lower-N for bigs; published practice uses single per-stat padding; second-order at N=5 |
+| Opportunity-denominator design | CONFIRMED | Matches Oliver/Kubatko ORB%/DRB% (B-Ref glossary); 0.44·FTA missed-shot pool standard |
+| REB_ALPHA=0.45 | LOCKED (upheld) | No rebounding-specific factor overturns §7G combination-puzzle verdict |
+
+**Condition to Revisit:**
+1. **Fix System 2 (this is the real content of H01, broadened to all positions):** re-derive `_REB_RATE_PRIOR_RS/PO` from true positional **per-36** (RS ≈ PG 0.128, SG 0.132, SF 0.168, PF 0.210, **C 0.305** per-minute; recompute PO by the existing G×1.054/F×0.832/C×0.806 scalars). Backtest cold-start (taxi/returner) REB bias before/after — the 0.55 baseline weight makes the current under-projection real for those players.
+2. Re-query StatMuse positional **per-36** (not per-game) and fix the mislabeled code comment at line 395.
+3. July refit: re-fit System 1 OREB/DREB priors on the latest 2-season DB (min≥10); re-confirm N=5 against an updated kmedved-style padding fit on the model's own data.
+4. If a cold-start-REB backtest shows the decomposed path materially better-calibrated than the corrected baseline for n=0 players, consider a cold-start-specific REB_ALPHA bump (not a global change).
+5. Revisit the SF playoff deflator — model −16% vs empirical ~flat; re-fit PO priors when the playoff sample grows.
+
+---
