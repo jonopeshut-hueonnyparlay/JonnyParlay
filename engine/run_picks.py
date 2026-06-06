@@ -1599,7 +1599,18 @@ def auto_r12_from_log(today_str: str, window_days: int = 5) -> list[str]:
         return []
 
 def apply_r12_cooldown(picks, cooldown_players):
-    """R12: Skip players whose last MBP pick was a loss within 5 days."""
+    """R12: Skip players whose last MBP pick was a loss within 5 days.
+
+    Product rule, NOT an EV rule (Plan 9 §9J reclassification): avoids
+    re-posting a player who just failed the card. Not evidence-based as risk
+    control — one loss has ~40-45% probability even when the model is correct
+    (likelihood ratio ≈ 1, posterior edge unchanged). Classify as
+    gambler's-fallacy-adjacent; EV cost unknown (cooldown removes players
+    exactly when the book may have moved the line toward us off the visible
+    miss). When CLV data matures: replace the loss trigger with a
+    negative-CLV condition (e.g., CLV ≤ −2pp on last pick, or 2+ consecutive
+    losses with negative CLV).
+    """
     if not cooldown_players:
         return picks
     cool_set = {normalize_name(n) for n in cooldown_players}
@@ -1617,6 +1628,9 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     R8 (updated): Reserve first 2 slots for T1/T1B (by PS desc).
     Fill remaining slot by pure Pick Score from ALL tiers.
     This ensures T1 dominance while letting strong T2/T3 picks break through.
+
+    R9 is a product/optics rule, not an EV rule (Plan 9 §9J) — see the
+    comment at the R9 block below.
 
     max_per_game — R7 override (default 2). Thin-slate nights can raise this.
     """
@@ -1694,7 +1708,11 @@ def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
         if can_add(p):
             add_pick(p)
 
-    # R9: If 3+ overs passed gates but none on Premium, force one
+    # R9: Product/optics rule — ensures premium card has at least one over direction
+    # when 3+ overs qualified. Not an EV rule (forced-over may have lower score than
+    # displaced pick; a model leaning under may be correctly harvesting the over-shade).
+    # Cost is unmeasured. When CLV data matures, add a monitor:
+    # cumulative score-gap + realized P&L of forced-over vs displaced picks. (Plan 9 §9J)
     if total_overs >= 3 and not has_over and len(premium) == MAX_PREMIUM_PICKS:
         # Identify the lowest-PS non-over to remove (last in list = lowest PS)
         swap_idx = None
@@ -1817,9 +1835,9 @@ def size_picks_base(picks):
     for p in picks:
         base = kelly_units(p["win_prob"], p["odds"])
         base *= get_market_mult(p.get("sport", "NBA"), p["stat"], p.get("direction"))
-        # FIX L3: T3 picks (3PM, NRFI) get 0.25u floor instead of 0.50u
-        tier = p.get("tier", "T2")
-        floor = 0.25 if tier == "T3" else 0.50
+        # Plan 9 §9K: uniform 0.25u floor (was 0.50u non-T3 — over-staked the
+        # weakest admitted picks 2-2.5× vs the engine's own Kelly math).
+        floor = 0.25
         final = max(round_units(base), floor)
         final = min(final, 1.25)
         # Cap high-variance bets (win prob < 50%) at 0.75u
@@ -1836,7 +1854,7 @@ def size_bonus_pick(pick):
     multipliers so a T3 3PM bonus doesn't end up at 1.25u while the same stat
     on the Premium card is 0.50u.
 
-    Floor mirrors size_picks_base (0.25u for T3, 0.50u otherwise). Cap stays
+    Floor mirrors size_picks_base (uniform 0.25u, Plan 9 §9K). Cap stays
     at 1.25u. High-variance (<50% win prob) bets cap at 0.75u.
 
     Audit H-9: returns ``None`` when the Kelly math rounds below the
@@ -1853,7 +1871,7 @@ def size_bonus_pick(pick):
     tier_m = VAKE_MULT["tier"].get(tier, 0.90)
     raw = base * var_m * tier_m
     final = round_units(raw)
-    floor = 0.25 if tier == "T3" else 0.50
+    floor = 0.25  # Plan 9 §9K: uniform floor (was 0.50u non-T3)
     # H-9: drop rather than clamp. The floor is a safety net for legitimate
     # picks whose math lands close to it — it is NOT a way to manufacture
     # size where the VAKE math says zero.
@@ -1913,7 +1931,7 @@ def size_picks_vake(premium):
 
         raw = base * market_m * var_m * tier_m * corr_m * exp_m
         final = min(round_units(raw), 1.25)
-        final = max(final, 0.50)  # minimum 0.50u, never 0.25u
+        final = max(final, 0.25)  # minimum 0.25u (Plan 9 §9K — was 0.50u, which over-staked weakest picks 2-2.5× vs own Kelly)
 
         p["size"] = final
         p["size_detail"] = {
@@ -3522,7 +3540,7 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
     # Poisson model constants (2026-05-29 calibration)
     BASE_LAMBDA_1ST = 0.32        # first-inning λ per team — calibrated to ~53% NRFI for avg matchup
     _LEAGUE_AVG_RUNS = 4.45       # 2025 MLB runs/game/team (offense normalisation)
-    _LEAGUE_AVG_BLENDED_RATE = 0.477  # 0.40*(4.17/9) + 0.60*(4.38/9) — avg pitcher blended ERA+FIP rate (2025)
+    _LEAGUE_AVG_BLENDED_RATE = 0.4808  # 0.25*(4.17/9) + 0.75*(4.38/9) — avg pitcher blended ERA+FIP rate (2025, Plan 9 §9A 25/75 blend)
     # Park factor intentionally omitted: SaberSim saber_team projections and
     # pitcher ERA/FIP inputs are already park-adjusted at source. Applying
     # MLB_PARK_FACTORS here would double-count park effects.
@@ -3544,9 +3562,11 @@ def evaluate_nrfi(game_lines, players, odds_data, sport, mode="Default"):
             bb = p.get("BB", 0)
             k_val = p.get("K", 0)
             fip_raw = ((13 * hr + 3 * bb - 2 * k_val) / ip) + 3.26 if ip > 0 else 4.50  # FIP constant 3.26 (2025 lgERA≈4.17)
-            # Blend ERA proxy and FIP: 60% FIP, 40% ERA (FIP is more stable)
+            # Blend ERA proxy and FIP: 75% FIP, 25% ERA (Plan 9 §9A: month-ahead
+            # r² ERA 0.019 / FIP 0.038 / xFIP 0.061 — ERA half as predictive as FIP.
+            # Prefer xFIP/FIP− at July refit when park HR/FB data is available.)
             fip_per_ip = fip_raw / 9.0  # Convert FIP (per 9) to per-inning rate
-            blended_rate = 0.40 * er_per_ip + 0.60 * fip_per_ip
+            blended_rate = 0.25 * er_per_ip + 0.75 * fip_per_ip
             pitcher_map[team] = {
                 "er_per_ip": er_per_ip, "fip_per_ip": fip_per_ip,
                 "blended_rate": blended_rate,
@@ -4136,6 +4156,14 @@ def prob_to_american(prob):
 def build_safest6_parlay(qualified):
     """Build a longshot parlay from the 6 safest picks by win probability.
 
+    This is a HIT-FREQUENCY PRODUCT (Plan 9 §9G decision, 2026-06-06):
+    selecting by win_prob maximizes how often the card has at least one
+    parlay winner (engagement/subscriber value — a hit every ~2-3 weeks at
+    daily cadence), not EV. An EV-factor ranking (1 + edge/implied) would be
+    theoretically superior (~+77% vs ~+19% slip EV in the worked example) but
+    is a product direction change requiring subscriber expectation management.
+    Current design is intentional and documented as hit-frequency.
+
     Per-game cap of 2: prevents same-game correlation from dominating the
     combined probability estimate (which assumes independence across legs).
     If the top 6 by WP would pull 3+ from one game, the 3rd+ are skipped
@@ -4145,6 +4173,7 @@ def build_safest6_parlay(qualified):
     correlation (shared pace/scoring environment) would make true joint prob
     >= naive product, so independence is conservative, not aggressive.
     """
+    # Hit-frequency product: sort by win_prob, not EV-factor.
     ranked = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
     game_counts: dict = {}
     player_counts: dict = {}
