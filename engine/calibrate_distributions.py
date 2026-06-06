@@ -26,12 +26,30 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import sqlite3
 import statistics
 from collections import defaultdict
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "data" / "projections.db"
+
+def _resolve_db_path() -> Path:
+    # Check EDGEMODEL_DB_PATH env var (may be loaded from .env by caller)
+    env = os.environ.get("EDGEMODEL_DB_PATH", "").strip()
+    if env:
+        return Path(env)
+    # Fall back to inline .env parse (EDGEMODEL_DB_PATH not in shell env by default)
+    dotenv = Path(__file__).parent.parent / ".env"
+    if dotenv.exists():
+        for line in dotenv.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line.startswith("EDGEMODEL_DB_PATH="):
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if val:
+                    return Path(val)
+    return Path(__file__).parent.parent / "data" / "projections.db"
+
+
+DB_PATH = _resolve_db_path()
 
 SEP = "-" * 68
 
@@ -415,6 +433,170 @@ def mode_wnba_3pm(conn: sqlite3.Connection):
 
 
 # ---------------------------------------------------------------------------
+# Mode: team-sigmas  (writes JSON files to data/)
+# ---------------------------------------------------------------------------
+
+_MLB_ID_MAP = {
+    108: "LAA", 109: "ARI", 110: "BAL", 111: "BOS", 112: "CHC", 113: "CIN",
+    114: "CLE", 115: "COL", 116: "DET", 117: "HOU", 118: "KC",  119: "LAD",
+    120: "WSH", 121: "NYM", 133: "OAK", 134: "PIT", 135: "SD",  136: "SEA",
+    137: "SF",  138: "STL", 139: "TB",  140: "TEX", 141: "TOR", 142: "MIN",
+    143: "PHI", 144: "ATL", 145: "CWS", 146: "MIA", 147: "NYY", 158: "MIL",
+}
+
+_NBA_ID_MAP = {
+    1610612737: "ATL", 1610612738: "BOS", 1610612739: "CLE",
+    1610612740: "NOP", 1610612741: "CHI", 1610612742: "DAL",
+    1610612743: "DEN", 1610612744: "GSW", 1610612745: "HOU",
+    1610612746: "LAC", 1610612747: "LAL", 1610612748: "MIA",
+    1610612749: "MIL", 1610612750: "MIN", 1610612751: "BKN",
+    1610612752: "NYK", 1610612753: "ORL", 1610612754: "IND",
+    1610612755: "PHI", 1610612756: "PHX", 1610612757: "POR",
+    1610612758: "SAC", 1610612759: "SAS", 1610612760: "OKC",
+    1610612761: "TOR", 1610612762: "UTA", 1610612763: "MEM",
+    1610612764: "WSH", 1610612765: "DET", 1610612766: "CHA",
+}
+
+_OUT_DIR = Path(__file__).parent.parent / "data"
+_MLB_FALLBACK_R = 3.548
+_MIN_GAMES = 20
+
+
+def _collect_team_scores(pairs):
+    """pairs: list of (abbr1, score1, abbr2, score2). Returns {abbr: [scores]}."""
+    by_team: dict[str, list[float]] = defaultdict(list)
+    for a1, s1, a2, s2 in pairs:
+        if a1 and s1 is not None:
+            by_team[a1].append(float(s1))
+        if a2 and s2 is not None:
+            by_team[a2].append(float(s2))
+    return by_team
+
+
+def _team_stats(scores: list[float]) -> tuple[float, float]:
+    mu = statistics.mean(scores)
+    sigma = statistics.stdev(scores) if len(scores) > 1 else 0.0
+    return mu, sigma
+
+
+def _calibrate_team_sigmas_nhl(conn: sqlite3.Connection) -> dict:
+    print("  NHL: querying nhl_games...")
+    rows = conn.execute(
+        "SELECT home_team, home_score, away_team, away_score FROM nhl_games"
+    ).fetchall()
+    pairs = [(r[0], r[1], r[2], r[3]) for r in rows]
+    by_team = _collect_team_scores(pairs)
+    result = {}
+    for abbr, scores in sorted(by_team.items()):
+        if len(scores) < _MIN_GAMES:
+            continue
+        mu, sigma = _team_stats(scores)
+        result[abbr] = {"score_mu": round(mu, 4), "score_sigma": round(sigma, 4), "n_games": len(scores)}
+    print(f"  NHL: {len(result)} teams calibrated from {len(rows)} games")
+    return result
+
+
+def _calibrate_team_sigmas_mlb(conn: sqlite3.Connection) -> dict:
+    print("  MLB: querying mlb_games...")
+    rows = conn.execute(
+        "SELECT home_team_id, home_score, away_team_id, away_score FROM mlb_games WHERE game_type = 'R'"
+    ).fetchall()
+    pairs = [(_MLB_ID_MAP.get(r[0]), r[1], _MLB_ID_MAP.get(r[2]), r[3]) for r in rows]
+    by_team = _collect_team_scores(pairs)
+    result = {}
+    for abbr, scores in sorted(by_team.items()):
+        if abbr is None or len(scores) < _MIN_GAMES:
+            continue
+        mu, sigma = _team_stats(scores)
+        var = statistics.variance(scores) if len(scores) > 1 else 0.0
+        nb_r = _nb_r(mu, var) if var > mu else _MLB_FALLBACK_R
+        if nb_r == float("inf"):
+            nb_r = _MLB_FALLBACK_R
+        result[abbr] = {
+            "score_mu": round(mu, 4),
+            "score_sigma": round(sigma, 4),
+            "nb_r": round(nb_r, 4),
+            "n_games": len(scores),
+        }
+    print(f"  MLB: {len(result)} teams calibrated from {len(rows)} games")
+    return result
+
+
+def _calibrate_team_sigmas_nba(conn: sqlite3.Connection) -> dict:
+    print("  NBA: aggregating from player_game_stats...")
+    rows = conn.execute(
+        "SELECT game_id, team_id, SUM(pts) FROM player_game_stats WHERE pts IS NOT NULL "
+        "GROUP BY game_id, team_id"
+    ).fetchall()
+    by_team: dict[str, list[float]] = defaultdict(list)
+    for _gid, tid, pts in rows:
+        abbr = _NBA_ID_MAP.get(tid)
+        if abbr and pts is not None:
+            by_team[abbr].append(float(pts))
+    result = {}
+    for abbr, scores in sorted(by_team.items()):
+        if len(scores) < _MIN_GAMES:
+            continue
+        mu, sigma = _team_stats(scores)
+        result[abbr] = {"score_mu": round(mu, 4), "score_sigma": round(sigma, 4), "n_games": len(scores)}
+    print(f"  NBA: {len(result)} teams calibrated from {len(rows)} team-game rows")
+    return result
+
+
+def _calibrate_team_sigmas_wnba(conn: sqlite3.Connection) -> dict | None:
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "wnba_player_game_stats" not in tables:
+        print("  WNBA: wnba_player_game_stats not found — skipping")
+        return None
+    print("  WNBA: aggregating from wnba_player_game_stats...")
+    rows = conn.execute(
+        "SELECT game_id, team_id, SUM(pts) FROM wnba_player_game_stats WHERE pts IS NOT NULL "
+        "GROUP BY game_id, team_id"
+    ).fetchall()
+    by_team: dict[str, list[float]] = defaultdict(list)
+    for _gid, tid, pts in rows:
+        if tid and pts is not None:
+            by_team[str(tid)].append(float(pts))
+    result = {}
+    for tid_str, scores in sorted(by_team.items()):
+        if len(scores) < _MIN_GAMES:
+            continue
+        mu, sigma = _team_stats(scores)
+        result[tid_str] = {"score_mu": round(mu, 4), "score_sigma": round(sigma, 4), "n_games": len(scores)}
+    print(f"  WNBA: {len(result)} team-ids calibrated from {len(rows)} team-game rows")
+    return result
+
+
+def mode_team_sigmas(conn: sqlite3.Connection, sport: str = "all"):
+    import json as _json
+    print(f"\n{'='*68}")
+    print("MODE: team-sigmas")
+    print(f"Sport filter: {sport}")
+    print("Writes per-team scoring distributions to data/team_sigmas_{{sport}}.json")
+    print(SEP)
+
+    _OUT_DIR.mkdir(exist_ok=True)
+
+    sport_fns = {
+        "NHL":  (_calibrate_team_sigmas_nhl,  "team_sigmas_nhl.json"),
+        "MLB":  (_calibrate_team_sigmas_mlb,  "team_sigmas_mlb.json"),
+        "NBA":  (_calibrate_team_sigmas_nba,  "team_sigmas_nba.json"),
+        "WNBA": (_calibrate_team_sigmas_wnba, "team_sigmas_wnba.json"),
+    }
+
+    run_sports = list(sport_fns.keys()) if sport == "all" else [sport.upper()]
+    for sp in run_sports:
+        fn, fname = sport_fns[sp]
+        data = fn(conn)
+        if data is None:
+            continue
+        out_path = _OUT_DIR / fname
+        out_path.write_text(_json.dumps(data, indent=2))
+        print(f"  Written: {out_path}  ({len(data)} teams)")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -424,6 +606,7 @@ MODES = {
     "wnba-game-total": mode_wnba_game_total,
     "mlb-batter-zinb": mode_mlb_batter_zinb,
     "wnba-3pm":        mode_wnba_3pm,
+    "team-sigmas":     mode_team_sigmas,
 }
 
 
@@ -436,6 +619,10 @@ def main():
         help="Calibration mode (default: all)"
     )
     parser.add_argument("--db", default=None, help="Override DB path")
+    parser.add_argument(
+        "--sport", choices=["NHL", "MLB", "NBA", "WNBA", "all"], default="all",
+        help="Sport filter for team-sigmas mode (default: all)"
+    )
     args = parser.parse_args()
 
     db = Path(args.db) if args.db else DB_PATH
@@ -449,7 +636,10 @@ def main():
 
     modes_to_run = list(MODES.keys()) if args.mode == "all" else [args.mode]
     for mode in modes_to_run:
-        MODES[mode](conn)
+        if mode == "team-sigmas":
+            MODES[mode](conn, args.sport)
+        else:
+            MODES[mode](conn)
 
     print(f"\n{'='*68}")
     print("Done. Copy calibrated values into engine/run_picks.py and update CLAUDE.md.")

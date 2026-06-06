@@ -120,6 +120,16 @@ logger.setLevel(logging.INFO)
 attach_rotating_handler(logger, LOG_FILE_PATH)
 logger.propagate = False  # Don't bubble up to root logger (avoids duplicate prints)
 
+# ── Context research verdicts (display-only; written by engine/context_research.py) ─
+_CTX_VERDICTS: dict = {}
+_ctx_path = Path(__file__).parent.parent / "data" / "context_verdicts.json"
+if _ctx_path.exists():
+    try:
+        for _v in json.loads(_ctx_path.read_text(encoding="utf-8")):
+            _CTX_VERDICTS[_v["game"]] = _v
+    except Exception:
+        pass
+
 ODDS_BASE    = "https://api.the-odds-api.com/v4"
 ODDS_REGIONS = "us,us2,us_ex"
 API_SLEEP    = 1.3  # seconds between calls
@@ -397,6 +407,7 @@ NB_R = {
 NB_R_WNBA = {
     "AST": 11.37,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
     "REB": 10.74,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
+    "3PM": 1.340,  # calibrated 2026-06-05: 13,725 rows (min>=8), var/mu=1.709, zero_rate=0.503
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
@@ -485,7 +496,7 @@ GAME_SIGMA = {
     # ml uses spread sigma — P(win) = P(margin > 0) under same goal-differential distribution.
     # Prior values (total=1.2, spread=1.5, ml=4.0) were wrong by ~2x.
     "NBA":  {"total": 12.0, "spread": 12.0, "team": 9.0,   "ml": 12.0},
-    "WNBA": {"total": 10.0, "spread": 10.0, "team": 7.5,   "ml": 10.0},
+    "WNBA": {"total": 17.459, "spread": 10.0, "team": 11.271, "ml": 10.0},  # total+team calibrated 2026-06-05 from 837 games
     "NHL":  {"total": 2.311, "spread": 2.614, "team": 1.744, "ml": 2.614},
     "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,   "ml": 4.75},  # ml: 6.0→4.75 (empirical run-diff σ≈3.8; 6.0 was artificially wide)
 }
@@ -848,10 +859,9 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
         else:  # Half-integer line — no push possible
             under_p = poisson_cdf(k, proj)
             over_p = 1.0 - poisson_cdf(k, proj)
-    elif stat in NB_STATS and not (sport == "WNBA" and stat == "3PM"):
+    elif stat in NB_STATS:
         # P16 — Negative binomial path for overdispersed count stats.
-        # WNBA 3PM (borderline var/mu=1.21) falls through to Normal via SIGMA_WNBA.
-        # WNBA AST/REB use NB_R_WNBA (sport-specific r); all other sports use NB_R.
+        # WNBA AST/REB/3PM use NB_R_WNBA (sport-specific r); all other sports use NB_R.
         r = NB_R_WNBA.get(stat, NB_R[stat]) if sport == "WNBA" else NB_R[stat]
         k = math.floor(line)
         if line == k:  # Integer line — push-adjusted
@@ -4781,7 +4791,9 @@ def build_premium_embed(premium, mode, today, suppress_ping=False, sport=None):
             pick_label = f"{last} {direction} {line_val} {stat}"
 
         inj_flag    = " 🔄" if p.get("injury_trigger") else ""
-        lines.append(f"{e} **{pick_label}** | {odds_str} | {book_str} | **{size:.2f}u**{inj_flag}")
+        _ctx = _CTX_VERDICTS.get(game, {})
+        _ctx_tag = "  [CTX+]" if _ctx.get("verdict") == "confirms" else ("  [CTX-]" if _ctx.get("verdict") == "fades" else "")
+        lines.append(f"{e} **{pick_label}**{_ctx_tag} | {odds_str} | {book_str} | **{size:.2f}u**{inj_flag}")
         lines.append(f"╰ {game} | Edge {edge_str} | Score {score_str}")
 
     lines.append(f"\n━━━━━━━━━━━━━━━━")
@@ -4836,9 +4848,11 @@ def build_potd_embed(potd, today, sport=None):
             last = parts[-2]
         pick_label = f"{last} {direction} {line_val} {stat}"
 
+    _ctx = _CTX_VERDICTS.get(game, {})
+    _ctx_tag = " [CTX+]" if _ctx.get("verdict") == "confirms" else (" [CTX-]" if _ctx.get("verdict") == "fades" else "")
     description = (
         f"━━━━━━━━━━━━━━━━\n"
-        f"**{pick_label}**\n"
+        f"**{pick_label}**{_ctx_tag}\n"
         f"{potd['player']} | {game}\n"
         f"━━━━━━━━━━━━━━━━\n\n"
         f"{odds_str} @ {book_str} | **{size:.2f}u**\n\n"
@@ -5903,8 +5917,10 @@ def build_killshot_embed(pick, today, suppress_ping=False):
     score    = pick.get("pick_score", 0)
     content  = "" if suppress_ping else "@everyone"
 
+    _ctx = _CTX_VERDICTS.get(pick.get("game", ""), {})
+    _ctx_tag = "  [CTX+]" if _ctx.get("verdict") == "confirms" else ("  [CTX-]" if _ctx.get("verdict") == "fades" else "")
     desc = "\n".join([
-        f"**{pick['player']} ({team}) {dir_word} {pick['line']} {pick['stat']}**",
+        f"**{pick['player']} ({team}) {dir_word} {pick['line']} {pick['stat']}**{_ctx_tag}",
         f"{fmt_odds(pick['odds'])} @ {display_book(pick['book'])} — **{pick.get('size', 0):.2f}u**",
         "",
         f"Win: **{fmt_pct(pick['win_prob'])}** | Edge: **{fmt_pct(pick['adj_edge'])}** | Score: **{score:.1f}**",

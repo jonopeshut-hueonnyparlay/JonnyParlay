@@ -40,11 +40,12 @@ def test_wnba_reb_routes_to_nb():
     assert abs(over_p - normal_over) > 0.001, "WNBA REB should differ from Normal"
 
 
-def test_wnba_3pm_routes_to_normal_regression():
-    """Regression: WNBA 3PM was already using Normal before this fix."""
+def test_wnba_3pm_routes_to_nb():
+    """WNBA 3PM routes to NB path (r=1.340) after carve-out removal."""
     proj, line = 2.0, 1.5
-    sigma = max(proj * 0.48, 0.70)  # SIGMA_WNBA["3PM"]
-    expected_over = 1.0 - normal_cdf(line, proj, sigma)
+    r = 1.340  # NB_R_WNBA["3PM"]
+    k = int(line)
+    expected_over = 1.0 - negbinom_cdf(k, proj, r)
 
     over_p, _ = calc_prop_prob(proj, line, "3PM", sport="WNBA")
 
