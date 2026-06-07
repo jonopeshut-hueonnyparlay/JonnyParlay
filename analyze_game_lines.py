@@ -10,7 +10,9 @@ import math, requests, sys
 from pathlib import Path
 from typing import Optional
 
-API_KEY   = "adb07e9742307895c8d7f14264f52aee"
+from engine.secrets_config import ODDS_API_KEY
+
+API_KEY   = ODDS_API_KEY
 BASE      = "https://api.the-odds-api.com/v4/sports"
 REGIONS   = "us,us2,us_ex"
 BOOKS_STR = "draftkings,fanduel,betmgm,caesars,pointsbetus"
