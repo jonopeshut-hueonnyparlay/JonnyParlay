@@ -87,11 +87,15 @@ def count_edgemodel_clv(rows: list[dict]) -> int:
 
 
 def count_wnba_graded(rows: list[dict]) -> int:
-    """Graded WNBA picks on or after dampener date."""
+    """Graded WNBA picks (pick_score>0) on or after dampener date.
+
+    score=0 rows are schema-version artifacts, not real picks.
+    """
     return sum(
         1 for r in rows
         if r.get("date", "") >= WNBA_DAMPENER_DATE
         and _nonempty(r.get("result"))
+        and float(r.get("pick_score", 0) or 0) > 0
     )
 
 
@@ -104,7 +108,7 @@ GATES = [
     ("H3 Platt refit",     count_h3_platt,      100, "graded over_p_raw rows (all sports)"),
     ("MLB Platt refit",    count_mlb_platt,      100, "graded MLB over_p_raw rows"),
     ("EdgeModel CLV",      count_edgemodel_clv,  100, "CLV rows in pick_log_custom.csv"),
-    ("WNBA go-live",       count_wnba_graded,    100, "graded picks post-2026-06-03"),
+    ("WNBA go-live",       count_wnba_graded,    100, "graded picks (score>0) post-2026-06-03"),
     ("SGP Platt calib",    count_sgp_platt,      100, "scored SGP slips"),
     ("Combo Platt calib",  count_combo_platt,    100, "scored RA/PRA/PR/PA picks"),
 ]
