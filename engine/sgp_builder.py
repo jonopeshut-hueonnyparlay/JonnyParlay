@@ -82,8 +82,8 @@ POISSON_CUTOFF = 8.5
 NB_STATS = {"3PM", "AST", "REB", "BLK", "STL"}
 NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 2.1/12.3)
-    "AST": 9.68,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
-    "REB": 10.18,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
+    "AST": 12.16,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
+    "REB": 14.7 ,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
     "BLK": 2.8,    # empirical per-game r; Research Brief 5, 2026-05-02
     "STL": 3.6,    # empirical per-game r; Research Brief 5, 2026-05-02
 }
@@ -1247,3 +1247,4 @@ if __name__ == "__main__":
         confirm=args.confirm,
         test=args.test,
     )
+
