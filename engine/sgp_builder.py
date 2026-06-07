@@ -69,8 +69,8 @@ STAT_COLS = {"PTS": "PTS", "AST": "AST", "REB": "RB", "3PM": "3PT"}
 
 SIGMA = {
     "PTS": {"mult": 0.35, "min": 5.0},  # synced with run_picks.py (raised 4.5→5.0, 2026-05-25)
-    # AST moved to NB_STATS (r=9.68) — no longer Normal path.
-    # REB moved to NB_STATS (r=10.18) — no longer Normal path.
+    # AST moved to NB_STATS (r=12.16) — no longer Normal path.
+    # REB moved to NB_STATS (r=14.7) — no longer Normal path.
     # "3PM" intentionally absent — NB_STATS/NB_R. Do NOT add to SIGMA.
 }
 POISSON_STATS: set = set()  # AST and REB moved to NB_STATS; nothing left Poisson in SGP
@@ -1247,4 +1247,5 @@ if __name__ == "__main__":
         confirm=args.confirm,
         test=args.test,
     )
+
 
