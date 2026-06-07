@@ -22,7 +22,6 @@ PICK_LOG_CUSTOM = DATA / "pick_log_custom.csv"
 PICK_LOG_WNBA   = DATA / "pick_log_wnba.csv"
 
 WNBA_DAMPENER_DATE = "2026-06-03"
-T1_MULT_DATE       = "2026-05-23"
 
 COMBO_STATS = {"RA", "PRA", "PR", "PA"}
 
@@ -61,15 +60,6 @@ def count_mlb_platt(rows: list[dict]) -> int:
         if r.get("sport", "").strip() == "MLB"
         and _nonempty(r.get("over_p_raw"))
         and _nonempty(r.get("result"))
-    )
-
-
-def count_t1_mult(rows: list[dict]) -> int:
-    """T1 picks on or after 2026-05-23 (regardless of result)."""
-    return sum(
-        1 for r in rows
-        if r.get("tier", "").strip() == "T1"
-        and r.get("date", "") >= T1_MULT_DATE
     )
 
 
@@ -115,7 +105,6 @@ GATES = [
     ("MLB Platt refit",    count_mlb_platt,      100, "graded MLB over_p_raw rows"),
     ("EdgeModel CLV",      count_edgemodel_clv,  100, "CLV rows in pick_log_custom.csv"),
     ("WNBA go-live",       count_wnba_graded,    100, "graded picks post-2026-06-03"),
-    ("T1 mult re-eval",    count_t1_mult,         30, "T1 picks post-2026-05-23"),
     ("SGP Platt calib",    count_sgp_platt,      100, "scored SGP slips"),
     ("Combo Platt calib",  count_combo_platt,    100, "scored RA/PRA/PR/PA picks"),
 ]
@@ -142,7 +131,6 @@ def main() -> None:
     row_map = {
         count_h3_platt:     main_rows,
         count_mlb_platt:    main_rows,
-        count_t1_mult:      main_rows,
         count_sgp_platt:    main_rows,
         count_combo_platt:  main_rows,
         count_edgemodel_clv: custom_rows,
