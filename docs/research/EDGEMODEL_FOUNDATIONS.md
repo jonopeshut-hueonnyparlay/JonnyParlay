@@ -504,8 +504,8 @@ Documented here because the planning doc (plans_7_8_9.md) stated otherwise or om
 |---|---|---|
 | 8A | Home court advantage deltas | MIXED — AST/BLK/TOV/REB CONFIRMED; PTS CONFIRMED_WITH_CAVEAT; **FG3M PERIODIC_RECAL** (9% spread exceeds published ~3%); STL exclusion CONFIRMED_WITH_CAVEAT; deltas-as-set PERIODIC_RECAL (secular HCA decline) |
 | 8B | Blowout adjustment | MIXED — cutpoints 15/25 + star weights + sigmoid (k/mid) CONFIRMED/LOCKED; bench weights + min-games ACCEPTABLE; max_reduction PERIODIC_RECAL; PBP filtering DATA_GATED upgrade |
-| 8C | Days-rest model | **MIXED — `max_reduction=0.10` NEEDS_CHANGE (overstates played-game effect); travel/altitude/density omissions NEEDS_CHANGE (material); naming mislabel NEEDS_CHANGE (cosmetic)**; decay form CONFIRMED; role gradient + channel CONFIRMED_WITH_CAVEAT |
-| 8D | Bayesian REB priors | **MIXED — `_REB_RATE_PRIOR` (System 2) NEEDS_CHANGE (deflated ~2×, all positions — extends H01)**; decomposed priors + N=5 + denominator CONFIRMED; PO-vs-RS CONFIRMED_WITH_CAVEAT (SF over-deflated); REB_ALPHA LOCKED |
+| 8C | Days-rest model | **MIXED — `max_reduction` 0.10→0.07 RESOLVED (Group 1, 3836cb2); naming mislabel → `DAYS_REST_EFOLD_TIME` RESOLVED (Group 1, 3836cb2); travel/altitude/density omissions NEEDS_CHANGE (material — Group 3, pending)**; decay form CONFIRMED; role gradient + channel CONFIRMED_WITH_CAVEAT |
+| 8D | Bayesian REB priors | **MIXED — `_REB_RATE_PRIOR` (System 2) deflation RESOLVED (Group 1, 3836cb2; true per-36, all 5 positions — closes H01 BROADER)**; decomposed priors + N=5 + denominator CONFIRMED; PO-vs-RS CONFIRMED_WITH_CAVEAT (SF over-deflated); REB_ALPHA LOCKED |
 | 8E | Role classification thresholds | LOCKED (fit-for-purpose) — cutpoints CONFIRMED/ACCEPTABLE vs published rotation bands; validated on 76,604-snapshot backtest |
 | 8F | Cold start treatment | MIXED — returner cap CONFIRMED; taxi/playoff-scalar magnitudes DATA_GATED; new_acq cap weakest but conservative-safe |
 | 8G | Injury redistribution model | MIXED — structure + MIN_ELIGIBLE CONFIRMED; PRIMARY_SHARE/EFFICIENCY ACCEPTABLE/DATA_GATED; **usage-concentration NEEDS_CHANGE** |
@@ -626,13 +626,13 @@ Documented here because the planning doc (plans_7_8_9.md) stated otherwise or om
 
 | Item | Verdict | Basis |
 |---|---|---|
-| `max_reduction=0.10` (minutes) | **NEEDS_CHANGE** (likely too high for *played* games) | Published played-game B2B effects ~0.5–1 pt / d≈0.05–0.08; "Tired of Misattribution" finds impact minimal; most of the visible 10%+ swing is DNP-driven (handled elsewhere) |
+| `max_reduction=0.10` (minutes) | **RESOLVED (Group 1, 3836cb2)** — lowered to 0.07 (midpoint of published range); DATA_GATED recal at n≥500 B2B player-games | Published played-game B2B effects ~0.5–1 pt / d≈0.05–0.08; "Tired of Misattribution" finds impact minimal; most of the visible 10%+ swing is DNP-driven (handled elsewhere) |
 | Decay FORM (exponential) | CONFIRMED | Banister fitness-fatigue + team-sport recovery kinetics are exponential |
 | 1.5 e-folding / ~1.04-d half-life | CONFIRMED_WITH_CAVEAT | Implied curve (~50% by 1d, ~94% by 4d) consistent with neuromuscular recovery by ~48h; 2.6% at 2 days mildly high |
 | Role gradient (starter 1.0 > spot 0.75) | CONFIRMED_WITH_CAVEAT | DFS data confirm direction; star effect largely realized as DNP → double-count risk on played starters |
 | Minutes-only channel | CONFIRMED_WITH_CAVEAT | Minutes (coach rest-mgmt) is the dominant box-score channel; tiny per-minute shooting decline uncaptured (acceptable given effect size) |
 | Travel / altitude / density omissions | **NEEDS_CHANGE** (material) | Westward ~9pp swing; Denver altitude largest HCA in sports; 4-in-5 ≈ −1 pt/100 — each rivals the modeled B2B effect |
-| "half_life" naming | **NEEDS_CHANGE** (cosmetic/doc) | Constant is e-folding time, not half-life (off by ln2); rename or convert |
+| "half_life" naming | **RESOLVED (Group 1, 3836cb2)** — renamed `DAYS_REST_HALF_LIFE` → `DAYS_REST_EFOLD_TIME` | Constant is e-folding time, not half-life (off by ln2); rename or convert |
 | Overall calibration ("~3 games data") | DATA_GATED | Literature-derived prior defensible *as a prior*; in-sample validation essentially absent |
 
 **Condition to Revisit:**
@@ -670,7 +670,7 @@ Documented here because the planning doc (plans_7_8_9.md) stated otherwise or om
 | Item | Verdict | Basis |
 |---|---|---|
 | System 1 OREB%/DREB% prior values | CONFIRMED | C OREB 0.070 / DREB 0.172 plausible vs kmedved league avg orb 0.051 / drb 0.148; rate-basis calibration unaffected by the per-game mislabel |
-| System 2 per-minute prior values (incl. H01) | **NEEDS_CHANGE** | Deflated ~1.8–2.4× vs true per-36 (C 5.94 vs ~11.2); quoted "REB/36" ratios are actually per-game; **all five positions** need re-derivation, not just C |
+| System 2 per-minute prior values (incl. H01) | **RESOLVED (Group 1, 3836cb2)** — re-derived from true per-36 (RS PG .128/SG .132/SF .168/PF .210/C .305; PO via G×1.054/F×0.832/C×0.806); closes H01 BROADER | Deflated ~1.8–2.4× vs true per-36 (C 5.94 vs ~11.2); quoted "REB/36" ratios are actually per-game; **all five positions** need re-derivation, not just C |
 | N=5 (decomposed, live) | CONFIRMED | kmedved orb/drb padding ≈100 poss (~1.5 games); 12→5 rollback evidence-backed |
 | N=12 (baseline path) | ACCEPTABLE | Dead parameter — only n=0 hits this branch, where shrunk≡prior |
 | PO-vs-RS direction | CONFIRMED_WITH_CAVEAT | C/PF down, SG up confirmed (SG +5% spot-on); model drops SF −16% but SF is empirically flat; PG slightly high |
@@ -896,11 +896,11 @@ Documented here because the planning doc (plans_7_8_9.md) stated otherwise or om
 
 | # | Item | § | Problem | Fix | Gate/Priority |
 |---|---|---|---|---|---|
-| 1 | **`_REB_RATE_PRIOR` deflated ~2×** | 8D | Per-game figures treated as per-36 then ÷36 → all five positional per-minute REB priors ~half true value (C 5.94 vs ~11.2 per-36); under-projects cold-start (n=0) rebounds at 0.55 baseline weight, worst for bigs. Extends open item H01 from "C only" to all positions | Re-derive `_REB_RATE_PRIOR_RS/PO` from true per-36 (RS ≈ PG 0.128 / SG 0.132 / SF 0.168 / PF 0.210 / C 0.305; recompute PO via existing G×1.054/F×0.832/C×0.806 scalars); fix mislabeled comment at line 395 | Bounded blast radius (cold-start only); backtest cold-start REB bias before/after. **Highest-confidence finding** |
+| 1 | **`_REB_RATE_PRIOR` deflated ~2×** ✅ RESOLVED (Group 1, 3836cb2) | 8D | Per-game figures treated as per-36 then ÷36 → all five positional per-minute REB priors ~half true value (C 5.94 vs ~11.2 per-36); under-projects cold-start (n=0) rebounds at 0.55 baseline weight, worst for bigs. Extends open item H01 from "C only" to all positions | Re-derive `_REB_RATE_PRIOR_RS/PO` from true per-36 (RS ≈ PG 0.128 / SG 0.132 / SF 0.168 / PF 0.210 / C 0.305; recompute PO via existing G×1.054/F×0.832/C×0.806 scalars); fix mislabeled comment at line 395 | Bounded blast radius (cold-start only); backtest cold-start REB bias before/after. **Highest-confidence finding** |
 | 2 | **Usage-concentration omission** | 8G | Injury redistribution routes the OUT player's *minutes* by position but spreads *usage* pro-rata; real usage concentrates on the next-best creator (Durant-out→Westbrook) → under-projects the secondary creator's AST/PTS, over-spreads to minute-fillers | Add a creator-weighted usage reallocation layer (route vacated usage to highest assist-rate/shot-creation teammate) before the efficiency discount; prioritize AST/PTS | Gate to measurable AST-projection improvement in injury-out games. Highest-value redistribution improvement |
-| 3 | **Days-rest `max_reduction=0.10` likely too high for played games** | 8C | Published *played-game* B2B effects ~0.5–1 pt / d≈0.05–0.08; "Tired of Misattribution" finds fatigue impact minimal; most of the visible 10%+ swing is DNP-driven (already handled by injury status) → risk of double-counting on played starters | Validate at n≥500 B2B player-games (regress actual−proj MINUTES by days-rest bucket, players who appeared only); cut toward empirical value if 0-day residual ≪10% | Data-gated; interim value conservative |
+| 3 | **Days-rest `max_reduction=0.10` likely too high for played games** ✅ RESOLVED (Group 1, 3836cb2 — lowered to 0.07; DATA_GATED recal at n≥500) | 8C | Published *played-game* B2B effects ~0.5–1 pt / d≈0.05–0.08; "Tired of Misattribution" finds fatigue impact minimal; most of the visible 10%+ swing is DNP-driven (already handled by injury status) → risk of double-counting on played starters | Validate at n≥500 B2B player-games (regress actual−proj MINUTES by days-rest bucket, players who appeared only); cut toward empirical value if 0-day residual ≪10% | Data-gated; interim value conservative |
 | 4 | **Days-rest omissions: travel / altitude / density** | 8C | Westward travel ~9pp win swing (Roy & Forest); Denver altitude largest HCA in sports (~67%); 4-in-5 ≈ −1 pt/100 — each rivals the modeled 10% B2B effect; all omitted | Add altitude flag (Denver/Utah), eastward/westward travel term, 3-in-4 / 4-in-6 density. Prioritize altitude + westward travel | Next minutes-model pass |
-| 5 | **`DAYS_REST_HALF_LIFE` mislabel** | 8C | Constant is an e-folding time, not a half-life (off by ln2 → true half-life ≈1.04d); zero computational impact but misleads future recalibration | Rename to `DAYS_REST_EFOLD` (or store a true half-life and divide by ln2) | Cosmetic; bundle with next nba_projector.py edit |
+| 5 | **`DAYS_REST_HALF_LIFE` mislabel** ✅ RESOLVED (Group 1, 3836cb2 — renamed `DAYS_REST_EFOLD_TIME`) | 8C | Constant is an e-folding time, not a half-life (off by ln2 → true half-life ≈1.04d); zero computational impact but misleads future recalibration | Rename to `DAYS_REST_EFOLD` (or store a true half-life and divide by ln2) | Cosmetic; bundle with next nba_projector.py edit |
 | 6 | **SF playoff REB deflator too steep** | 8D | Model drops SF per-minute REB −16% in playoffs but empirical SF rebounding is ~flat RS→PO | Re-fit SF PO prior when the playoff sample grows | Bundle with §8D System-1 PO refit |
 
 ---
@@ -914,4 +914,4 @@ Sections 8A–8H audited; constants verified from source 2026-06-06. Headline:
 - **8A** home deltas largely CONFIRMED (scorekeeper-bias literature *validates* the AST/BLK deltas because props settle on recorded box scores); only FG3M flagged for SE re-estimation.
 - **8B** blowout sigmoid is mathematically LOCKED (it reproduces the correct Bayesian E[reduction|spread]); **8E** role tiers LOCKED as fit-for-purpose; **8F** cold-start caps CONFIRMED/ACCEPTABLE as conservative ceilings.
 
-**No engine code was changed this session** (research-only, per plan). NEEDS_CHANGE items #1, #2, #4, #5 are candidate offseason/next-pass work; #3 and the playoff-scalar magnitudes are data-gated. Baseline test suite unaffected (no source touched).
+**Group 1 shipped 2026-06-07 (EdgeModel 3836cb2):** #1 (`_REB_RATE_PRIOR` true per-36, all positions — closes H01 BROADER), #3 (`max_reduction` 0.10→0.07, DATA_GATED recal at n≥500 B2B player-games), #5 (`DAYS_REST_HALF_LIFE` → `DAYS_REST_EFOLD_TIME`). Remaining: #2 (usage-concentration, §8G) and #4 (travel/altitude/density, §8C) are Group 2/3, pending Plan 10; #6 (SF playoff scalar) data-gated. Original audit was research-only; these three were the high-confidence constant fixes.
