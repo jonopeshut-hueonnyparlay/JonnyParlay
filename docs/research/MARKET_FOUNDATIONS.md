@@ -679,3 +679,45 @@ Cross-references STATISTICAL_FOUNDATIONS §1B/§16 (within-player var/μ measure
 | tier differentiation | w by tier | **CONFIRM** | Inverse-variance/precision weighting justifies differentiating w by calibration quality (Bates–Granger 1969). Caveat: forecast-combination puzzle (Smith–Wallis 2009) — estimating fine weights adds variance; keep modest spread until data. |
 | magnitudes 0.85/0.80/0.75/0.70 | as-is | **DATA_GATED** | Plausible but arbitrary; no source pins 5-pt increments. Bound to [0.65, 0.90] (market 10–35%); fit per-family by OOS Brier/log score at n≥150/family (Gneiting–Raftery 2007). |
 | direction | T3 lowest w (.70) | **NEEDS_CHANGE** | Inconsistency: **T1 is worst ROI (−0.102) yet w=0.75 > T3's 0.70** — worst family should shrink *hardest*. If T1 holds at n≥150, drop T1 w to ≤ T3 (~0.70–0.72). Also disentangle the **vig-haircut role of w** (shrink toward *no-vig* implied for the calibration component, apply vig separately). |
+
+---
+
+## Group AA — gate_check.py Platt gates (MLB / SGP / Combo)
+
+All three n=100 gates **CONFIRM** against the calibration sample-size literature (Peduzzi 1996 EPV
+rule; Niculescu-Mizil & Caruana 2005 — Platt beats isotonic below ~2000 cases), but the binding
+statistic is **minority events (min(W,L))**, not raw row count. Each gate carries a concrete action.
+
+| gate | verdict | action at gate |
+|---|---|---|
+| MLB Platt (n=100) | **CONFIRM (floor)** | Fit **MLB-specific** Platt — do **not** inherit NBA A/B (calibration is population-specific). Start intercept-only (A=1, fit B); ~45 MLB events support 1 param; defer free slope to n≥300. Deploy only on OOS Brier >0. |
+| SGP Platt (n=100 slips) | **CONFIRM** | **Stop applying marginal-prop Platt to individual legs** — the documented source of the 58%→69% under-confidence. Calibrate the **slip-level joint prob** vs realized slip WR (intercept-only; ~31 losses). The gate already counts graded slips (correct object). |
+| Combo Platt (n=100) | **CONFIRM** | Combo-specific intercept-only fit (don't inherit single-stat A/B, don't stay uncalibrated). ~5pp inflation is the joint-from-marginals signature. Furthest-out gate (11/100, throttled by RA disable). |
+
+*Engine improvement (optional): report EPV = min(W,L) alongside raw count in gate_check.py so the operator sees the real binding statistic.*
+
+## Group K — VAKE_MULT["variance"] + KELLY_MARKET_MULT + default
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| VAKE_MULT["variance"] | {T1:1,T1B:1,T2:.85,T3:.65} | **NEEDS_CHANGE** | **Double-counts with BM shrinkage** — both channel the *same* parameter-uncertainty correction (BM's k IS a function of σ²). T2=0.85 also penalizes the empirically-*best* tier (inversion; should be monotone in measured dispersion). Retire into BM (as VAKE["tier"] already was), or keep only as a pure growth-variance damper re-derived from realized family variance. Prefer **sigma inflation** (moves wp/edge/score coherently). Fold into DATA_GATED Kelly-stack consolidation. |
+| KELLY_MARKET_MULT | per-market dict | **NEEDS_CHANGE** | Uncalibrated bias patches, not variance scaling. **PTS over=0.50 on the BEST-ROI family (+0.277)** is a μ-overprojection patch mis-located in the sizing layer — move to projection/calibration. Mults <0.30 (3PM over=0.10, WNBA AST over=0.10) are **cosmetic** (0.25u floor overrides) → replace with explicit gating-exclusion. Calibrate remainder at n≥50/market (empirical-Bayes/James–Stein). |
+| DEFAULT_MARKET_MULT | 0.75 | **CONFIRM** | Reasonable generic parameter-uncertainty discount (¼–½ Kelly practice). Don't tune in isolation — audit the **stacked** effective Kelly fraction (converter × .75 × var × corr × exp) against the ¼–½ band; under-staking, if any, lives in the stack. |
+
+## Group J — pick-scoring constants
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| PICK_SCORE Default | 0.40 WP / 0.60 edge | **DATA_GATED** | Edge = wp−implied is the **noisier** signal (inherits wp noise + line noise); a top-K ranker enriches the noisier component (winner's/optimizer's curse, Xu 2025; Smith–Winkler). 60% on edge is the wrong direction → favor WP-heavy (0.50/0.50 or Conservative 0.55/0.45). 15% edge cap partially mitigates. Backtest at n≥150/family. |
+| COLD_START_SCORE_PENALTY | −15/−10/−8/−5 | **CONFIRM** | Targets the **selection axis** (down-rank thin estimates) — distinct from min_cap/BM (magnitude+stake), so **not** a strict double-penalty (James–Stein supports monotone-in-thinness). Magnitudes DATA_GATED (re-fit at n≥150/sub-type; ideally derive from same σ² as BM). |
+| INJURY_TRIGGER_BONUS | AST10/PTS8/SOG8/REB7 | **DATA_GATED** | Book-lag on injury news is real & exploitable (justifies the bonus; consistent with SLOW_BOOKS). AST>PTS ordering defensible (assist redistribution concentrates on one backup). Magnitudes uncalibrated → gate at n≥50/stat on **mean CLV captured**, not intuition. |
+
+## Group I — KILLSHOT parameters
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| SCORE_FLOOR | 65 | **DATA_GATED** | Provisional internal-unit cut; retune at n≥30–50 (bucket ROI by score band, move floor to lowest band whose bootstrap CI excludes 0). n=5 far too thin. |
+| MANUAL_FLOOR | 75 | **CONFIRM** | Manual > auto bar is correct/conservative (override reintroduces human overestimation bias). |
+| SIZE_BASE/BUMP | 3u / 4u | **CONFIRM** | **Risk-coherent: 3u ≈ 0.19 full Kelly, 4u bump ≈ 0.11** (at wp .60/.70, −110). The plan doc's "~1.9× Kelly" was vs the 1/16.7 *converter*; vs true full Kelly it's strictly fractional, never overbets. 3× the normal ~1u stake = deliberate conviction overweight (industry typical 1.25–1.5×, aggressive but safe). Watch 12u daily / 8u NBA cap interaction (2 KILLSHOTs = 6–8u). |
+| BUMP wp 0.70 / edge 0.06 | AND-gate | **DATA_GATED** | Structurally sound (both above ~3% +EV floor; conservative). Gate magnitudes at n≥30–50 (bumped vs non-bumped ROI separable?). |
+| WEEKLY_CAP | 2 | **LOCKED** | Scarcity/signal-concentration judgment; no literature pins an integer; n=5 too thin. Revisit only via per-rank ROI-decay test, never a calendar tweak. |
