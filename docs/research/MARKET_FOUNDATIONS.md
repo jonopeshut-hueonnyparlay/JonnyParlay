@@ -798,3 +798,35 @@ All **CONFIRM** — these are *measured* within-player Pearson, not assumed.
 | existence | fires when longshot can't build; 0.25u flat; no per-leg +EV gate | **NEEDS_CHANGE** | Safest-leg selection with no +EV gate maximizes compounding vig (~14% hold) — presumptively −EV. It inherits longshot's EV deficiency **without** longshot's pre-registered LOCKED status. Add a **per-leg edge>0 admissibility gate**; return None rather than parlay an individually −EV leg. Keep 0.25u (engagement product). |
 | "+100 floor" | `combined_dec>=2.0` branch | **CONFIRM (no-op)** | **The +100 floor does not exist** — that line is the decimal→American sign conversion, not a filter. No minimum-odds gate is enforced. Don't add one (would push toward longer, higher-vig legs); fix the labeling so it isn't misread. |
 | selection | win_prob (safest) ranking | **DATA_GATED** | EV/edge-correlation-aware ranking is research-correct (own longshot docstring: EV-factor ~4× better slip EV), but win_prob is the same intentional hit-frequency tradeoff as the LOCKED longshot. Gate any switch on the family-bootstrap n≥150; layer a per-leg edge>0 filter meanwhile. |
+
+---
+
+## Group C — injury redistribution constants (EdgeModel)
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| _CREATOR_USAGE_SHARE | 0.30 | **DATA_GATED** | Directionally right, at upper-plausible end (on/off single-beneficiary usage spikes ~+6–8pp ⇒ ~0.20–0.30 of a star's vacated usage). Refit on own lineup/on-off data (regress teammate usage Δ on absent star's vacated usage); consider role-conditional (lower for small-ball/no-creator rosters). |
+| _CREATOR_AST_RATE_THRESHOLD | 0.20 (of team assists) | **NEEDS_CHANGE (metric)** | "20% of *team assists*" under-discriminates — a 5-man rotation trivially averages 20% each. Re-specify against **AST%** (share of teammate FGs assisted while on court) where ~0.20 is a defensible role-player/creator boundary, or a per-100 assist rate. Keep value ~0.20 but fix the metric. |
+
+## Group D — altitude / westward-travel minute reductions (EdgeModel)
+
+Both apply a **minutes** haircut, but the literature measures these effects on **efficiency / win
+probability**, never on minutes (rotation length is coach-controlled).
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| _ALTITUDE_REDUCTION | 0.035 (minutes, DEN/UTA) | **NEEDS_CHANGE** | Wrong metric + likely wrong magnitude. Measured altitude effects: visitor FT% −1.5pp, ~2.6 uncontrolled net-rating; a pace analysis found **no** possession/fatigue decrement. Drop the minutes haircut; if retained, model as a small **efficiency** multiplier (~0.5–1.0% per-possession) validated on the engine's own DEN/UTA road backtest. DATA_GATED. |
+| _WESTWARD_TRAVEL_REDUCTION | 0.025 (minutes) | **NEEDS_CHANGE** | The ~9pp travel-direction effect is **win-probability**, not minutes — and a 2024 25,016-game study shows the circadian sign is **contested** (can *favor* westward-moving teams). Don't pass ~9pp through as a minutes haircut; re-specify as a win-prob/efficiency tilt keyed to time-zones crossed × game time. DATA_GATED. |
+
+## Group E — SGP/longshot margin & ρ
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| SGP_JOINT_EV_MARGIN | 0.025 | **CONFIRM** | Just above the published ~2% pro +EV buffer, below the 0.10 premium gate (correct ordering existence<premium). SGP hold 15–25% ⇒ a thin existence floor is defensible. Hold DATA_GATED at n=100 slips; raise toward 0.03 only if boundary ROI<0. |
+| LONGSHOT_PAIR_RHO | 0.35 | **CONFIRM** | Sign correct (early exit → more opponent PAs/runs = positive); 0.30–0.40 band midpoint (bounded below hits→runs r=.80 since OUTS is a noisier proxy). Mutually consistent with BB's 0.30. Ranking-only (never blocks) → low risk. |
+
+## Group F — DAYS_REST_MAX_REDUCTION
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| DAYS_REST_MAX_REDUCTION | 0.07 | **CONFIRM** | Inside the published **played-player** B2B band (scoring −3–10%, minutes −9–14%); sound midpoint of 0.05–0.08. Don't raise as a flat cap — most of the larger *team* B2B deficit is intentional starter DNP (already handled by lineup/injury removal; double-count risk). Optional DATA_GATED age(>30)/coast-to-coast conditioning toward the 0.08–0.10 tail. |
