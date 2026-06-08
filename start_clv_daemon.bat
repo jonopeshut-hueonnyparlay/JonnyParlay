@@ -6,7 +6,7 @@
 ::  Schedule via Task Scheduler: daily at 10:00 AM local time
 :: ============================================================
 
-set ROOT=C:\Users\jono4\Documents\JonnyParlay
+set ROOT=C:\Dev\JonnyParlay
 set LOG=%ROOT%\data\clv_daemon.log
 
 cd /d "%ROOT%"
