@@ -624,3 +624,58 @@ SV→T3 + its Normal→conditional distribution fix is the strongest single find
 The combo (PRA/PR/PA/RA) relocation is gated on the existing 100-scored-combo Platt gate. **The Step 0
 T1-tier ROI deficit (−0.102) is consistent with this group: the corrected tiering pushes the genuinely
 noisy stats (RBI/ER/HA/SV/GA) toward heavier shrinkage, which is the right direction.**
+
+---
+
+## Group Z — sgp_builder.py copula correlations + MC
+
+No published source gives exact same-team NBA prop-over ρ; the only hard anchor is the engine's own
+COMBO_RHO. MC sample-size SE claims verified numerically exact.
+
+| item | current | verdict | finding / action |
+|---|---|---|---|
+| same-team offense ρ | 0.35 | **DATA_GATED** | High end of published intra-game range (WoO NFL SGP matrix tops 0.42/0.35) but unverified. Keep as conservative ceiling ≤0.40; recalibrate from in-house teammate game-logs at n≥50 slips. |
+| same-player multistat ρ | flat 0.28 | **CHANGE** | Internally inconsistent with engine's own COMBO_RHO (PTS/AST=0.233, REB/AST=0.251, PTS/REB=0.333). Replace flat 0.28 with a **pair-keyed COMBO_RHO lookup** (fallback 0.25 for 3PM pairs). Single source of truth. |
+| same-team REB ρ | 0.20 | **DATA_GATED** | Board-competition pushes teammate REB ρ down; expect 0.10–0.20. Provisional; measure at n≥50 slips. |
+| cross-team ρ | 0.10/0.08/0.02 | **CONFIRM** | Consistent with team-level ρ(home,away)=+0.227 (attenuated for player props) + pace literature. |
+| pool_score weights | edge·0.40 + wp_excess·0.60 | **DATA_GATED** | **NOT a bug.** Safety-tilt is *more* defensible for a multiplicative parlay (one weak leg dominates survival) — correctly inverse to the prop scorer. Document why; refit split at n≥50 slips; do NOT flip to match prop scorer. |
+| MC n=300/4000 | ranking/final | **CONFIRM** | SEs exact (2.5% / 0.7%). Optional: final 4000→10000 (~0.43% SE) for the EV-margin gate; low priority. |
+| `_copula_joint_approx` linear interp | "15–20% error" | **NEEDS_CHANGE** | Direct sim confirms **systematic optimistic bias +8% (3-leg) → +29% (4-leg low-p)** — over-rates exactly the riskier 4-leg combos and can promote a worse combo into MC re-score. Replace with single-factor analytic equicorrelation CDF or (n_legs,ρ,min_p) lookup; min fix = deflate approx ×0.85–0.90. Deterministic math, no gate. |
+
+## Group BB — mlb_sgp_builder.py copula + floors
+
+All ρ are docstring-acknowledged structural priors (n=57 slips, no 100-slip refit). Literature validates
+the **sign and ordering** of every value; exact magnitudes remain **DATA_GATED** at the builder's own
+100-slip gate.
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| same-team batters ρ | 0.15 | DATA_GATED | Sign ✓; likely low for adjacent-order pairs (DFS stacking). Consider order-distance scaling (adjacent ~0.18–0.22) at gate. |
+| two pitchers same game ρ | 0.10 | DATA_GATED | Shared-total link is one of several drivers; 0.05–0.15 band, 0.10 reasonable. Not "too low." |
+| OUTS-over + opp-HITS-under ρ | 0.30 | DATA_GATED | Directionally strong (hits↔runs r≈0.80, WHIP r≈0.90); largest ρ correct. Consistent with Group-E longshot pair. Expect 0.20–0.35 at gate. |
+| cross-team batters ρ | 0.08 | DATA_GATED | Ordering 0.02<0.08<0.15 correct (game-total only, no RBI-chaining). |
+| MIN_LEG_WIN_PROB | 0.65 (MLB) vs 0.60 (NBA) | DATA_GATED | Higher MLB variance (PA Bernoulli, manager hooks) + thin n justify stricter floor. Don't loosen; revisit 0.62–0.63 at n≥100. |
+| MIN_LEG_EDGE | 0.010 | **CONFIRM** | Intentionally weak per-leg screen; SGP_JOINT_EV_MARGIN=0.025 + wp floor are the binding EV gates (correlation, not per-leg edge, drives SGP +EV). |
+| MAX_SGPS_PER_DAY | 3 (vs NBA 2) | **CONFIRM** | Slate-proportional (~15 MLB games vs ~5 NBA); arguably conservative. |
+
+## Group L — POISSON_STATS vs NB_STATS membership
+
+Cross-references STATISTICAL_FOUNDATIONS §1B/§16 (within-player var/μ measured from game-log tables).
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| REC | Poisson | **DATA_GATED** | No within-player reception dispersion data (NFL July). Poisson-by-convention only; target-volume swings may overdisperse. Decide at go-live (var/μ>1.15→NB). **POISSON_CUTOFF=8.5 hardening must ship first** (lines >8.5 route to uncalibrated Normal). |
+| HITS Poisson vs HRR NB | as-is | **CONFIRM** | Consistent: HITS singles under-dispersed (var/μ=0.895); HRR overdispersion comes from RBI zero-inflation, not HITS. Two genuinely different distributions. |
+| RUNS/BB/GA | Poisson | **CONFIRM** | Within-player var/μ = 0.969 / 0.992 / 0.830 — all ≤1.0 (published "overdispersion" is team/population frame, wrong for single-player pricing). GA sub-Poisson → near-mean 1–2pp caveat (PERIODIC_RECAL). |
+| corr-stats r≈0.70 hard block | G11/G11b | **DATA_GATED** | 0.70 was **asserted (commit 954e984), never measured** — but structurally sound (TB/HRR contain HITS; pitcher stats all IP-functions). Hard block defensible (Kelly mult ~0.59 at ρ=0.70). Measure ρ from game-log tables + block-vs-penalty cost test at n≥50/group; annotate label "structural lower bound, unmeasured." |
+
+## Group B — BM_SHRINKAGE_WEIGHT {T2:.85, T1B:.80, T1:.75, T3:.70}
+
+**Headline: the "Baker–McHale (2013)" attribution is wrong.**
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| formula basis | "Baker–McHale (2013)" | **NEEDS_CHANGE (citation)** | BM (2013) shrinks the Kelly **bet size** toward zero by probability variance σ — it never blends probability toward market. The formula `w·model_p+(1−w)·implied_p` is a **linear opinion pool (Stone 1961) / Bayesian shrinkage-to-market**. Re-label in code + CLAUDE.md. Formula itself is valid. (Optional: implement the *real* BM σ-based size-shrinkage separately on the stake.) |
+| tier differentiation | w by tier | **CONFIRM** | Inverse-variance/precision weighting justifies differentiating w by calibration quality (Bates–Granger 1969). Caveat: forecast-combination puzzle (Smith–Wallis 2009) — estimating fine weights adds variance; keep modest spread until data. |
+| magnitudes 0.85/0.80/0.75/0.70 | as-is | **DATA_GATED** | Plausible but arbitrary; no source pins 5-pt increments. Bound to [0.65, 0.90] (market 10–35%); fit per-family by OOS Brier/log score at n≥150/family (Gneiting–Raftery 2007). |
+| direction | T3 lowest w (.70) | **NEEDS_CHANGE** | Inconsistency: **T1 is worst ROI (−0.102) yet w=0.75 > T3's 0.70** — worst family should shrink *hardest*. If T1 holds at n≥150, drop T1 w to ≤ T3 (~0.70–0.72). Also disentangle the **vig-haircut role of w** (shrink toward *no-vig* implied for the calibration component, apply vig separately). |
