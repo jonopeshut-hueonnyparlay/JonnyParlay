@@ -927,3 +927,101 @@ probability**, never on minutes (rotation length is coach-controlled).
 | MIN_AVAILABILITY_WEIGHT | 0.30 | **DATA_GATED** | Arbitrary floor; grid 0.20/0.30/0.40 against MAE at n≥50 vacated games. |
 | _AVAIL_KEY_MPG_THRESHOLD | 12.0 | **CONFIRM** | Consistent with the validated role-tier rotation floor (≥12 MPG, §8E); intentionally more inclusive than the 15-MPG convention (correct for a key-player gate). |
 | MIN_GAMES_FOR_TIER | 10 | **CONFIRM** | Minutes are the most-stable NBA stat (Medvedovsky 2020); already validated on 76,604 snapshots (§8E). |
+
+---
+
+## Plan 10 — Consolidated outputs
+
+### Verdict tally (≈70 audited items across A–GG)
+**CONFIRM/LOCKED:** ~28 · **DATA_GATED:** ~22 · **CHANGE/NEEDS_CHANGE:** ~22.
+All four Phase-0 "immediate action" code items were already resolved (no action).
+**No item required halting a live card** — but several touch live picks and should be
+corrected in the follow-up implementation session (priority table below).
+
+### NEEDS_CHANGE / CHANGE — ranked for the implementation session
+
+**Tier A — affects live picks now (MLB/NHL props + MLB game lines):**
+
+| item | change | basis |
+|---|---|---|
+| RBI tier | T2 → **T1** | "stat to avoid", opportunity-dependent, ~74% zero games (FanGraphs) |
+| ER tier | T2 → **T1** | BABIP/LOB%-driven (~71%/26% of ERA-FIP var) |
+| RUNS tier | T2 → **T1B** | lineup/context-dependent (one step less than RBI) |
+| GA tier | T2 → **T3** | goaltending least-predictable (RS→PO r≈0.15); GOALS already T3 |
+| SV tier + dist | T2 → **T3**, Normal → **conditional/Poisson** | doubly-conditional event; Normal a poor fit |
+| MLB GAME_SIGMA | total 4.0→**~4.6**, spread/ml 3.8/4.75→**~4.2**, team 3.0 ✓ | 4.0 below the team×√2≈4.4 floor → overconfident totals |
+| ML_DOG BM | exclude from BM (or raise w, sport-aware) | heaviest shrink on most-efficient market = circular; ML_FAV not BM'd |
+| TEAM_TOTAL BM | raise w→~0.95 or bypass | projection already Vegas-anchored → partial double-shrink |
+| MIN_LEG_EDGE_DAILY | 0.025 → **0.03** | below published +3–5% +EV band |
+| G_OUTS_UNDER | replace 0.60 WP floor with EV floor | contradicts left-skewed outs dist; stale post σ-fix |
+| G_HA_DIR | run HITS-over in shadow (stop hard-kill) | "no research basis" = missing data, not measured bias |
+
+**Tier B — infra / sizing / calibration (no single live card, but systemic):**
+
+| item | change | basis |
+|---|---|---|
+| BM citation | re-label "Baker–McHale" → **linear opinion pool (Stone 1961)** | mis-cited; BM(2013) shrinks *bet size* by σ, not prob→market |
+| BM direction | worst family (T1, ROI −0.10) should shrink ≥ T3 | inverted; gate n≥150/family, fit by OOS Brier |
+| VAKE_MULT["variance"] | retire into BM or re-derive from realized variance | double-counts BM; T2=0.85 penalizes the best tier |
+| KELLY_MARKET_MULT | move bias-patches to projection; replace <0.30 mults with gating-exclusion | uncalibrated; 0.25u floor makes <0.30 cosmetic |
+| game-line edge floor | add GG lower floor ~0.03–0.05 | more-efficient market clears on *smaller* edge than props (inverted) |
+| SGP same-player ρ | flat 0.28 → pair-keyed COMBO_RHO lookup | engine already maintains the true table |
+| SGP copula approx | replace linear interp / deflate ×0.85–0.90 | optimistic bias +8→+29%, worst for 4-leg combos |
+| conf early-season | fold into GP-conditioned BM weight (drop toward-0.50 shrink) | double-shrinks with BM; wrong shrink target |
+| CLV write latch | T-10 first-poll → **last pre-tip** observation | misses sharpest final-minutes moves |
+| SKIP_STATS | capture CLV for NRFI/YRFI/TEAM_TOTAL | they have standard closing markets ("no coverage" is false) |
+| Vegas constraint | bounds ±20%→±15%; silent clip → warn-and-continue + integrity precheck | clip masks missing-player data errors |
+| F5_SIGMA | drop ±0.1 park bump; widen to ~2.9/2.79/2.20 (re-scale if total→4.6) | too narrow vs √-window scaling |
+| LEAGUE_AVG_TOTAL | 222 → **~229** | stale; biases Vegas pace prior upward |
+| PLATT_SPACE | raw → **logit** *at H3* (intercept-only) | raw-prob Platt is theoretically wrong (already H3-gated) |
+
+**Tier C — July refit / model-context (mostly EdgeModel, gated):**
+PACE_ELASTICITY reb/ast/stl/blk (below per-possession theory; refit jointly with H01 REB prior) ·
+altitude/westward-travel (wrong metric — efficiency/win-prob, not minutes) · creator-AST threshold
+(re-spec as AST%) · HRR r=1.5→~1.8 + ZINB · context era_fip → xFIP/SIERA + collapse sharp-money
+triplet + directional wind · REC Poisson→NB at NFL go-live · MLB_PARK_FACTORS refit (TEX inverted) —
+**dormant, add docstring warning** · WNBA 3PM sigma (copied from PTS) · R11 reclassify as DATA_GATED
+protective rule · combo PRA/PR/PA/RA → T1B at the 100-scored-combo gate.
+
+### Corrected STAT_FAMILY_TIER (recommended — every assignment cited above)
+
+```python
+STAT_FAMILY_TIER = {
+    # T2 (w .85, floor .05) — best-calibrated / self-driven / market-efficient
+    "PTS": "T2",        # empirical anchor: WR .676, ROI +0.277 (Step 0)
+    "OUTS": "T2",       # miss-bat/IP skill, most stable pitcher trait
+    "BB": "T2",         # command skill, stabilizes ~60 BF
+    "PC": "T2",         # manager-targeted ceiling, fast convergence
+    "TB": "T2",         # self-driven; power stabilizes ~150-200 AB
+    "YARDS": "T2",      # NFL anchor (DATA_GATED — verify σ/tail at go-live)
+    "REC": "T2",        # CHANGE from T1 — target-driven, more projectable than YARDS
+    "NRFI": "T2", "YRFI": "T2",        # Poisson λ well-calibrated; YRFI keeps 0.08 hurdle
+    "TEAM_TOTAL": "T2", # (consider BM-bypass — already Vegas-anchored)
+    "F5_TOTAL": "T2",   # (consider BM-bypass — game-line total)
+    # PRA/PR/PA/RA: HOLD T2 pending 100-combo gate, then PR/PRA/RA -> T1B (PA may stay T2)
+    "PRA": "T2", "PR": "T2", "PA": "T2", "RA": "T2",
+
+    # T1B (w .80, floor .06) — binary/low-line, moderate noise
+    "AST": "T1B",       # low-assist tail, R11 protective
+    "HITS": "T1B",      # BABIP-driven, slowest-stabilizing batter skill
+    "RUNS": "T1B",      # CHANGE from T2 — lineup/context-dependent
+
+    # T1 (w .75, floor .07) — least-calibrated, most market-shrunk
+    "REB": "T1",        # lineup/opportunity-dependent (~10pp over-confidence in-house)
+    "HRR": "T1",        # combo of two context-noisy components (refit r 1.5->~1.8)
+    "RBI": "T1",        # CHANGE from T2 — "stat to avoid", ~74% zero games
+    "ER":  "T1",        # CHANGE from T2 — BABIP/LOB%-driven, regression-prone
+    "HA":  "T1",        # CHANGE from T1B (on unsuspension) — least-controllable pitcher stat
+
+    # T3 (w .70, floor .06) — specialty / high-variance / conditional
+    "3PM": "T3", "SOG": "T3", "NHLPTS": "T3", "NHLBLK": "T3",
+    "TDS": "T3", "GOALS": "T3", "ML_DOG": "T3",  # (ML_DOG: prefer BM-exclusion)
+    "SV":  "T3",        # CHANGE from T2 — doubly-conditional; + dist fix Normal->conditional
+    "GA":  "T3",        # CHANGE from T2 — goaltending least-predictable (cf. GOALS)
+}
+# BM-direction caveat: at n>=150/family, T1 (worst realized ROI) should shrink at least
+# as hard as T3 -> consider w(T1) ~ 0.70-0.72 once data confirms (Group B).
+```
+
+**End of Plan 10 audit.** Research-only — no engine changes this session. Implementation follows
+in a separate session after Jono reviews; every CHANGE above carries a citation in its group section.
