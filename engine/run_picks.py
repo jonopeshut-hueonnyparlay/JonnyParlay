@@ -703,6 +703,9 @@ F5_SCALAR = 0.540  # F5 ≈ 54% of full-game total; market-calibrated 2022-2025 
 # Park run factors by HOME team — multiplied onto projected runs.
 # Source: Baseball Savant 2022-2025 Statcast park factors (100 = neutral).
 # Applied to F5 and NRFI projections; SaberSim team totals don't carry park-factor information.
+# ⚠ STALE/UNVERIFIED as of 2026-06-07 (Plan 10 §M): TEX inverted (~1.05 here was pitcher-friendly,
+# now plays ~0.95), COL too low (~1.28 → ~1.33), KC/MIN/DET now hitter-friendly. Do NOT apply
+# without a refit from current Fangraphs/Savant park factors.
 MLB_PARK_FACTORS = {
     "COL": 1.28, "CIN": 1.08, "BOS": 1.07, "PHI": 1.06, "TEX": 1.05,
     "NYY": 1.04, "HOU": 1.03, "ATL": 1.02, "CHC": 1.01, "LAD": 1.00,

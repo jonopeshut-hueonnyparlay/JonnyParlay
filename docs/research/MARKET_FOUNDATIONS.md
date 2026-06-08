@@ -938,6 +938,31 @@ All four Phase-0 "immediate action" code items were already resolved (no action)
 **No item required halting a live card** — but several touch live picks and should be
 corrected in the follow-up implementation session (priority table below).
 
+### Implementation status — 2026-06-07 (commits 1dfb31f, 13fb3f3; EdgeModel f084010)
+
+**IMPLEMENTED this session:**
+- Tier moves (§Group A): RBI/ER→T1, RUNS→T1B, GA/SV→T3, HA→T1, REC→T2 — `1dfb31f`
+- MLB GAME_SIGMA interim (§O): total 4.6 / spread 4.2 / ml 4.2 / team 3.0 (+ analyze_game_lines mirror) — `1dfb31f`
+- SGP copula approx ×0.87 deflation (§Z) — `1dfb31f`
+- LEAGUE_AVG_TOTAL 222→229 (§FF) — EdgeModel `f084010`
+- G_OUTS_UNDER WP<0.60 block removed → standard T2 floor (§T) — `13fb3f3`
+- G_HA_DIR split: HITS-over → shadow (HA-over still blocked, suspended) (§T) — `13fb3f3`
+- R11 reclassified as DATA_GATED protective rule + logs to pick_log_blocked.csv (§C-list) — `13fb3f3`
+- build_value_parlay per-leg +EV gate (§S) — `13fb3f3`
+- MLB_PARK_FACTORS stale/UNVERIFIED docstring warning (§M) — `13fb3f3`
+
+**NOT IMPLEMENTED (premise void / deferred):**
+- **TEAM_TOTAL BM (§1b) & ML_DOG BM (§1c)** — premise void: `apply_bm_shrinkage` is only called in the
+  player-prop pipeline; TEAM_TOTAL/ML_DOG come from `evaluate_game_lines` and are never BM-shrunk, so
+  there is no double-shrink to correct. No code change. Revisit only if BM is extended to game lines.
+- **SKIP_STATS / CLV capture for NRFI/YRFI/TEAM_TOTAL (§EE)** — deferred: bare un-skip captures nothing
+  (no market mappings; TEAM_TOTAL needs a `team_totals` team-matching branch, NRFI/YRFI need confirmed
+  Odds API first-inning keys). Needs dedicated capture plumbing as a follow-up.
+- **DATA_GATED** (documented in CLAUDE.md, not changed): BM direction swap (n≥150/family), BM relabel to
+  linear opinion pool, conf early-season GP-conditioned weight, VAKE_MULT["variance"] retirement,
+  KELLY_MARKET_MULT calibration, PRA/PR/PA/RA→T1B (combo Platt gate), CLV write-latch redesign,
+  game-line edge floor, F5_SIGMA recal, SV Normal→conditional, PLATT_SPACE logit (H3), MIN_LEG_EDGE_DAILY 0.025→0.03.
+
 ### NEEDS_CHANGE / CHANGE — ranked for the implementation session
 
 **Tier A — affects live picks now (MLB/NHL props + MLB game lines):**
