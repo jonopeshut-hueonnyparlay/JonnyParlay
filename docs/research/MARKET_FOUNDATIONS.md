@@ -587,3 +587,40 @@ T1 deficit is partly HRR/REC/historical-mix, not REB alone. (3) **CLV is effecti
 (only 9 post-reform rows total, both tiers slightly negative) — literature must carry the weight;
 CLV grounding is reported as thin throughout. (4) DAILY_LAY (−0.470, n=10) and the longshot/SGP
 extreme-variance ROIs are small-n and not tier-relevant.
+
+---
+
+## Group A — STAT_FAMILY_TIER assignments (16 stats)
+
+Tier = stat-family **calibration bucket** (not conviction); lower BM shrinkage weight (w) =
+shrink harder toward market. Floors: T2=0.05 (w .85, most trusted) < T1B=0.06 (w .80) ≈ T3=0.06
+(w .70, specialty/high-variance) < T1=0.07 (w .75, least calibrated). 4 sport-cluster research
+agents (opus + web search), cross-referenced with the Step 0 empirical anchor. **7 CHANGEs + 1
+DATA_GATED relocation found** — several affect live picks.
+
+| stat | current | rec. tier | verdict | basis |
+|---|---|---|---|---|
+| REB | T1 | T1 | **CONFIRM** | Lineup/opportunity-dependent (Kiriazis-Genest-Leblanc 2024 JQAS; Deshpande-Wyner 2016). In-house ~10pp over-confidence (61.6%→51.9%, n=27). NB r=14.7 correct. |
+| 3PM | T3 | T3 | **CONFIRM** | Overdispersed low-count, volume-driven (Squared2020; Binomial Basketball). NB r=9.15 ✓. Empirical break-even (ROI −0.018). |
+| PRA/PR/PA/RA | T2 | **T1B** | **DATA_GATED→CHANGE** | Positive component ρ *inflates* variance-of-sum & stacks errors (Cohen&Cohen 2018) — combos are **not** more projectable; "CLT smoothing" claim is false for correlated components. RA disabled 0W/7L (model 56.7% vs 0% actual). Move PR/PRA/RA→T1B at combo Platt gate (n=100); PA (guard-heavy, low-REB-var) may stay T2. Pre-register: relocate if combo calib bias >+3pp at n≥50. |
+| HITS | T1B | T1B | **CONFIRM** | BABIP/batted-ball driven — slowest-stabilizing batter skill (~800 BIP; FanGraphs sample-size). Poisson ✓ (var/mu 0.873). Keep OUT of T2. |
+| TB | T2 | T2 | **CONFIRM** | Self-driven (no runner context); power stabilizes fast (~150–200 AB). NB r=1.3 / component-Poisson convolution ✓. Most shrinkage-eligible T2 member. |
+| RBI | T2 | **T1** | **CHANGE** | Canonical "stat to avoid" — opportunity/lineup-dependent, no predictive metric, ~74% zero games (FanGraphs). T2 (least shrink) is exactly wrong → T1. NB r=0.87 ✓. |
+| RUNS | T2 | **T1B** | **CHANGE** | Context/lineup-dependent like RBI but batter's on-base skill adds a forecastable first step → one step less shrunk than RBI. Poisson ✓ (var/mu 0.969). (T1 acceptable if paired with RBI.) |
+| HRR | T1 | T1 | **CONFIRM** | Combo of HITS+RUNS+RBI (2 of 3 context-noisy) + tail. NB ✓ but **r=1.5 is moment-matched; external evidence r≈1.83 — refit at MLB batter gate (possibly ZINB).** Shadow, n=2. |
+| HA | T1B (susp) | **T1** | **CHANGE** | Least-controllable pitcher stat — BABIP ~71% of ERA-FIP variance (Beyond the Box Score 2015; FIP framework exists to strip hits out). On unsuspension → T1, not T2. NB r=13.41 ✓. |
+| ER | T2 | **T1** | **CHANGE** | Luck/defense/sequencing-driven (BABIP ~71%, LOB% ~26% of ERA-FIP var). T2 unjustifiable for textbook regression-prone stat → T1. NB r=2.62 ✓. |
+| BB | T2 | T2 | **CONFIRM** | Genuine command skill — pitcher-attributable, stabilizes ~60 BF, half of K/BB (best predictive metric). Poisson ✓ (var/mu ~0.97; monitor >1.15). |
+| PC | T2 | T2 | **CONFIRM** | Manager-targeted ceiling, converges to season avg by ~3rd start. Starters-only frame ✓. Normal provisional (skew −1.93 → empirical-CDF at July refit; under-tail only). |
+| SV | T2 | **T3** | **CHANGE + dist NEEDS_CHANGE** | Doubly-conditional event (availability AND save situation); most volatile pitcher role (industry unanimous). T2→T3. **Normal is a poor fit → conditional/Poisson P(situation)×P(convert) at refit.** |
+| NRFI/YRFI | T2 (YRFI 0.08 override) | T2 | **CONFIRM** | Poisson λ model well-calibrated to published ~52–55% scoreless-1st. Family T2, YRFI deliberate higher hurdle — internally consistent. γ=0.65 DATA_GATED. |
+| GA | T2 | **T3** | **CHANGE** | Goaltending = least-predictable position (RS→PO goalie r≈0.15; jfresh, ExpectedBuffalo). GOALS already T3 → GA should match. Poisson ✓ (team-level, Ryder 2004). |
+| REC | T1 | **T2** | **CHANGE** | Target-driven volume — stickiest WR metric, *more* projectable than YARDS (which is T2). T1 (harshest) is backwards. Poisson acceptable but **NB candidate** (overdispersion, like 3PM/AST/REB). Re-confirm at NFL gate. |
+| YARDS | T2 | T2 | **DATA_GATED** | NFL anchor, but Normal is a right-skewed approximation (gamma better in tail) and NFL is pre-go-live (rush-yards YoY r≈0.21). Hold T2 pending NFL σ/tail calibration. Keep ≤ REC's tier. |
+
+**Live-impact CHANGEs (MLB/NHL props in current cards):** RBI→T1, RUNS→T1B, ER→T1 (MLB batter/pitcher
+live), GA→T3 (NHL live), HA→T1 (on unsuspension). REC→T2 and YARDS are NFL (pre-go-live, no live effect).
+SV→T3 + its Normal→conditional distribution fix is the strongest single finding (T2 was clearly wrong).
+The combo (PRA/PR/PA/RA) relocation is gated on the existing 100-scored-combo Platt gate. **The Step 0
+T1-tier ROI deficit (−0.102) is consistent with this group: the corrected tiering pushes the genuinely
+noisy stats (RBI/ER/HA/SV/GA) toward heavier shrinkage, which is the right direction.**
