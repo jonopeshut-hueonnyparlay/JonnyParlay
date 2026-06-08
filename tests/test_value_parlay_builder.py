@@ -16,7 +16,7 @@ import run_picks as rp
 # ---------------------------------------------------------------------------
 
 def _pick(win_prob=0.70, game="OKC @ DEN", player="Player A",
-          stat="PTS", direction="OVER", line=25.5, team="OKC"):
+          stat="PTS", direction="OVER", line=25.5, team="OKC", adj_edge=0.05):
     return {
         "win_prob":  win_prob,
         "game":      game,
@@ -25,6 +25,7 @@ def _pick(win_prob=0.70, game="OKC @ DEN", player="Player A",
         "direction": direction,
         "line":      line,
         "team":      team,
+        "adj_edge":  adj_edge,  # qualified picks always carry a positive edge (≥ tier floor)
     }
 
 
@@ -86,6 +87,13 @@ class TestBuildValueParlay:
         assert len(result["legs"]) == 5
         star_legs = [l for l in result["legs"] if l["player"] == "StarPlayer"]
         assert len(star_legs) == 1
+
+    def test_non_positive_edge_legs_excluded(self):
+        """Plan 10 §S: legs with adj_edge <= 0 are excluded; pool falling below 5 → None."""
+        picks = [_pick(0.70, f"G{i} @ H{i}", player=f"P{i}") for i in range(4)]
+        picks.append(_pick(0.80, "G4 @ H4", player="FlatEdge", adj_edge=0.0))
+        # 4 +EV legs + 1 zero-edge leg → only 4 eligible → None
+        assert rp.build_value_parlay(picks) is None
 
     def test_selects_highest_win_prob(self):
         """7 picks across 7 games — top 5 by WP should be selected."""

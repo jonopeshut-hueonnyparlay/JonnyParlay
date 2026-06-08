@@ -269,6 +269,7 @@ SHADOW_GATE_CODES = {
     "R4_REB_OVER",   # REB over (structural over-projection; under is live)
     "R4_REB_U25",    # REB under ≤2.5 (volatile at low lines; >2.5 under is live)
     "R11_AST_U25",   # AST under 1.5 and 2.5 (sub-elite lines; 0.5 and >2.5 are live)
+    "G_HITS_OVER_SHADOW",  # HITS over (Plan 10 §T — was hard kill; shadow to accrue data, n≥30)
 }
 
 # Gates that are full-stat suspensions pending investigation — excluded from
@@ -1429,15 +1430,19 @@ def check_prop_gates(pick):
             if ev_per_unit < WNBA_EV_FLOOR:
                 return False, "G_WNBA_EDGE"
 
-    # G_MLB_STRUCT: MLB structural direction gates based on known SaberSim biases.
-    # OUTS: Conservative IP bias makes unders lose structurally (actual IP > SaberSim median).
-    # Hard kill softened to WP≥0.60 gate: extreme model conviction can overcome bias when
-    # SaberSim projects a very short outing and market line is set high.
-    if stat == "OUTS" and direction == "under" and prob < 0.60:
-        return False, "G_OUTS_UNDER"
-    # HA / HITS: researched as unders-only plays (3.5+ lines). Block overs — no research basis.
-    if stat in ("HA", "HITS") and direction == "over":
+    # G_MLB_STRUCT: MLB structural direction gates.
+    # OUTS under: G_OUTS_UNDER WP<0.60 block removed per Plan 10 §T (2026-06-07). The outs
+    # distribution is left-skewed (early exits common) so books OVER-estimate outs → unders
+    # should win MORE, not "lose structurally"; the 0.60 floor contradicted the data and was
+    # stale post-σ-fix (0.311→0.27). OUTS (T2) now rides the standard T2 min_edge=0.05 floor.
+    # HA over: no research basis; HA is suspended anyway (G_HA_SUSPENDED catches it first).
+    if stat == "HA" and direction == "over":
         return False, "G_HA_DIR"
+    # HITS over: routed to shadow (was hard kill) per Plan 10 §T — hitter parks + May offense
+    # suggest possible live edge; accumulate data instead of killing blind.
+    # DATA_GATED: lift at n≥30, calib bias ±3pp + CLV≥0.
+    if stat == "HITS" and direction == "over":
+        return False, "G_HITS_OVER_SHADOW"
 
     # G9: universal floor
     if edge < 0.05:
@@ -1564,7 +1569,7 @@ def check_game_gates(pick):
 #  RULES ENGINE (R1-R12)
 # ============================================================
 
-def apply_hard_rules(picks, shadow_dest=None):
+def apply_hard_rules(picks, shadow_dest=None, log_blocked=False):
     """Apply R4 (REB bans), R11 (AST under 1.5/2.5 ban) before anything else.
 
     shadow_dest: if provided, killed picks are appended here (for shadow logging)
@@ -1586,10 +1591,16 @@ def apply_hard_rules(picks, shadow_dest=None):
                 p.setdefault("pick_score", None)
                 shadow_dest.append(p)
             continue
-        # R11: AST under 1.5/2.5 — sub-elite lines; 0.5 and >2.5 are live
+        # R11: DATA_GATED protective rule (gambler's-fallacy-adjacent) — AST under 1.5/2.5
+        # ban kept ACTIVE. Empirical basis is thin: n=15, ROI +0.017 (CI ±25pp — marginally
+        # positive); AST→T1B floor 0.06 + BM shrinkage already screen these. Reclassified
+        # per Plan 10 §R11 (mirror R9/R12 treatment); lift at n≥40 shadow (calib bias ±3pp
+        # + CLV≥0). Logs to pick_log_blocked.csv. 0.5 and >2.5 are live.
         if p["stat"] == "AST" and p["direction"] == "under" and p["line"] in (1.5, 2.5):
+            p["gate_result"] = "R11_AST_U25"
+            if log_blocked:
+                log_blocked_pick(p)
             if shadow_dest is not None:
-                p["gate_result"] = "R11_AST_U25"
                 p.setdefault("pick_score", None)
                 shadow_dest.append(p)
             continue
@@ -4315,6 +4326,10 @@ def build_value_parlay(qualified):
     """5-leg fallback parlay — fires only when 6-leg longshot cannot be built.
     Same per-game (LONGSHOT_MAX_PER_GAME) and per-player (1) caps as longshot.
     Returns None if fewer than 5 legs pass all caps.
+
+    Plan 10 §S: per-leg +EV admissibility gate (adj_edge > 0). Compounding ~14% vig on
+    individually −EV legs is presumptively −EV, so we return None rather than ship a parlay
+    built from non-positive-edge legs.
     """
     ranked = sorted(qualified, key=lambda p: p["win_prob"], reverse=True)
     game_counts: dict = {}
@@ -4323,6 +4338,8 @@ def build_value_parlay(qualified):
     for p in ranked:
         g = p.get("game", "")
         player = p.get("player", "")
+        if p.get("adj_edge", 0) <= 0:
+            continue  # Plan 10 §S: exclude non-positive-edge legs
         if game_counts.get(g, 0) >= LONGSHOT_MAX_PER_GAME:
             continue
         if player and player_counts.get(player, 0) >= 1:
@@ -7040,7 +7057,7 @@ def main():
 
     # Hard rules (R4, R11) — shadow_dest collects R4/R11 kills for shadow logging
     _hard_rules_shadow: list = []
-    all_picks = apply_hard_rules(all_picks, shadow_dest=_hard_rules_shadow)
+    all_picks = apply_hard_rules(all_picks, shadow_dest=_hard_rules_shadow, log_blocked=not args.no_save)
 
     # R12 cooldown
     all_picks = apply_r12_cooldown(all_picks, cooldown)
