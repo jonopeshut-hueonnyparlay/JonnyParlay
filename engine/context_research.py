@@ -145,10 +145,15 @@ def research_game(game: str, sport: str, date_str: str, client) -> dict | None:
     try:
         response = client.messages.create(
             model="claude-opus-4-8",
-            max_tokens=2048,
+            max_tokens=4096,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": prompt}],
         )
-        text = response.content[0].text.strip()
+        text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                text += block.text
+        text = text.strip()
         # Extract JSON — tolerate markdown code fences
         m = re.search(r"\{.*\}", text, re.DOTALL)
         if not m:
@@ -195,13 +200,34 @@ def _fetch_games_from_odds_api(sport: str, api_key: str) -> list:
     try:
         resp = requests.get(url, params=params, timeout=15)
         resp.raise_for_status()
+        from datetime import datetime, timezone, timedelta
+        local_tz_offset = -6  # MDT (Mountain Daylight Time, UTC-6)
+        local_tz = timezone(timedelta(hours=local_tz_offset))
+        now_local = datetime.now(local_tz)
+        today_local = now_local.date()
+
         games = []
+        seen = set()
         for g in resp.json():
             away = g.get("away_team", "")
             home = g.get("home_team", "")
-            if away and home:
-                games.append({"game": f"{away} @ {home}", "sport": sport.upper()})
-        logger.info(f"Fetched {len(games)} {sport} games from Odds API")
+            commence_time = g.get("commence_time", "")
+            if not (away and home):
+                continue
+            try:
+                ct = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+                ct_local = ct.astimezone(local_tz)
+            except Exception:
+                ct_local = now_local
+
+            game_key = f"{away} @ {home}"
+            is_today = ct_local.date() == today_local
+            not_started = ct_local > now_local
+            if is_today and not_started and game_key not in seen:
+                seen.add(game_key)
+                games.append({"game": game_key, "sport": sport.upper()})
+
+        logger.info(f"Fetched {len(games)} {sport} games from Odds API (today, not yet started)")
         return games
     except Exception as e:
         logger.error(f"Odds API fetch failed: {e}")
