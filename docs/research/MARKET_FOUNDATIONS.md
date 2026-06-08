@@ -525,3 +525,65 @@ Liquidity tiering is standard sharp practice (lower-liquidity markets: wider vig
 | 12u daily cap | ≈0.2–0.3 joint full Kelly | LOCKED | Correct conservative side; revisit at NFL go-live volume |
 | Sport per-pick caps 8/8/5/5/4u | never bind | PERIODIC_RECAL | Ordering correct; relabel as bug backstops or convert to per-sport daily budgets |
 | 0.50u stake floor (adjacent finding) | 0.25u all tiers | ✅ RESOLVED (76fbb36) | Floor lowered to 0.25u for ALL tiers; skip-below-0.35u logic rejected (complexity not justified) |
+
+---
+
+# Plan 10 — Assumed Value Research Audit (2026-06-06)
+
+Audits ~26 statistical constants, tier assignments, and copula correlations shipped in
+Plans 8–9 **without research backing**. Each is validated against published literature
+*and* in-house `pick_log.csv` empirics. Research-only — no code changes this session;
+corrected values / DATA_GATED conditions are reported for a later implementation pass.
+Spec: `plan_10_full.md`. Groups researched A–GG; consolidated decision table,
+NEEDS_CHANGE table, and corrected `STAT_FAMILY_TIER` block at the end.
+
+### Phase 0 — "immediate action" code items: all already RESOLVED (verified read-only)
+
+| Item | Spec claim | Actual current state | Verdict |
+|---|---|---|---|
+| Z1 sgp_builder NB_R["REB"] | stale 10.18 | **14.7** (synced 2026-05-30, sgp_builder.py:86) | ✅ already fixed |
+| Z6 mlb_sgp_builder constants | possible stale copies | imports from sgp_builder/run_picks; no local NB_R/SIGMA | ✅ no drift |
+| H2 evaluate_f5_lines tier | hard-coded T1B/0.03 | **T2 / edge≥0.05** (run_picks.py:3406,3411) | ✅ already fixed |
+| gate_check T1-mult gate | stale gate present | removed; `count_t1_mult()` deleted (369fd7a) | ✅ already fixed |
+
+### Step 0 — Empirical pick_log ground truth (PRIMARY for tier decisions)
+
+`data/pick_log.csv`, 295 graded (W/L) picks, 2026-04-14 → 2026-06-05. ROI = Σprofit/Σstake
+(American-odds payout; VOID/push excluded from both). CLV = mean of post-2026-05-31
+non-blank `clv` rows only. **Earlier draft pull had a broken payout calc (negative ROI at
+67% WR) — corrected here.**
+
+**Per-stat (n ≥ 15 graded), sorted by ROI:**
+
+| stat | n | WR | ROI | mean edge | mean CLV | n_clv | proposed tier |
+|---|---|---|---|---|---|---|---|
+| PARLAY | 77 | 0.247 | +0.697 | — | — | 0 | (parlay) |
+| PTS | 34 | 0.676 | **+0.277** | 0.140 | — | 0 | T2 |
+| TEAM_TOTAL | 20 | 0.550 | +0.073 | 0.060 | — | 0 | T2 |
+| REB | 27 | 0.519 | +0.029 | 0.126 | — | 0 | T1 |
+| AST | 15 | 0.467 | +0.017 | 0.134 | — | 0 | T1B |
+| SOG | 43 | 0.488 | −0.012 | 0.129 | — | 0 | T3 (suspended) |
+| 3PM | 34 | 0.529 | −0.018 | 0.150 | — | 0 | T3 |
+
+Near-threshold (n=10–14, watch): **HA** (n=10), **OUTS** (n=10).
+
+**Per-tier (⚠ `tier` column is historical — logged pre-restructure c4380ca, mixes old/new defs):**
+
+| tier | n | WR | ROI | mean CLV | n_clv |
+|---|---|---|---|---|---|
+| T2 | 73 | 0.603 | **+0.140** | −0.018 | 4 |
+| T3 | 33 | 0.515 | +0.053 | — | 0 |
+| T1B | 49 | 0.469 | +0.017 | −0.029 | 5 |
+| T1 | 58 | 0.466 | **−0.102** | — | 0 |
+| KILLSHOT | 5 | 0.600 | +0.044 | — | 0 |
+| SGP | 57 | 0.246 | +0.303 | — | 0 |
+| LONGSHOT | 10 | 0.200 | +6.221 | — | 0 |
+| DAILY_LAY | 10 | 0.300 | −0.470 | — | 0 |
+
+**Reads that drive Group A et al.:** (1) PTS is the empirical anchor — high WR *and* ROI, clean T2.
+(2) Monotone ROI tracks the proposed tier ladder T2 > T3 ≈ T1B > T1, but T1 (REB/HRR/REC) is the
+*worst* historical tier (ROI −0.102) — the per-stat REB row (+0.029) is less alarming, so the
+T1 deficit is partly HRR/REC/historical-mix, not REB alone. (3) **CLV is effectively unusable**
+(only 9 post-reform rows total, both tiers slightly negative) — literature must carry the weight;
+CLV grounding is reported as thin throughout. (4) DAILY_LAY (−0.470, n=10) and the longshot/SGP
+extreme-variance ROIs are small-n and not tier-relevant.
