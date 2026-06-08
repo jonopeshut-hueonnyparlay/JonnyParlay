@@ -830,3 +830,42 @@ probability**, never on minutes (rotation length is coach-controlled).
 | item | current | verdict | finding |
 |---|---|---|---|
 | DAYS_REST_MAX_REDUCTION | 0.07 | **CONFIRM** | Inside the published **played-player** B2B band (scoring −3–10%, minutes −9–14%); sound midpoint of 0.05–0.08. Don't raise as a flat cap — most of the larger *team* B2B deficit is intentional starter DNP (already handled by lineup/injury removal; double-count risk). Optional DATA_GATED age(>30)/coast-to-coast conditioning toward the 0.08–0.10 tail. |
+
+---
+
+## Group G — game-line tiers / double-shrinkage
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| game lines excluded from BM | BLEND_ALPHA only | **CONFIRM** | Correct — game lines are the most efficient markets + already market-anchored; BM on top = over-shrinkage (Satopää–Winkler under-confidence). (Nuance: BLEND_ALPHA shrinks the *projection*, BM the *win_prob* — not a literal double-count, but same direction; exclusion stands.) |
+| TEAM_TOTAL → T2, BM .85 | BM-shrunk | **NEEDS_CHANGE** | Projection already absorbs the Vegas total (240-min constraint), so model & market probs aren't independent → BM at .85 is **partial double-count**. Raise w→~0.95 or bypass BM (treat like a game line). DATA_GATED n≥150. Keep the NBA TEAM_TOTAL-over block. |
+| F5_TOTAL → T2 | BM .85 | **CONFIRM** | T1B→T2 was the right direction (highest BM weight = least shrink, fits high efficiency). Flag same mild double-shrink (F5_SCALAR market-calibrated + BLEND_ALPHA + BM); consider BM-bypass (DATA_GATED). |
+| ML_DOG → T3, BM .70 | heaviest shrink | **NEEDS_CHANGE** | Heaviest market-shrink on the *most-efficient* market = inverted + circular; and **ML_FAV is not BM'd** (inconsistent). Favorite-longshot direction is sport-specific (NCAA/horse longshots overbet; **MLB favorites overbet → dogs *underpriced***, so shrinking MLB-dog probs discards real edge). Exclude ML_DOG from BM (preferred, restores game-line consistency) or raise w + sport-aware. T3 looks legacy. |
+
+## Group N — WNBA constants (all pre-go-live)
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| EARLY_SEASON_EDGE_MULT | 0.80/0.90 (sigma inflation) | **DATA_GATED** | Direction + ~20% magnitude literature-supported (early-season bias, Paul–Weinbach 2007; CI ±31%@10g). Exact factors/14-21d thresholds are placeholders. Recalibrate at go-live; consider re-keying days→games-played for consistency with the opening gate. |
+| SIGMA_WNBA 3PM mult | 0.48 | **DATA_GATED (flag)** | **Copied from PTS=0.48** (in-code: PTS/AST/REB cite empirical CV, 3PM cites none) — wrong-signed (WNBA 3PM is the *most* volatile, var/μ=1.709). Low live impact (3PM is NB-routed via NB_R_WNBA=1.340; sigma is z-score/combo proxy only). Refit empirical CV at next WNBA pass — expect ≫0.48. |
+| COMBO_RHO_WNBA | 0.294/0.188/0.200 | **CONFIRM** | The "<100 rows" worry conflates the betting sample with the **estimation** sample (13,322 game-logs ≫ N≈250 stability point, Schönbrodt–Perugini 2013). Statistically reliable — do **not** fall back to NBA. Re-verify at full DB refresh, not gated on pick counts. |
+| OPENING_GATE_GAMES | 2 | **DATA_GATED** | A noise floor (strips opening-night variance), **not** a stabilization point (stats need dozens of games). Complementary to the sigma window. Consider raising to 3–4 if go-live data shows 2-game-sample picks miscalibrated. |
+
+## Group O — MLB GAME_SIGMA {total 4.0, spread 3.8, team 3.0, ml 4.75}
+
+**Live-impact NEEDS_CHANGE — MLB game-line sigmas are too narrow → overconfident totals/spreads.**
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| total | 4.0 | **NEEDS_CHANGE** | Structurally too narrow: published total-runs SD = **4.60** (Roberts 2020); variance algebra floor = team×√2 ≈ **4.4** even under independence. 4.0 is *below* the independence floor → over/under win-probs overconfident (~13% too tight). Re-derive from the 8095-game DB (like NBA/NHL/WNBA); interim **4.6**. |
+| spread / team / ml | 3.8 / 3.0 / 4.75 | **NEEDS_CHANGE** | **team=3.0 correct** (per-team run SD ≈3.1). spread=3.8 ~8–15% too narrow (run-diff SD ≈4.1–4.4). **ml=4.75 inconsistent** — should equal spread (P(margin>0) under same distribution, per NHL precedent); 4.75 was hand-set (6.0→4.75). Calibrate from DB; interim **spread=ml=4.2, team=3.0**. |
+
+## Group M — MLB_PARK_FACTORS
+
+**Dormant (unapplied — SaberSim inputs already park-adjusted; NRFI omits it as a double-count guard).**
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| currency | COL 1.28, TEX 1.05, KC/MIN/DET 0.95–0.98 | **NEEDS_CHANGE** | Stale + directionally wrong: COL too low (~1.33), **TEX inverted** (now pitcher park ~0.95), KC/MIN/DET now hitter-friendly (~1.05). Zero production risk today (unapplied) but unsafe as a reference. Add a "STALE/UNVERIFIED — do not apply without refit" docstring warning. |
+| type (runs index) | single run multiplier | **CONFIRM** | Runs index is the right type for run totals/NRFI (runs ≠ HR factors — Kauffman high runs but low HR). If HRR park-adjust ever wanted, add a *separate* HR dict. |
+| applied scope | defined, never read | **DATA_GATED** | Verified dormant (2 references: definition + NRFI double-count-guard comment). Gate any activation on (a) a 2023-25 runs refit AND (b) a park-*neutral* input source (not SaberSim). |
