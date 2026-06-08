@@ -869,3 +869,61 @@ probability**, never on minutes (rotation length is coach-controlled).
 | currency | COL 1.28, TEX 1.05, KC/MIN/DET 0.95–0.98 | **NEEDS_CHANGE** | Stale + directionally wrong: COL too low (~1.33), **TEX inverted** (now pitcher park ~0.95), KC/MIN/DET now hitter-friendly (~1.05). Zero production risk today (unapplied) but unsafe as a reference. Add a "STALE/UNVERIFIED — do not apply without refit" docstring warning. |
 | type (runs index) | single run multiplier | **CONFIRM** | Runs index is the right type for run totals/NRFI (runs ≠ HR factors — Kauffman high runs but low HR). If HRR park-adjust ever wanted, add a *separate* HR dict. |
 | applied scope | defined, never read | **DATA_GATED** | Verified dormant (2 references: definition + NRFI double-count-guard comment). Gate any activation on (a) a 2023-25 runs refit AND (b) a park-*neutral* input source (not SaberSim). |
+
+---
+
+## Group P — Daily Lay thresholds
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| MIN_DAILY_LAY_MARGIN | 4.0 | **DATA_GATED** | Judgment screen, not researched — NBA has no key numbers, margin SD ~12–13; a 4-pt projected edge isn't independently "reliable." Largely redundant with the LOCKED cover_prob≥0.58 gate. Gate to §9E metric #5 at n≥20 slips. |
+| MIN_LEG_EDGE_DAILY | 0.025 | **CHANGE** | 2.5pp sits *below* the published +3–5% +EV band; §9E never validated it. Raise to **0.03** interim (conservative while gate empty); re-tune at §9E n≥20 slips. Don't go below 0.025. |
+
+## Group T — empirical line-threshold gates (tiny samples)
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| G8B/G8C/G8D lines (4.5/3.5/1.5) | shadow blocks | **DATA_GATED** | Cutpoints are tiny-sample artifacts: G8B 0/5 (Wilson [0,.43], one win flips it), **G8C 6/14 is pure noise** (p=.33), **G8D 8/16 is *at* breakeven, not below** — its loss rationale is wrong; only model-overprojection (70→50%) is the (marginal) signal. *Direction* supported by mechanism (Poisson underdispersion + FLB). Keep as shadow; reclassify cutpoints DATA_GATED (n≥30 directional via **Wilson** lower bound vs .524; n≥100 permanent). Recast G8D as a calibration cap; re-test whether the hard block still adds value *on top of* BM shrinkage. |
+| G_OUTS_UNDER WP<0.60 | block | **NEEDS_CHANGE** | **Contradicts the data**: the outs distribution is left-skewed (early exits common) so books *over*-estimate outs → unders should win *more*, not "lose structurally." 0.60 was never researched and is **stale post-σ-fix** (0.311→0.27). Replace with an EV/edge floor (like WNBA); fix real over-projection in the projection (manager-hook/lineup). Retune with MIN_LEG_WIN_PROB_OUTS=0.62 at n≥40. |
+| G_HA_DIR (block HA/HITS overs) | permanent | **NEEDS_CHANGE** | Code admits "no research basis" — that's **missing data, not a measured bias** (literature flags HA *overs* as a live edge: hitter parks, May offense). Inconsistent with HITS/HA→T1B-both-directions. HA is moot (suspended); run **HITS over in shadow** (currently a hard kill → no data accrues), decide at n≥30. |
+
+## Group U — R11 AST-under ban
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| R11 (AST under 1.5/2.5 banned) | hard rule | **NEEDS_CHANGE** | Structural vig thesis partly real, but the ban is **calibrated on noise** (n=15, WR .467, ROI **+0.017** — marginally *positive*; CI ±25pp). The new tier system already screens these (AST→T1B floor 0.06 + BM w=0.80). Reclassify as a DATA_GATED *protective* rule (mirror §9J R4/R9/R12): keep live interim, **strip the "sub-elite" empirical framing**, log blocked picks to pick_log_blocked.csv, pre-register lift at n≥40 shadow (calib bias ±3pp + CLV≥0). |
+
+## Group Y — miscellaneous
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| Y1 PLATT_SPACE="raw" | sigmoid(A·p+B) | **NEEDS_CHANGE (gated)** | Raw-probability space is **theoretically wrong** — Platt assumes a *logit* input (logistic linear in log-odds). Already correctly DATA_GATED until H3. Migrate to logit-space *at* H3 (intercept-only, A=1; change space+formula+A/B together). No action before H3. |
+| Y2 G_HA_DIR vs T1B | apparent double-block | **CONFIRM** | Not contradictory — **tier = calibration/shrinkage routing; gate = tradeability** (two independent layers). Add a one-line clarifying comment; optionally drop HA from G_HA_DIR's tuple (already suspension-short-circuited) — cosmetic. |
+| Y3 SLOW_BOOKS {fanatics,hardrockbet,betrivers} | display tag | **DATA_GATED** | Soft-book-lag premise sound, but the specific trio is unvalidated; **BetRivers reportedly carries few/no player props** (can't lag on what it doesn't post). Display-only → low risk. Validate on own late-run CLV at n≥30/book; re-examine BetRivers. |
+| Y4 VALUE_PARLAY_SIZE=LONGSHOT_SIZE=0.25 | flat | **DATA_GATED** | Both at the minimal-stake floor (Kelly intentionally abandoned for parlays) → equality harmless but unevidenced. Variance ordering says value_parlay (5-leg) should be **≥** longshot (6-leg), never less. Gate at n≥50 value_parlay slips. |
+
+## Group Q — F5_SIGMA
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| F5_SIGMA values | {2.65, 2.70, 2.10} | **DATA_GATED** | No calibration source/n cited (unlike full-game GAME_SIGMA). The "±0.1 for park variance" bump **double-counts** MLB_PARK_FACTORS (already applied to the *mean*) — remove it. Recalibrate from real F5 game data (n≥500); consider an NB/Poisson F5 path at July refit. |
+| scaling consistency | vs full-game | **NEEDS_CHANGE** | √-window scaling (σ_F5 ≈ √0.54·σ_full) gives **total≈2.94 / spread≈2.79 / team≈2.20** — all current values are **too narrow** (opposite of the comment's rationale), and first-inning variance concentration pushes total higher still. **Cross-dependency with Group O**: if full-game total is corrected to ~4.6, F5 total scales to ≈3.4 — recalibrate the two together. Interim: 2.90–2.95 / 2.79 / 2.20. |
+
+## Group GG — context_research.py (display-only; gate n≥50)
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| _FACTORS (15) | rlm/weather/.../public_sharp | **NEEDS_CHANGE** | Re-anchor **era_fip to ERA−xFIP/SIERA** (FIP is the weakest forward predictor); **collapse the rlm/line_move/public_sharp triplet** (same sharp-money signal counted 3× — can dominate the ±2 vote); demote umpire (ABS era); merge/drop division (weak). Keep core (rest/travel/pythag/rlm/injury/form/weather/bullpen). Reweight only against graded outcomes. |
+| weather "wind ≥10mph" | binary | **CONFIRM** | 10mph is a real run-environment inflection — but **encode direction** (wind-out+over confirms; wind-in+under confirms). Park-specific; domes neutral. |
+| era_fip gap ≥1.0 | FIP-based | **NEEDS_CHANGE** | Re-anchor to ERA−xFIP/SIERA; keep ≥1.0 as a first-pass cutoff but DATA_GATE the exact number on the 8095-game DB. |
+| GG2 CTX adjustment magnitude | unimplemented | **DATA_GATED** | Keep verdicts categorical (LLM judges miscalibrate fine scales + are systematically overconfident). When enabled: cap the nudge tiny (≤1–2pp wp), ranking-only first, require it to lift CLV before any sizing role; ignore the model's self-confidence. n≥50 display-behavioral, n≥150 sizing. |
+
+## Group FF — EdgeModel minor constants
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| LEAGUE_AVG_TOTAL | 222.0 | **CHANGE** | Stale — 2025-26 ≈ **229** (~114.5/team); 222 is ~3% low and biases the Vegas pace prior `_base_pf` *upward*. Raise to ~229; PERIODIC_RECAL each season. |
+| TEAM_MIN_FLOOR | 180.0 | **DATA_GATED** | No literature anchor (180/240=0.75 "heavy vacancy"); validate the kink at n≥40 vacated games. |
+| MIN_AVAILABILITY_WEIGHT | 0.30 | **DATA_GATED** | Arbitrary floor; grid 0.20/0.30/0.40 against MAE at n≥50 vacated games. |
+| _AVAIL_KEY_MPG_THRESHOLD | 12.0 | **CONFIRM** | Consistent with the validated role-tier rotation floor (≥12 MPG, §8E); intentionally more inclusive than the 15-MPG convention (correct for a key-player gate). |
+| MIN_GAMES_FOR_TIER | 10 | **CONFIRM** | Minutes are the most-stable NBA stat (Medvedovsky 2020); already validated on 76,604 snapshots (§8E). |
