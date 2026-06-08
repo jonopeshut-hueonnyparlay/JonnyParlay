@@ -62,7 +62,7 @@ def mlb_ml_from_nb(mu_home, mu_away, r):
 # ── Sigmas (mirrored from GAME_SIGMA + F5_SIGMA in run_picks.py) ───────────
 # NHL calibrated 2026-06-05 from 3936 games. MLB team total uses NB (not sigma).
 SIGMA = {
-    "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,  "ml": 4.75},
+    "MLB":  {"total": 4.6,  "spread": 4.2,  "team": 3.0,  "ml": 4.2},  # interim per Plan 10 §O (2026-06-07); mirrors run_picks.GAME_SIGMA
     # NBA calibrated 2026-06-05 (Plan 6 §6, 3,922 games): residual-basis SDs
     # (raw total SD=20.20, residual=19.33; margin residual=15.27; rho=+0.227).
     "NBA":  {"total": 18.5, "spread": 12.5, "team": 11.0, "ml": 12.5},

@@ -419,7 +419,9 @@ def _copula_joint_approx(probs, avg_rho):
     for p in probs:
         p_indep *= p
     p_min = min(probs)
-    return p_indep + avg_rho * (p_min - p_indep)
+    # Plan 10 §Z: linear interp is optimistically biased +8% (3-leg) to +29% (4-leg, low-p)
+    # vs full Gaussian copula MC; deflate by 0.87 (midpoint of recommended 0.85-0.90).
+    return (p_indep + avg_rho * (p_min - p_indep)) * 0.87
 
 
 def _american_to_decimal(odds):

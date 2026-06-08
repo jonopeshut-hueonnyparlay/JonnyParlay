@@ -94,6 +94,14 @@ class TestGetTierRouting:
         ("F5_TOTAL", "over", "MLB", "T2"),     # was T1B
         ("HITS", "under", "MLB", "T1B"),
         ("SPREAD", "over", "NBA", "T2"),       # unmapped game line default
+        # Plan 10 §Group A tier corrections (2026-06-07)
+        ("RBI", "over", "MLB", "T1"),          # was T2
+        ("ER", "under", "MLB", "T1"),          # was T2
+        ("RUNS", "over", "MLB", "T1B"),        # was T2
+        ("GA", "under", "NHL", "T3"),          # was T2
+        ("SV", "over", "NHL", "T3"),           # was T2
+        ("REC", "over", "NFL", "T2"),          # was T1
+        ("HA", "under", "MLB", "T1"),          # was T1B (effective on HA unsuspension)
     ])
     def test_routing(self, stat, direction, sport, expected):
         assert get_tier(stat, direction, sport) == expected

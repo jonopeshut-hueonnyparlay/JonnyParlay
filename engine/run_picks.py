@@ -624,7 +624,7 @@ GAME_SIGMA = {
     "NBA":  {"total": 18.5, "spread": 12.5, "team": 11.0,  "ml": 12.5},
     "WNBA": {"total": 17.459, "spread": 10.0, "team": 11.271, "ml": 10.0},  # total+team calibrated 2026-06-05 from 837 games
     "NHL":  {"total": 2.311, "spread": 2.614, "team": 1.744, "ml": 2.614},
-    "MLB":  {"total": 4.0,  "spread": 3.8,  "team": 3.0,   "ml": 4.75},  # ml: 6.0→4.75 (empirical run-diff σ≈3.8; 6.0 was artificially wide)
+    "MLB":  {"total": 4.6,  "spread": 4.2,  "team": 3.0,   "ml": 4.2},  # interim per Plan 10 §O (2026-06-07): total below independence floor (team×√2≈4.4); ml=spread (NHL precedent). Recalibrate from 8095-game DB like NBA/NHL.
 }
 
 # Team-specific sigma JSONs — loaded at startup, fallback to GAME_SIGMA league average.
@@ -732,15 +732,21 @@ STAT_FAMILY_TIER = {
     # T2 — well-calibrated families
     "PTS": "T2", "OUTS": "T2", "PA": "T2", "PR": "T2", "PRA": "T2", "RA": "T2",
     "NRFI": "T2", "YRFI": "T2", "TEAM_TOTAL": "T2", "F5_TOTAL": "T2",
-    "YARDS": "T2", "TB": "T2", "SV": "T2", "RBI": "T2", "RUNS": "T2",
-    "ER": "T2", "GA": "T2", "BB": "T2", "PC": "T2",
+    "YARDS": "T2", "TB": "T2", "BB": "T2", "PC": "T2",
+    "REC": "T2",    # Plan 10 §Group A: was T1 — target-driven, more projectable than YARDS
     # T1B — binary/low-line
-    "AST": "T1B", "HITS": "T1B", "HA": "T1B",
+    "AST": "T1B", "HITS": "T1B",
+    "RUNS": "T1B",  # Plan 10 §Group A: was T2 — lineup/context-dependent (one step less than RBI)
     # T1 — moderate calibration, needs monitoring
-    "REB": "T1", "HRR": "T1", "REC": "T1",
+    "REB": "T1", "HRR": "T1",
+    "RBI": "T1",    # Plan 10 §Group A: was T2 — ~74% zero games, opportunity-dependent
+    "ER": "T1",     # Plan 10 §Group A: was T2 — BABIP/LOB%-driven, regression-prone
+    "HA": "T1",     # Plan 10 §Group A: was T1B — least-controllable pitcher stat (on HA unsuspension)
     # T3 — specialty/low-n
     "3PM": "T3", "SOG": "T3", "NHLPTS": "T3", "NHLBLK": "T3",
     "TDS": "T3", "GOALS": "T3", "ML_DOG": "T3",
+    "GA": "T3",     # Plan 10 §Group A: was T2 — goaltending least-predictable (RS→PO r≈0.15)
+    "SV": "T3",     # Plan 10 §Group A: was T2 — doubly-conditional event; Normal poor fit
 }
 
 TIERS = {
