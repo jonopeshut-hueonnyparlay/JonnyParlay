@@ -721,3 +721,48 @@ statistic is **minority events (min(W,L))**, not raw row count. Each gate carrie
 | SIZE_BASE/BUMP | 3u / 4u | **CONFIRM** | **Risk-coherent: 3u ≈ 0.19 full Kelly, 4u bump ≈ 0.11** (at wp .60/.70, −110). The plan doc's "~1.9× Kelly" was vs the 1/16.7 *converter*; vs true full Kelly it's strictly fractional, never overbets. 3× the normal ~1u stake = deliberate conviction overweight (industry typical 1.25–1.5×, aggressive but safe). Watch 12u daily / 8u NBA cap interaction (2 KILLSHOTs = 6–8u). |
 | BUMP wp 0.70 / edge 0.06 | AND-gate | **DATA_GATED** | Structurally sound (both above ~3% +EV floor; conservative). Gate magnitudes at n≥30–50 (bumped vs non-bumped ROI separable?). |
 | WEEKLY_CAP | 2 | **LOCKED** | Scarcity/signal-concentration judgment; no literature pins an integer; n=5 too thin. Revisit only via per-rank ROI-decay test, never a calendar tweak. |
+
+---
+
+## Group DD — PACE_ELASTICITY
+
+**Provenance: these 6 exponents are in-house structural priors, NOT published values** (code's
+"Research Brief 5" tag is internal; both briefs state "no published paper establishes pace
+elasticity exponents"). Per-possession-stability theory predicts elasticity ≈1.0 for points/assists/
+steals/blocks (per-100 rates are pace-invariant by construction) and substantial for rebounds
+(total boards = missed_shots × reb%, and missed shots scale with possessions). All are July-refit
+candidates via log-log regression `log(rate)=α+β·log(pace)` on the 83,719-row history.
+
+| exponent | current | verdict | finding |
+|---|---|---|---|
+| pts | 0.90 | **DATA_GATED** | Close to theory ~1.0 (PPP pace-invariant); within 0.85–0.95 band. Expect β≈0.90–1.0 at refit. |
+| fg3m | 0.78 | **DATA_GATED** | Defensible — 3PA share driven by shot-selection (Moreyball), not pure pace. Watch double-count with FG3M_BLEND_ALPHA path. |
+| reb | 0.25 | **NEEDS_CHANGE** | Most inconsistent with theory — missed-shot volume (rebound denominator) scales with possessions → expect β≈0.4–0.7. **Refit jointly with the H01 `_REB_RATE_PRIOR` ~2× deflation** (both July) to avoid double-correcting. Don't ship without backtest (REGULAR_SEASON_STAT_SCALAR may already absorb some bias). |
+| ast | 0.50 | **NEEDS_CHANGE** | Below theory ~1.0; EDGEMODEL §7C already flags AST elasticity ≈0.7–0.9 (Vegas-anchored, DATA_GATED). Refit. |
+| stl/blk | 0.30 (shared) | **NEEDS_CHANGE** | Tempo-free stats → theory ~1.0; 0.30 well below. Keep on pure-possession branch (don't Vegas-anchor) but **decouple the shared constant** and refit each separately (AUDIT 2026-05-02 D5). Low priority (small absolute prop impact). |
+
+## Group W — COMBO_RHO (NBA + WNBA)
+
+All **CONFIRM** — these are *measured* within-player Pearson, not assumed.
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| NBA COMBO_RHO | 0.333/0.233/0.251 | **CONFIRM** | Reproduced exactly to 3 dp on 76,960 player-games (STATISTICAL_FOUNDATIONS §2); ordering PTS-REB>REB-AST>PTS-AST matches mechanics; consistent with moderate-positive published consensus. |
+| WNBA COMBO_RHO | 0.294/0.188/0.200 | **CONFIRM** | Measured ~5-SE discount (SE≈0.009, 13,322 logs); lower WNBA pace plausibly explains it. **Flag PTS-AST=0.188 for re-check** at next WNBA refit — counter-intuitive vs higher WNBA league assist rate (67.5% vs 60.5%). |
+| recal cadence | offseason | **CONFIRM (PERIODIC_RECAL)** | Within-player ρ is structurally stable; offseason cadence (already in §2) sufficient. Separate open items (not ρ): NB-consistent σ replacement + 100-scored-combo Platt gate. |
+
+## Group H — evaluate_game_lines vs evaluate_props architecture
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| game lines no Platt/no BM | BLEND_ALPHA 0.25 only | **CONFIRM** | Prop-fit Platt does NOT transfer domains (Park 2020; Wang/TransCal 2020); game lines already market-anchored on the more-efficient market. If ever wanted, fit a *separate* game-line Platt — never reuse PLATT_A/B. |
+| BLEND_ALPHA vs BM | one anchor per path | **CONFIRM** | They are **substitutes** (convex combo toward market, different spaces) — don't add BM to game lines or BLEND_ALPHA to props (double-anchoring). **Caveat:** props stack confidence×Platt×BM (triple, two market/center-ward) — monitor at H3/family gates; if under-confident, raise w (don't touch Platt). |
+| game vs prop edge floors | props 0.05/0.07; game lines none | **NEEDS_CHANGE** | Game lines have **no lower edge floor** (only GG1 upper cap 0.10, GG3>0) while *less-efficient* props carry 0.05–0.07 — inverts efficiency theory (more-efficient market should demand ≥ bar). Add a GG lower floor ~0.03–0.05; DATA_GATED on graded game-line ROI by edge bucket (n≥50). |
+| H2 F5 tier | T2 / check_game_gates | **CONFIRM** | Consistent with full-game lines (already RESOLVED). Inherits any new GG floor automatically. |
+
+## Group CC — Vegas team-total constraint bounds
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| bounds | [0.80, 1.20] (±20%) | **DATA_GATED** | ±20% is wide vs the ~5–8% expected-total signal threshold; standard winsorization is 10–20%; prior internal review (research_brief_8 Q48) also recommended **[0.85, 1.15]**. Tighten to ±15%; gate on logging the empirical scale histogram (already captured by `diagnostics.record_team_post_vegas`). §7C LOCK covers architecture, not clip magnitude. |
+| breach action | silent clip | **NEEDS_CHANGE** | Silent clip **masks a data error** (scale>1.20 = missing/stale players). Move to **warn-and-continue** + per-team integrity precheck (roster size, Σproj_min≈240, Vegas total present); skip the scale + flag for review on breach. Never abort the whole run for one team. |
