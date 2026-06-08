@@ -766,3 +766,35 @@ All **CONFIRM** — these are *measured* within-player Pearson, not assumed.
 |---|---|---|---|
 | bounds | [0.80, 1.20] (±20%) | **DATA_GATED** | ±20% is wide vs the ~5–8% expected-total signal threshold; standard winsorization is 10–20%; prior internal review (research_brief_8 Q48) also recommended **[0.85, 1.15]**. Tighten to ±15%; gate on logging the empirical scale histogram (already captured by `diagnostics.record_team_post_vegas`). §7C LOCK covers architecture, not clip magnitude. |
 | breach action | silent clip | **NEEDS_CHANGE** | Silent clip **masks a data error** (scale>1.20 = missing/stale players). Move to **warn-and-continue** + per-team integrity precheck (roster size, Σproj_min≈240, Vegas total present); skip the scale + flag for review on breach. Never abort the whole run for one team. |
+
+---
+
+## Group EE — capture_clv.py write window + SKIP_STATS
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| write gate | T-10 (first poll inside window) | **NEEDS_CHANGE** | Sharpest moves come from final injury bulletins / late scratches T-15→0; latching at the *first* poll inside T-10 can precede them. Change WRITE rule to **last pre-tip observation** (latch latest, commit at final poll ~T-3..T-5; daemon already polls to T+3). T-45..T+3 polling window stays LOCKED (§9C). Research-gated — validate no increase in post-tip/empty-market misses. |
+| SKIP_STATS | {NRFI,YRFI,TEAM_TOTAL,GOLF_WIN,PARLAY} | **NEEDS_CHANGE** | Comment "no standard market coverage" is **false** for NRFI/YRFI (−110..−160 / +100..+130) and TEAM_TOTAL (a core efficient CLV market). Their exclusion is operational plumbing, not market non-existence — add CLV capture for the three. Keep PARLAY skipped (compounding legs defeat clean CLV) and GOLF_WIN (no tip-anchored close). |
+
+## Group V — conf early-season penalty
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| conf thresholds | 0.70 (GP<10) / 0.85 (GP<20) | **NEEDS_CHANGE** | Round-number guesses shrinking toward **0.50** (a coin flip) — wrong target. Stabilization theory prescribes continuous `GP/(GP+k)` toward an *informative* prior (market). Label as priors; fit k from an early-season prop calibration backtest. |
+| 20-game full-conf cutoff | GP≥20→1.0 | **CONFIRM** | Defensible single threshold (practitioner "wait 20 games"; stabilization is stat-specific — 3PM slower, REB/AST/BLK faster). |
+| conf vs BM | both shrink early-season picks | **NEEDS_CHANGE** | **Double-shrinkage**: conf→0.50 *and* BM→market on the same low-GP picks. Replace conf with a **GP-conditioned BM weight** (`w_eff=w·GP/(GP+k)`) — single mechanism, anchored to market (the informative early-season prior). Also aligns NBA with the WNBA sigma-inflation design (currently incoherent). |
+
+## Group R — corr_m / exp_m sizing multipliers
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| corr_m | 1.0/0.85/0.70 by same-game **count** | **DATA_GATED** | Magnitudes directionally OK (≈1/(1+ρ): ρ=0.33→0.75, ρ=0.20→0.83). **Flaw is the count-based trigger** — ignores correlation sign/magnitude, so it over-penalizes independent *cross-team/different-player* same-game legs (which can be ~0 or negative). Make correlation-aware via COMBO_RHO; set 1.0 when legs are independent. Refit at n≥50 multi-pick-per-game. |
+| exp_m | 1.0 / 0.70 repeat | **DATA_GATED** | **Not a correlation term** (same stat, different players = independent) — it's a **model-error concentration hedge**; re-document as such (mis-placed next to corr_m). Refine: key to per-stat calibration confidence (PTS needs less cut than DATA_GATED stats); consider applying only to 3rd+ occurrence. |
+
+## Group S — build_value_parlay (5-leg fallback)
+
+| item | current | verdict | finding |
+|---|---|---|---|
+| existence | fires when longshot can't build; 0.25u flat; no per-leg +EV gate | **NEEDS_CHANGE** | Safest-leg selection with no +EV gate maximizes compounding vig (~14% hold) — presumptively −EV. It inherits longshot's EV deficiency **without** longshot's pre-registered LOCKED status. Add a **per-leg edge>0 admissibility gate**; return None rather than parlay an individually −EV leg. Keep 0.25u (engagement product). |
+| "+100 floor" | `combined_dec>=2.0` branch | **CONFIRM (no-op)** | **The +100 floor does not exist** — that line is the decimal→American sign conversion, not a filter. No minimum-odds gate is enforced. Don't add one (would push toward longer, higher-vig legs); fix the labeling so it isn't misread. |
+| selection | win_prob (safest) ranking | **DATA_GATED** | EV/edge-correlation-aware ranking is research-correct (own longshot docstring: EV-factor ~4× better slip EV), but win_prob is the same intentional hit-frequency tradeoff as the LOCKED longshot. Gate any switch on the family-bootstrap n≥150; layer a per-leg edge>0 filter meanwhile. |
