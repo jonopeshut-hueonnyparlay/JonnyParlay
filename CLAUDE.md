@@ -116,7 +116,7 @@ Discord bot display name: **PicksByJonny**
 | `data/pick_log_wnba.csv` | WNBA shadow log — separate from pick_log.csv. Go-live gate: 100 graded picks post-dampener (Jun 3+). Current count: see project_wnba_shadow.md. |
 | `data/pick_log_blocked.csv` | Gate failure audit log. Structural gate failures (props + game lines) logged by log_blocked_pick() on each run. Excludes suspension gates. Created on first run. |
 | `data/pick_log_game_lines.csv` | Game-line bet log. Written by `analyze_game_lines.py` confirm-to-log flow. Not yet wired to grade_picks.py or capture_clv.py. |
-| `analyze_game_lines.py` | Standalone game-line edge analyzer. Confirm-to-log flow: after ranked table, prompts user to select rows; writes to `data/pick_log_game_lines.csv` (29-col schema, run_type=game_line, card_slot=GL). Not yet wired to grade_picks.py or capture_clv.py. `PICK_LOG_GAME_LINES_PATH` added to `engine/paths.py`. |
+| `analyze_game_lines.py` | Standalone game-line edge analyzer. Confirm-to-log flow: after ranked table, prompts user to select rows; writes to `data/pick_log_game_lines.csv` (29-col schema, run_type=game_line, card_slot=GL). Discord posting via `_post_game_lines_discord()` — console preview when `DISCORD_GAME_LINES_WEBHOOK` blank, live POST when set. Not yet wired to grade_picks.py or capture_clv.py. `PICK_LOG_GAME_LINES_PATH` added to `engine/paths.py`. |
 | `sgp_builder.py` | Root shim → `engine/sgp_builder.py`. NBA SGP builder. Allowed books: FanDuel, BetMGM, DraftKings, theScore (espnbet), Caesars (williamhill_us), Fanatics, Hard Rock (hardrockbet). Logs as `run_type=sgp`. |
 | `engine/mlb_sgp_builder.py` | MLB SGP builder (added 2026-05-29). 3-4 legs, +200–+450. Stats: OUTS (pitchers); HITS (batters). Gaussian copula with MLB-calibrated ρ table. Fires automatically when MLB CSV is present. Logs to pick_log.csv: `sport=MLB, tier=SGP`. ρ table: OUTS-over + opposing HITS-under = 0.30 (pitcher-dominant script); all other cross-type pairs = 0.02. Kill R2_MLB: OUTS-under + HITS-under same game → killed (opposite scripts). `MIN_LEG_WIN_PROB_OUTS=0.62` (lower than global 0.65 — OUTS Gaussian sigma=0.311 makes 0.65 too tight for pitcher legs). SP scratch guard: drops leg if confirmed SP changes before build. Cohesion scoring: pitcher_dom/batter_hot tags via _correlation_cohesion_mlb() (scoring weight=0.25). |
 | `start_clv_daemon.bat` | Launcher for CLV daemon. **Must contain ASCII only** — non-ASCII chars cause cmd.exe to crash with exit code 255. |
@@ -162,6 +162,7 @@ ARCHIVE: (collapsed)
   - Windows path: `C:\Users\jono4\Documents\JonnyParlay\.env` (also searches project root + `engine/.env`)
   - Template: `.env.example` (committed). Real `.env` is gitignored.
   - Debug inventory: `python engine/secrets_config.py` prints a redacted summary.
+  - `DISCORD_GAME_LINES_WEBHOOK` added to `secrets_config.py` + `.env` — blank by default; set to go live (no code change needed).
 - `espnbet` in Odds API → display as **theScore Bet** everywhere
 - CO_LEGAL_BOOKS: 18 books defined in run_picks.py
 
