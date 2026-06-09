@@ -4628,7 +4628,7 @@ def log_blocked_pick(pick):
         "win_prob": round(pick.get("win_prob", pick.get("adj_wp", 0)), 4),
         "gate_result": gate,
     }
-    with open(path, "a", newline="") as fh:
+    with open(path, "a", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=_BLOCKED_LOG_COLS)
         if write_header:
             writer.writeheader()
