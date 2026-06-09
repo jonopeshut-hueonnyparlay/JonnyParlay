@@ -774,41 +774,38 @@ def print_ranked_table(bets):
         else:
             return f"+{round((1-p) / p * 100)}"
 
-    # Build rows
     rows = []
     for b in bets_sorted:
-        game    = b["game"]
-        label   = b["label"]
-        pick    = f"{game} {label}"[:22]
-        size    = f"{b['stake']:.2f}u"
-        fair_p  = f"{b['model']*100:.1f}%"
-        fair_o  = prob_to_american(b["model"])
-        mkt_o   = f"{b['odds']:+d}" if isinstance(b['odds'], int) else (f"{b['odds']:+.0f}" if b['odds'] else "N/A")
-        edge    = f"+{b['edge']*100:.1f}pp"
+        pick  = f"{b['game']} {b['label']}"[:24]
+        size  = f"{b['stake']:.2f}u"
+        fair_p = f"{b['model']*100:.1f}%"
+        fair_o = prob_to_american(b["model"])
+        mkt_o  = f"{b['odds']:+d}" if isinstance(b['odds'], int) else (f"{b['odds']:+.0f}" if b['odds'] else "N/A")
+        edge   = f"+{b['edge']*100:.1f}pp"
         rows.append((pick, size, fair_p, fair_o, mkt_o, edge))
 
-    # Column widths
-    hdrs = ["Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Edge"]
+    hdrs   = ["Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Edge"]
     widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(hdrs)]
 
     def row_str(cells, sep="│"):
         return sep + sep.join(f" {c:<{widths[i]}} " for i, c in enumerate(cells)) + sep
 
-    top    = "┌" + "┬".join("─" * (w+2) for w in widths) + "┐"
-    mid    = "├" + "┼".join("─" * (w+2) for w in widths) + "┤"
-    bot    = "└" + "┴".join("─" * (w+2) for w in widths) + "┘"
+    top = "┌" + "┬".join("─" * (w+2) for w in widths) + "┐"
+    mid = "├" + "┼".join("─" * (w+2) for w in widths) + "┤"
+    bot = "└" + "┴".join("─" * (w+2) for w in widths) + "┘"
 
     print("\n" + "="*72)
     print("QUALIFYING BETS  (ranked by edge)")
     print("="*72)
     print(top)
     print(row_str(hdrs))
-    for i, r in enumerate(rows):
+    for r in rows:
         print(mid)
         print(row_str(r))
     print(bot)
-    print(f"  {len(bets_sorted)} qualifying bet(s)  |  total exposure: {sum(b['stake'] for b in bets_sorted):.2f}u")
+    print(f"  {len(bets_sorted)} bet(s)  |  total exposure: {sum(b['stake'] for b in bets_sorted):.2f}u")
 
+    # Print ranked summary table + legend
     print_ranked_table(ALL_BETS)
     print("\n\nLegend: '🔥 STRONG' >= 8%  |  '*** BET' >= 4%  |  positive only  |  stake = f* x 10 x 0.75 market mult (min 0.25u, max 2.0u)")
     print("Distributions:")
@@ -816,7 +813,3 @@ def print_ranked_table(bets):
     print("  NBA  : all markets = Normal")
     print("  NHL  : all markets = Normal (sigma: total=2.311, spread=2.614, team=1.744, ml=2.614)")
     print("MLB sigmas: total=4.6/spread=4.2  F5: total=2.65/spread=2.70  F5 scalar=0.540")
-
-
-
-
