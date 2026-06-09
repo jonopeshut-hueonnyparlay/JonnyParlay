@@ -67,6 +67,7 @@ from paths import (  # noqa: E402
     PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
     PICK_LOG_CUSTOM_PATH as _PICK_LOG_CUSTOM_PATH_P,
     PICK_LOG_SHADOW_STATS_PATH as _PICK_LOG_SHADOW_STATS_PATH_P,
+    PICK_LOG_GAME_LINES_PATH as _PICK_LOG_GAME_LINES_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
     LOG_FILE_PATH as _LOG_FILE_PATH_P,
 )
@@ -76,6 +77,7 @@ PICK_LOG_MLB_PATH          = str(_PICK_LOG_MLB_PATH_P)
 PICK_LOG_WNBA_PATH         = str(_PICK_LOG_WNBA_PATH_P)
 PICK_LOG_CUSTOM_PATH       = str(_PICK_LOG_CUSTOM_PATH_P)
 PICK_LOG_SHADOW_STATS_PATH = str(_PICK_LOG_SHADOW_STATS_PATH_P)
+PICK_LOG_GAME_LINES_PATH   = Path(str(_PICK_LOG_GAME_LINES_PATH_P))
 DISCORD_GUARD_FILE         = str(_DISCORD_GUARD_FILE_P)
 LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
 
@@ -105,6 +107,7 @@ from secrets_config import (
     DISCORD_RECAP_WEBHOOK,       # → #daily-recap
     DISCORD_MONTHLY_WEBHOOK,     # → #monthly-tracker
     DISCORD_ANNOUNCE_WEBHOOK,    # → #announcements
+    DISCORD_GAME_LINES_WEBHOOK,  # → #game-lines (optional)
 )
 
 ODDS_BASE = "https://api.the-odds-api.com/v4"
@@ -1773,6 +1776,64 @@ def build_streak_embed(streak, streak_pl=0.0, streak_w=0, streak_l=0):
     }
 
 
+def build_game_lines_recap_embed(date_str, day_picks):
+    """Build a Discord embed for game-line grading results."""
+    now_str = datetime.now(ZoneInfo("America/New_York")).strftime("%I:%M %p ET")
+    w, l, pu, pl, _ = daily_stats(day_picks)
+    pl_str  = f"{pl:+.2f}u"
+    win_pct = f"{round(w / (w + l) * 100)}%" if (w + l) > 0 else "—"
+    record  = f"**{w}-{l} ({win_pct}){'  · %dP' % pu if pu else ''} | {pl_str}**"
+    color   = 0x2ECC71 if pl >= 0 else 0xFF4444
+
+    lines = []
+    for p in day_picks:
+        result  = p.get("result", "")
+        emoji   = {"W": "✅", "L": "❌", "P": "➖", "VOID": "🚫"}.get(result, "⬜")
+        game    = p.get("game", "")
+        stat    = p.get("stat", "")
+        direct  = p.get("direction", "")
+        ln      = p.get("line", "")
+        odds    = p.get("odds", "")
+        size    = p.get("size", "")
+        lines.append(f"{emoji} **{game}** | {stat} {direct} {ln} | {odds} | {size}u")
+
+    desc = record + "\n\n" + "\n".join(lines) if lines else record
+
+    return {
+        "username": "PicksByJonny",
+        "embeds": [{
+            "title": f"📋 GAME LINES RESULTS — {date_str}",
+            "description": desc,
+            "color": color,
+            "footer": {"text": f"{BRAND_TAGLINE} | {now_str}"},
+        }]
+    }
+
+
+def post_game_lines_results(date_str, day_picks, args):
+    """Post game-line grading recap to DISCORD_GAME_LINES_WEBHOOK.
+
+    No-ops silently when the webhook is not configured.
+    Uses the same discord_posted.json guard as the main recap to prevent
+    duplicate posts when grade_picks.py is run multiple times.
+    """
+    if not DISCORD_GAME_LINES_WEBHOOK:
+        return
+
+    guard = _load_guard()
+    key   = f"game_lines_recap:{date_str}"
+    force = getattr(args, "repost", False)
+
+    if not force and _already_posted(guard, key):
+        print(f"  [Discord] ⏭️  Game lines recap already posted for {date_str} — skipping")
+        return
+
+    payload = build_game_lines_recap_embed(date_str, day_picks)
+    if _webhook_post(DISCORD_GAME_LINES_WEBHOOK, payload, label=f"game lines recap {date_str}"):
+        print(f"  [Discord] ✅ Game lines recap posted for {date_str}")
+        _mark_posted(guard, key)
+
+
 def _read_rows_locked(log_path, lock_timeout=30):
     """Grader-flavoured wrapper: shares the same lock/read semantics as
     pick_log_io.read_rows_locked but routes the fall-through warning
@@ -2306,6 +2367,125 @@ def _post_merged_recaps(dates_for_recap, main_rows, recap_merge_logs, args):
                                  suppress_ping=args.test)
 
 
+def _grade_game_lines_log(args):
+    """Grade pick_log_game_lines.csv rows and post a Discord recap.
+
+    Reuses grade_game_line() and the same score-fetching helpers as
+    _grade_one_log(). No player stats are needed — only final scores
+    (and MLB linescores for F5/NRFI).
+    """
+    log_path = PICK_LOG_GAME_LINES_PATH
+    if not log_path.exists():
+        return
+
+    rows, fieldnames = _read_rows_locked(log_path)
+    if not rows:
+        return
+
+    label = "[pick_log_game_lines.csv]"
+
+    ungraded = [
+        (i, r) for i, r in enumerate(rows)
+        if not _is_terminal_result(r.get("result"))
+        and (not args.date or r.get("date") == args.date)
+    ]
+
+    if not ungraded:
+        print(f"  {label} All rows already graded!")
+        return
+
+    print(f"\n  {label} Found {len(ungraded)} ungraded rows")
+
+    # Collect unique (date, sport) pairs
+    dates_sports: dict = {}
+    for _, row in ungraded:
+        d = row.get("date", "")
+        s = row.get("sport", "")
+        if d:
+            dates_sports.setdefault(d, set()).add(s)
+
+    all_scores:      dict = {}
+    all_linescores:  dict = {}
+    all_nhl_ot_info: dict = {}
+
+    for date_str, sports in dates_sports.items():
+        for sport in sorted(sports):
+            if not sport:
+                continue
+            print(f"\n  {label} Fetching {sport} data for {date_str}…")
+
+            scores = fetch_scores(sport, date_str)
+            if scores is None:
+                # Odds API 422 — try sport-specific fallback
+                if sport == "NBA":
+                    scores_map = fetch_espn_game_scores(date_str) or {}
+                elif sport == "MLB":
+                    scores_map = fetch_mlb_game_scores(date_str) or {}
+                else:
+                    scores_map = {}
+                print(f"    Odds API unavailable — fallback: {len(scores_map)} games")
+            else:
+                scores_map = {f"{g.get('away_team','')} @ {g.get('home_team','')}": g for g in scores}
+                print(f"    {len(scores_map)} completed games found")
+
+            all_scores[(date_str, sport)] = scores_map
+
+            if sport == "MLB":
+                ls_map = fetch_mlb_linescores(date_str)
+                all_linescores[(date_str, "MLB")] = ls_map
+                print(f"    {len(ls_map)} MLB linescores fetched")
+            elif sport == "NHL":
+                _, nhl_ot = fetch_nhl_boxscores(date_str)
+                all_nhl_ot_info[(date_str, "NHL")] = nhl_ot
+
+            time.sleep(0.5)
+
+    graded_count = 0
+    for idx, row in ungraded:
+        date_str = row.get("date", "")
+        sport    = row.get("sport", "")
+        ls       = all_linescores.get((date_str, "MLB")) if sport == "MLB" else None
+        nhl_ot   = all_nhl_ot_info.get((date_str, "NHL")) if sport == "NHL" else None
+        scores_by_game = all_scores.get((date_str, sport), {})
+
+        result = grade_game_line(row, scores_by_game, linescores=ls, nhl_ot_info=nhl_ot)
+        if result:
+            existing = rows[idx].get("result")
+            if _is_terminal_result(existing):
+                print(f"  ⚠ skip: row {idx} already terminal ({existing}) — refusing to overwrite")
+                continue
+            rows[idx]["result"] = result
+            graded_count += 1
+            emoji = {"W": "✅", "L": "❌", "P": "➖"}.get(result, "🚫")
+            game = row.get("game", "")
+            stat = row.get("stat", "")
+            direct = row.get("direction", "")
+            ln = row.get("line", "")
+            print(f"  {emoji} {game} | {stat} {direct} {ln} → {result}")
+
+    print(f"\n  {label} Graded {graded_count}/{len(ungraded)} rows")
+
+    if not args.dry_run and graded_count > 0:
+        _atomic_write_rows(log_path, fieldnames, rows)
+        print(f"  ✅ Updated {log_path}")
+    elif args.dry_run:
+        print("  (dry run — no changes written)")
+
+    # Discord recap — one embed per newly-graded date
+    if not args.dry_run and not getattr(args, "repost", False):
+        dates_graded = {
+            rows[idx]["date"] for idx, _ in ungraded
+            if _is_terminal_result(rows[idx].get("result"))
+        }
+        for date_str in sorted(dates_graded):
+            day_picks = [
+                r for r in rows
+                if r.get("date") == date_str and _is_terminal_result(r.get("result"))
+            ]
+            if day_picks:
+                post_game_lines_results(date_str, day_picks, args)
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -2360,6 +2540,10 @@ Examples:
         for shadow_path in (PICK_LOG_MLB_PATH, PICK_LOG_WNBA_PATH, PICK_LOG_CUSTOM_PATH,
                             PICK_LOG_SHADOW_STATS_PATH):
             _grade_one_log(shadow_path, args, is_shadow=True)
+
+    # ── Grade game-lines log (own Discord recap to #game-lines) ──
+    if use_default_paths:
+        _grade_game_lines_log(args)
 
 
 if __name__ == "__main__":
