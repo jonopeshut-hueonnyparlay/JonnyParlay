@@ -253,7 +253,7 @@ def team_total_odds(game, abbr_list):
     return result
 
 # â”€â”€ Edge formatting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25, game_label=""):
+def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25, game_label="", book=""):
     edge = model_p - market_p
     # Only show positive edges >= 4%
     if edge < 0.04:
@@ -274,6 +274,7 @@ def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25, gam
         "model":  model_p,
         "odds":   odds,
         "edge":   edge,
+        "book":   book,
     })
     return "".join(parts)
 
@@ -381,9 +382,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 pa_nv, ph_nv = novigp(american_to_prob(oa["price"]), american_to_prob(oh["price"]))
                 mh = mlb_ml_from_nb(home_proj, away_proj, MLB_TEAM_RUN_R)
                 ma = 1.0 - mh
-                e = edge_str(mh, ph_nv, f"ML HOME  {home_abbr}", odds=oh["price"])
+                e = edge_str(mh, ph_nv, f"ML HOME  {home_abbr}", odds=oh["price"], book=ml["book"])
                 if e: edges.append(e)
-                e = edge_str(ma, pa_nv, f"ML AWAY  {away_abbr}", odds=oa["price"])
+                e = edge_str(ma, pa_nv, f"ML AWAY  {away_abbr}", odds=oa["price"], book=ml["book"])
                 if e: edges.append(e)
 
         # RUN LINE (spread) â€” Normal
@@ -396,9 +397,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 sp_line = oh.get("point", 0)
                 ph_nv, pa_nv = novigp(american_to_prob(oh["price"]), american_to_prob(oa["price"]))
                 cover_h = 1.0 - normal_cdf(-sp_line, margin, sig["spread"])
-                e = edge_str(cover_h,       ph_nv, f"SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"])
+                e = edge_str(cover_h,       ph_nv, f"SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"], book=sp["book"])
                 if e: edges.append(e)
-                e = edge_str(1.0-cover_h,   pa_nv, f"SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"])
+                e = edge_str(1.0-cover_h,   pa_nv, f"SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"], book=sp["book"])
                 if e: edges.append(e)
 
         # GAME TOTAL â€” Normal
@@ -411,9 +412,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 tline = ov.get("point", 0)
                 pov_nv, pun_nv = novigp(american_to_prob(ov["price"]), american_to_prob(un["price"]))
                 mov = 1.0 - normal_cdf(tline, total_proj, sig["total"])
-                e = edge_str(mov,      pov_nv, f"TOTAL OVER  ({tline})", odds=ov["price"])
+                e = edge_str(mov,      pov_nv, f"TOTAL OVER  ({tline})", odds=ov["price"], book=tot["book"])
                 if e: edges.append(e)
-                e = edge_str(1.0-mov,  pun_nv, f"TOTAL UNDER ({tline})", odds=un["price"])
+                e = edge_str(1.0-mov,  pun_nv, f"TOTAL UNDER ({tline})", odds=un["price"], book=tot["book"])
                 if e: edges.append(e)
 
         # EVENT-SPECIFIC: team_totals + F5
@@ -436,9 +437,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 pov_nv, pun_nv = novigp(american_to_prob(oo), american_to_prob(uo))
                 mov   = mlb_tt_prob(proj, ttl, "over")
                 mun   = mlb_tt_prob(proj, ttl, "under")
-                e = edge_str(mov, pov_nv, f"TT OVER  {abbr} ({ttl})", odds=oo)
+                e = edge_str(mov, pov_nv, f"TT OVER  {abbr} ({ttl})", odds=oo, book=info.get("book",""))
                 if e: edges.append(e)
-                e = edge_str(mun, pun_nv, f"TT UNDER {abbr} ({ttl})", odds=uo)
+                e = edge_str(mun, pun_nv, f"TT UNDER {abbr} ({ttl})", odds=uo, book=info.get("book",""))
                 if e: edges.append(e)
 
         src = ev if ev else game
@@ -454,9 +455,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 pov_nv, pun_nv = novigp(american_to_prob(ov["price"]), american_to_prob(un["price"]))
                 f5proj = total_proj * F5_SCALAR
                 mov = 1.0 - normal_cdf(f5line, f5proj, F5_SIGMA["total"])
-                e = edge_str(mov,     pov_nv, f"F5 TOTAL OVER  ({f5line})", odds=ov["price"])
+                e = edge_str(mov,     pov_nv, f"F5 TOTAL OVER  ({f5line})", odds=ov["price"], book=f5t["book"])
                 if e: edges.append(e)
-                e = edge_str(1.0-mov, pun_nv, f"F5 TOTAL UNDER ({f5line})", odds=un["price"])
+                e = edge_str(1.0-mov, pun_nv, f"F5 TOTAL UNDER ({f5line})", odds=un["price"], book=f5t["book"])
                 if e: edges.append(e)
 
         # F5 ML â€” Normal
@@ -469,9 +470,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 pa_nv, ph_nv = novigp(american_to_prob(oa["price"]), american_to_prob(oh["price"]))
                 f5m = (home_proj - away_proj) * F5_SCALAR
                 mh = 1.0 - normal_cdf(0, f5m, F5_SIGMA["spread"])
-                e = edge_str(mh,     ph_nv, f"F5 ML HOME  {home_abbr}", odds=oh["price"])
+                e = edge_str(mh,     ph_nv, f"F5 ML HOME  {home_abbr}", odds=oh["price"], book=f5ml["book"])
                 if e: edges.append(e)
-                e = edge_str(1.0-mh, pa_nv, f"F5 ML AWAY  {away_abbr}", odds=oa["price"])
+                e = edge_str(1.0-mh, pa_nv, f"F5 ML AWAY  {away_abbr}", odds=oa["price"], book=f5ml["book"])
                 if e: edges.append(e)
 
         # F5 SPREAD â€” Normal
@@ -485,12 +486,13 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 ph_nv, pa_nv = novigp(american_to_prob(oh["price"]), american_to_prob(oa["price"]))
                 f5m = (home_proj - away_proj) * F5_SCALAR
                 cover_h = 1.0 - normal_cdf(-sp_line, f5m, F5_SIGMA["spread"])
-                e = edge_str(cover_h,       ph_nv, f"F5 SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"])
+                e = edge_str(cover_h,       ph_nv, f"F5 SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"], book=f5sp["book"])
                 if e: edges.append(e)
-                e = edge_str(1.0-cover_h,   pa_nv, f"F5 SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"])
+                e = edge_str(1.0-cover_h,   pa_nv, f"F5 SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"], book=f5sp["book"])
                 if e: edges.append(e)
 
         _ctx_tag = ""
+        _ctx_token = ""
         if ctx_verdicts:
             _al = (game.get("away_team","") or "").lower()
             _hl = (game.get("home_team","") or "").lower()
@@ -499,6 +501,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                     _vrd  = _v.get("verdict","neutral")
                     _conf = int(_v.get("confidence",0)*100)
                     _ctx_tag = f"  [CTX+ {_vrd} {_conf}%]" if _vrd=="confirms" else                                f"  [CTX- {_vrd} {_conf}%]" if _vrd=="contradicts" else                                f"  [CTX? {_conf}%]"
+                    _ctx_token = "confirms" if _vrd=="confirms" else "fades" if _vrd=="contradicts" else "neutral"
                     break
         hdr = f"{away_abbr} ({away_proj}) @ {home_abbr} ({home_proj})  proj_total={total_proj:.1f}  margin={margin:+.1f}{_ctx_tag}"
         if edges:
@@ -506,12 +509,13 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
             for e in edges:
                 print(e)
         else:
-            print(f"\n{hdr}  -- no edge >= 2%")
+            print(f"\n{hdr}  -- no edge >= 4%")
         # Tag collected bets with this game's label
         _game_short = f"{away_abbr}@{home_abbr}"
         for b in ALL_BETS:
             if b["game"] == "":
                 b["game"] = _game_short
+                b["ctx"]  = _ctx_token
 
     print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
@@ -567,9 +571,9 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
                 pa_nv, ph_nv = novigp(american_to_prob(oa["price"]), american_to_prob(oh["price"]))
                 mh = 1.0 - normal_cdf(0, margin, sig["ml"])
                 ma = 1.0 - mh
-                e = edge_str(mh, ph_nv, f"ML HOME  {home_abbr}", odds=oh["price"])
+                e = edge_str(mh, ph_nv, f"ML HOME  {home_abbr}", odds=oh["price"], book=ml["book"])
                 if e: edges.append(e)
-                e = edge_str(ma, pa_nv, f"ML AWAY  {away_abbr}", odds=oa["price"])
+                e = edge_str(ma, pa_nv, f"ML AWAY  {away_abbr}", odds=oa["price"], book=ml["book"])
                 if e: edges.append(e)
 
         # SPREAD
@@ -582,9 +586,9 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
                 sp_line = oh.get("point", 0)
                 ph_nv, pa_nv = novigp(american_to_prob(oh["price"]), american_to_prob(oa["price"]))
                 cover_h = 1.0 - normal_cdf(-sp_line, margin, sig["spread"])
-                e = edge_str(cover_h,       ph_nv, f"SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"])
+                e = edge_str(cover_h,       ph_nv, f"SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"], book=sp["book"])
                 if e: edges.append(e)
-                e = edge_str(1.0-cover_h,   pa_nv, f"SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"])
+                e = edge_str(1.0-cover_h,   pa_nv, f"SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"], book=sp["book"])
                 if e: edges.append(e)
 
         # GAME TOTAL
@@ -597,9 +601,9 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
                 tline = ov.get("point", 0)
                 pov_nv, pun_nv = novigp(american_to_prob(ov["price"]), american_to_prob(un["price"]))
                 mov = 1.0 - normal_cdf(tline, total_proj, sig["total"])
-                e = edge_str(mov,     pov_nv, f"TOTAL OVER  ({tline})", odds=ov["price"])
+                e = edge_str(mov,     pov_nv, f"TOTAL OVER  ({tline})", odds=ov["price"], book=tot["book"])
                 if e: edges.append(e)
-                e = edge_str(1.0-mov, pun_nv, f"TOTAL UNDER ({tline})", odds=un["price"])
+                e = edge_str(1.0-mov, pun_nv, f"TOTAL UNDER ({tline})", odds=un["price"], book=tot["book"])
                 if e: edges.append(e)
 
         # TEAM TOTALS (event-specific endpoint)
@@ -619,12 +623,13 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
                     continue
                 pov_nv, pun_nv = novigp(american_to_prob(oo), american_to_prob(uo))
                 mov = 1.0 - normal_cdf(ttl, proj, sig["team"])
-                e = edge_str(mov,     pov_nv, f"TT OVER  {abbr} ({ttl})", odds=oo)
+                e = edge_str(mov,     pov_nv, f"TT OVER  {abbr} ({ttl})", odds=oo, book=info.get("book",""))
                 if e: edges.append(e)
-                e = edge_str(1.0-mov, pun_nv, f"TT UNDER {abbr} ({ttl})", odds=uo)
+                e = edge_str(1.0-mov, pun_nv, f"TT UNDER {abbr} ({ttl})", odds=uo, book=info.get("book",""))
                 if e: edges.append(e)
 
         _ctx_tag = ""
+        _ctx_token = ""
         if ctx_verdicts:
             _al = (game.get("away_team","") or "").lower()
             _hl = (game.get("home_team","") or "").lower()
@@ -633,6 +638,7 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
                     _vrd  = _v.get("verdict","neutral")
                     _conf = int(_v.get("confidence",0)*100)
                     _ctx_tag = f"  [CTX+ {_vrd} {_conf}%]" if _vrd=="confirms" else                                f"  [CTX- {_vrd} {_conf}%]" if _vrd=="contradicts" else                                f"  [CTX? {_conf}%]"
+                    _ctx_token = "confirms" if _vrd=="confirms" else "fades" if _vrd=="contradicts" else "neutral"
                     break
         hdr = f"{away_abbr} ({away_proj}) @ {home_abbr} ({home_proj})  proj_total={total_proj:.1f}  margin={margin:+.1f}{_ctx_tag}"
         if edges:
@@ -640,16 +646,18 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
             for e in edges:
                 print(e)
         else:
-            print(f"\n{hdr}  -- no edge >= 2%")
+            print(f"\n{hdr}  -- no edge >= 4%")
         _game_short = f"{away_abbr}@{home_abbr}"
         for b in ALL_BETS:
             if b["game"] == "":
                 b["game"] = _game_short
+                b["ctx"]  = _ctx_token
         # Tag collected bets with this game's label
         _game_short = f"{away_abbr}@{home_abbr}"
         for b in ALL_BETS:
             if b["game"] == "":
                 b["game"] = _game_short
+                b["ctx"]  = _ctx_token
 
     print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
@@ -713,14 +721,21 @@ def print_ranked_table(bets):
         if p <= 0 or p >= 1: return "N/A"
         return f"-{round(p/(1-p)*100)}" if p >= 0.5 else f"+{round((1-p)/p*100)}"
 
+    show_ctx = any(b.get("ctx") for b in bets_sorted)
+
     rows = []
     for b in bets_sorted:
-        pick = f"{b['game']} {b['label']}"[:26]
+        pick = f"{b['game']} {b['label']}"[:32]
         mkt  = f"{b['odds']:+d}" if isinstance(b['odds'], int) else "N/A"
-        rows.append((pick, f"{b['stake']:.2f}u", f"{b['model']*100:.1f}%",
-                     p2a(b["model"]), mkt, f"+{b['edge']*100:.1f}pp"))
+        cells = [pick, f"{b['stake']:.2f}u", f"{b['model']*100:.1f}%",
+                 p2a(b["model"]), mkt, b.get("book","") or "-", f"+{b['edge']*100:.1f}pp"]
+        if show_ctx:
+            cells.append(b.get("ctx","") or "-")
+        rows.append(tuple(cells))
 
-    hdrs   = ["Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Edge"]
+    hdrs   = ["Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Book", "Edge"]
+    if show_ctx:
+        hdrs.append("CTX")
     widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(hdrs)]
     div    = "+" + "+".join("-" * (w+2) for w in widths) + "+"
     row_s  = lambda cells: "|" + "|".join(f" {c:<{widths[i]}} " for i,c in enumerate(cells)) + "|"
@@ -735,7 +750,10 @@ def print_ranked_table(bets):
         print(div)
         print(row_s(r))
     print(div)
-    print(f"  {len(bets_sorted)} bet(s)  |  total: {sum(b['stake'] for b in bets_sorted):.2f}u")
+    total = sum(b['stake'] for b in bets_sorted)
+    print(f"  {len(bets_sorted)} bet(s)  |  total: {total:.2f}u")
+    if total > 8.0:
+        print(f"  ⚠ TOTAL EXPOSURE {total:.1f}u EXCEEDS MLB DAILY CAP (8.0u)")
 
 
 if __name__ == "__main__":
