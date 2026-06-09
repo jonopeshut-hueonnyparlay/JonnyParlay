@@ -21,10 +21,14 @@ CLV formula (vig-free on closing side, props + totals):
 
 Supported stats:
   Game lines   — SPREAD, TOTAL, ML_FAV, ML_DOG (h2h/spreads/totals markets)
-  F5           — F5_SPREAD, F5_TOTAL, F5_ML (same markets, first5_innings game)
-  Player props — PTS, REB, AST, 3PM, SOG, K, OUTS, HA, HITS, TB, HRR, YARDS
+  F5           — F5_SPREAD, F5_TOTAL, F5_ML (*_1st_5_innings markets)
+  Team totals  — TEAM_TOTAL (team_totals market, team-filtered matching)
+  First inning — NRFI, YRFI (totals_1st_1_innings market, line 0.5)
+  Player props — PTS, REB, AST, 3PM, PRA, PR, PA, RA, SOG, GOALS, NHLPTS,
+                 NHLBLK, SV, K, OUTS, HA, ER, BB, HITS, TB, HRR, RBI, RUNS,
+                 YARDS
 
-Skipped stats: NRFI, YRFI, TEAM_TOTAL, GOLF_WIN, PARLAY (no standard API market).
+Skipped stats: GOLF_WIN, PARLAY, GA, PC (no Odds API market exists).
 Shadow logs: skipped by default (ENABLE_SHADOW_CLV = False). Flip when MLB goes live.
 """
 
@@ -126,19 +130,38 @@ SPORT_KEYS = {
 # Sportsbook contracts — canonical definition in book_names.py (audit H-13).
 from book_names import CO_LEGAL_BOOKS, BOOK_DISPLAY, display_book, norm_book  # noqa: E402
 
-# Maps our stat label → Odds API market key (for props)
+# Maps our stat label → Odds API market key (for props).
+# Keys mirror run_picks.MARKET_TO_STAT (inverted) — that map is what priced the
+# bet, so capture must close against the same market (2026-06-09 CLV audit).
 STAT_TO_MARKET = {
     "PTS": "player_points",
     "REB": "player_rebounds",
     "AST": "player_assists",
     "3PM": "player_threes",
+    # NBA/WNBA combo props
+    "PRA": "player_points_rebounds_assists",
+    "PR":  "player_points_rebounds",
+    "PA":  "player_points_assists",
+    "RA":  "player_rebounds_assists",
+    # NHL skater/goalie. player_points is shared with NBA/WNBA — the per-event
+    # fetch is already sport-keyed, so NHLPTS resolves to NHL points props.
     "SOG": "player_shots_on_goal",
+    "GOALS": "player_goals",
+    "NHLPTS": "player_points",
+    "NHLBLK": "player_blocked_shots",
+    "SV":  "player_total_saves",
+    # MLB pitcher
     "K":   "pitcher_strikeouts",
     "OUTS": "pitcher_outs",
     "HA":  "pitcher_hits_allowed",
+    "ER":  "pitcher_earned_runs",
+    "BB":  "pitcher_walks",
+    # MLB batter
     "HITS": "batter_hits",
     "TB":  "batter_total_bases",
     "HRR": "batter_hits_runs_rbis",
+    "RBI": "batter_rbis",
+    "RUNS": "batter_runs_scored",
     "YARDS": "player_reception_yards",  # NFL — best available
 }
 
@@ -148,13 +171,28 @@ GAME_LINE_MARKET = {
     "ML_FAV": "h2h",
     "ML_DOG": "h2h",
     "TOTAL":  "totals",
-    "F5_SPREAD": "spreads",
-    "F5_ML":     "h2h",
-    "F5_TOTAL":  "totals",
+    # F5 picks must close against the 1st-5-innings markets. The old full-game
+    # mapping never matched a total/spread (F5 line ~4.5 vs full-game ~8.5
+    # exceeds the ±0.25 tolerance → every F5 row went STALE) and F5_ML would
+    # have silently captured the WRONG (full-game) moneyline (2026-06-09 audit).
+    "F5_SPREAD": "spreads_1st_5_innings",
+    "F5_ML":     "h2h_1st_5_innings",
+    "F5_TOTAL":  "totals_1st_5_innings",
+    # Team totals: outcomes carry the team name in `description` — matched by
+    # the dedicated TEAM_TOTAL branch in get_closing_odds_for_pick.
+    "TEAM_TOTAL": "team_totals",
+    # First-inning totals: NRFI = under 0.5, YRFI = over 0.5.
+    "NRFI": "totals_1st_1_innings",
+    "YRFI": "totals_1st_1_innings",
 }
 
-# Stats we skip (no standard market coverage)
-SKIP_STATS = {"NRFI", "YRFI", "TEAM_TOTAL", "GOLF_WIN", "PARLAY"}
+# Stats we skip — no Odds API market exists for these:
+#   GOLF_WIN — legacy outright market, never captured
+#   PARLAY   — composite slips have no single closing market (sgp/longshot
+#              run_types are additionally excluded in picks_needing_clv)
+#   GA       — NHL goalie goals-against: no Odds API market
+#   PC       — MLB pitch count: no Odds API market
+SKIP_STATS = {"GOLF_WIN", "PARLAY", "GA", "PC"}
 
 # ── Game-line CLV (pick_log_game_lines.csv) ───────────────────────────────────
 # Game-line bets are logged by analyze_game_lines.py with a shape distinct from
@@ -162,8 +200,9 @@ SKIP_STATS = {"NRFI", "YRFI", "TEAM_TOTAL", "GOLF_WIN", "PARLAY"}
 # `team` holds the home abbrev, `direction` is home/away (spread/ML) or
 # over/under (totals), and the F5 stats refer to the first-5-innings markets.
 # This mapping is intentionally SEPARATE from GAME_LINE_MARKET above (which
-# serves the prop logs and maps F5 → full-game markets) so the prop CLV path is
-# never touched. F5 stats use the correct *_1st_5_innings market keys here.
+# serves the prop logs) so the two paths can evolve independently. Both now
+# use the correct *_1st_5_innings market keys for F5 stats (the prop-log map
+# was fixed 2026-06-09 — it previously pointed F5 at full-game markets).
 GAME_LINE_CLV_MARKET = {
     "TOTAL":     "totals",
     "SPREAD":    "spreads",
@@ -641,6 +680,30 @@ def load_picks(log_path: Path, run_date: str) -> list[dict]:
     return [r for r in rows if r.get("date", "") == run_date]
 
 
+# One-shot warning registry for stat labels with no market mapping. A stat
+# that is neither mapped nor in SKIP_STATS must never enter the capture queue:
+# it can't capture, it holds its game open all night (blocking daemon exit /
+# the next day's Task Scheduler start), and a game whose picks are ALL
+# unmapped is retired via the empty-markets_needed path WITHOUT stale-marking,
+# leaving blank rows forever (2026-06-09 audit — PA/PRA/PR/RA failure mode).
+_warned_unmapped_stats: set[str] = set()
+
+
+def _is_capturable_stat(stat: str) -> bool:
+    """True when this stat label has an Odds API market mapping."""
+    if stat in SKIP_STATS:
+        return False
+    if stat in STAT_TO_MARKET or stat in GAME_LINE_MARKET:
+        return True
+    if stat and stat not in _warned_unmapped_stats:
+        _warned_unmapped_stats.add(stat)
+        logger.warning(
+            "Stat %r has no Odds API market mapping — skipping CLV capture "
+            "(add it to STAT_TO_MARKET/GAME_LINE_MARKET or SKIP_STATS)", stat,
+        )
+    return False
+
+
 def picks_needing_clv(picks: list[dict]) -> list[dict]:
     """Filter to picks that haven't had closing odds captured yet and aren't graded."""
     _terminal = {"W", "L", "P", "VOID"}
@@ -648,7 +711,7 @@ def picks_needing_clv(picks: list[dict]) -> list[dict]:
     return [
         p for p in picks
         if not p.get("closing_odds", "").strip()
-        and p.get("stat", "") not in SKIP_STATS
+        and _is_capturable_stat(p.get("stat", ""))
         and p.get("result", "") not in _terminal
         and p.get("run_type", "") not in _skip_run_types
     ]
@@ -909,10 +972,54 @@ def get_closing_odds_for_pick(pick: dict, outcomes_by_market: dict,
                         best_book = book
             return best, best_book
 
-        elif stat in ("TOTAL", "F5_TOTAL"):
+        elif stat in ("TOTAL", "F5_TOTAL", "NRFI", "YRFI"):
+            # NRFI/YRFI are first-inning totals at line 0.5 (NRFI = under,
+            # YRFI = over) — the over/under price finder handles them directly.
             outcomes = outcomes_by_market.get(market_key, [])
             best, book = best_price(outcomes, direction, line)
             return best, book
+
+        elif stat == "TEAM_TOTAL":
+            # team_totals outcomes: name="Over"/"Under", description=team name.
+            # Resolve the target team from is_home + event names (player-field
+            # fallback for legacy rows), then require ALL target words to match
+            # the description — any-word matching would cross same-city pairs
+            # (LAA/LAD, NYY/NYM, CWS/CHC).
+            ih_raw = str(pick.get("is_home", "")).strip().lower()
+            is_home_known = ih_raw in ("true", "false", "1", "0", "yes", "no")
+            is_home = ih_raw in ("true", "1", "yes")
+            if is_home_known and (home_team or away_team):
+                target_team = _fold_name(home_team if is_home else away_team)
+            else:
+                # player field = "<Full Team Name> Team Total"
+                target_team = _fold_name(player).replace("team total", "").strip()
+            target_words = [w for w in target_team.split() if len(w) >= 3]
+            if not target_words:
+                return None, ""
+
+            best = None
+            best_book = ""
+            for oc in outcomes:
+                book = oc.get("book", "")
+                book_base = book.split("_")[0] if "_" in book else book
+                if book not in CO_LEGAL_BOOKS and book_base not in CO_LEGAL_BOOKS:
+                    continue
+                price = oc.get("price")
+                if price is None:
+                    continue
+                oc_name = oc.get("name", "").lower()            # "over"/"under"
+                oc_desc = _fold_name(oc.get("description", ""))  # team name
+                if direction not in oc_name:
+                    continue
+                if not all(w in oc_desc for w in target_words):
+                    continue
+                point = oc.get("point")
+                if line is not None and point is not None and abs(float(point) - line) > 0.25:
+                    continue
+                if best is None or price > best:
+                    best = price
+                    best_book = book
+            return best, best_book
 
     # ── Player props ──────────────────────────────────────────────────────────
     market_key = STAT_TO_MARKET.get(stat)
@@ -1375,7 +1482,7 @@ def run(run_date: str):
         needs_clv_games: set[str] = {
             p.get("game", "") for p in all_today_picks
             if not p.get("closing_odds", "").strip()
-            and p.get("stat", "") not in SKIP_STATS
+            and _is_capturable_stat(p.get("stat", ""))
             and p.get("result", "") not in {"W", "L", "P", "VOID"}
             and p.get("run_type", "") not in {"sgp", "longshot"}
         }
@@ -1529,7 +1636,7 @@ def run(run_date: str):
                         if (
                             p.get("result", "") in _terminal
                             and not p.get("closing_odds", "").strip()
-                            and p.get("stat", "") not in SKIP_STATS
+                            and _is_capturable_stat(p.get("stat", ""))
                         ):
                             missed.append((lp, p))
                 if missed:
