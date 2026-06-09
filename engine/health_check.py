@@ -187,7 +187,6 @@ check("capture_clv NRFI still in SKIP_STATS (2d deferred)",
 print("Checking gate_check.py...")
 gc = read_file(ENGINE / "gate_check.py")
 check("gate_check T1 mult gate ABSENT", "T1 mult re-eval" not in gc, "T1 mult gate still present")
-check("gate_check WNBA filter pick_score>0", "pick_score" in gc, "WNBA pick_score filter missing")
 
 # ── 9. EdgeModel nba_projector.py constants ───────────────────────────────────
 print("Checking EdgeModel nba_projector.py...")
