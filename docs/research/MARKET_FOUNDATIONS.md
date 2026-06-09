@@ -607,7 +607,7 @@ DATA_GATED relocation found** — several affect live picks.
 | TB | T2 | T2 | **CONFIRM** | Self-driven (no runner context); power stabilizes fast (~150–200 AB). NB r=1.3 / component-Poisson convolution ✓. Most shrinkage-eligible T2 member. |
 | RBI | T2 | **T1** | **CHANGE** | Canonical "stat to avoid" — opportunity/lineup-dependent, no predictive metric, ~74% zero games (FanGraphs). T2 (least shrink) is exactly wrong → T1. NB r=0.87 ✓. |
 | RUNS | T2 | **T1B** | **CHANGE** | Context/lineup-dependent like RBI but batter's on-base skill adds a forecastable first step → one step less shrunk than RBI. Poisson ✓ (var/mu 0.969). (T1 acceptable if paired with RBI.) |
-| HRR | T1 | T1 | **CONFIRM** | Combo of HITS+RUNS+RBI (2 of 3 context-noisy) + tail. NB ✓ but **r=1.5 is moment-matched; external evidence r≈1.83 — refit at MLB batter gate (possibly ZINB).** Shadow, n=2. |
+| HRR | T1 | T1 | **CONFIRM** | Combo of HITS+RUNS+RBI (2 of 3 context-noisy) + tail. NB ✓ but **r=1.5 is moment-matched; within-player starters frame gives r≈1.1 (2026-06-09, mlb_batter_game_stats — the earlier r≈1.83 external estimate was wrong direction, a pooled-frame artifact) — refit at July refit (possibly ZINB).** Shadow, n=2. |
 | HA | T1B (susp) | **T1** | **CHANGE** | Least-controllable pitcher stat — BABIP ~71% of ERA-FIP variance (Beyond the Box Score 2015; FIP framework exists to strip hits out). On unsuspension → T1, not T2. NB r=13.41 ✓. |
 | ER | T2 | **T1** | **CHANGE** | Luck/defense/sequencing-driven (BABIP ~71%, LOB% ~26% of ERA-FIP var). T2 unjustifiable for textbook regression-prone stat → T1. NB r=2.62 ✓. |
 | BB | T2 | T2 | **CONFIRM** | Genuine command skill — pitcher-attributable, stabilizes ~60 BF, half of K/BB (best predictive metric). Poisson ✓ (var/mu ~0.97; monitor >1.15). |
@@ -1003,7 +1003,7 @@ corrected in the follow-up implementation session (priority table below).
 **Tier C — July refit / model-context (mostly EdgeModel, gated):**
 PACE_ELASTICITY reb/ast/stl/blk (below per-possession theory; refit jointly with H01 REB prior) ·
 altitude/westward-travel (wrong metric — efficiency/win-prob, not minutes) · creator-AST threshold
-(re-spec as AST%) · HRR r=1.5→~1.8 + ZINB · context era_fip → xFIP/SIERA + collapse sharp-money
+(re-spec as AST%) · HRR r=1.5→~1.1 (within-player starters, 2026-06-09; ~1.8 was wrong direction) + ZINB · context era_fip → xFIP/SIERA + collapse sharp-money
 triplet + directional wind · REC Poisson→NB at NFL go-live · MLB_PARK_FACTORS refit (TEX inverted) —
 **dormant, add docstring warning** · WNBA 3PM sigma (copied from PTS) · R11 reclassify as DATA_GATED
 protective rule · combo PRA/PR/PA/RA → T1B at the 100-scored-combo gate.
