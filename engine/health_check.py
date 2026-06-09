@@ -26,6 +26,8 @@ import subprocess
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
+sys.stdout.reconfigure(errors="replace")
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 JP_ROOT   = Path(r"C:\Dev\JonnyParlay")
 EM_ROOT   = Path(r"C:\Dev\EdgeModel")
