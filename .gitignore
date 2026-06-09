@@ -53,6 +53,7 @@ picksbyjonnydashboard/
 # Env / secrets (for when you eventually migrate webhook URLs + ODDS_API_KEY)
 .env
 .env.*
+!.env.example
 *.key
 secrets.json
 

@@ -861,6 +861,63 @@ def _write_game_line_bets(bets, log_path):
             os.fsync(f.fileno())
     return len(bets)
 
+
+def _post_game_lines_discord(bets):
+    """Post logged game-line bets to Discord. Prints card to console if webhook not configured."""
+    webhook = os.getenv("DISCORD_GAME_LINES_WEBHOOK", "")
+    today   = datetime.date.today().strftime("%b %d, %Y")
+
+    def _p2a(p):
+        if p <= 0 or p >= 1:
+            return "N/A"
+        return f"-{round(p / (1 - p) * 100)}" if p >= 0.5 else f"+{round((1 - p) / p * 100)}"
+
+    _SPORT_EMOJI = {"MLB": "⚾", "NBA": "🏀", "NHL": "🏒"}
+    SEP = "━" * 23
+
+    sports = {b.get("sport", "") for b in bets}
+    header_emoji = _SPORT_EMOJI.get(next(iter(sports)), "⚡") if len(sports) == 1 else "⚡"
+
+    lines = [f"{header_emoji} GAME LINES — {today}", SEP]
+    total = 0.0
+    for b in bets:
+        sport  = b.get("sport", "")
+        game   = b.get("game", "")
+        label  = b.get("label", "")
+        model  = b["model"]
+        edge   = b["edge"]
+        stake  = b["stake"]
+        odds   = b.get("odds", "N/A")
+        book   = b.get("book", "-")
+        ctx    = b.get("ctx", "") or "—"
+        total += stake
+
+        odds_str = f"{odds:+d}" if isinstance(odds, int) else str(odds)
+        lines.append(f"{sport} | {game} — {label}")
+        lines.append(f"📋 Book: {book} | Odds: {odds_str} | {stake:.2f}u")
+        lines.append(f"⚡ Edge: +{edge * 100:.1f}pp | Fair: {_p2a(model)} | CTX: {ctx}")
+        lines.append(SEP)
+
+    lines += [f"Total exposure: {total:.2f}u", "edge > everything ⚡"]
+    message = "\n".join(lines)
+
+    if not webhook:
+        print()
+        print(message)
+        print("[Discord] Webhook not configured — card preview only")
+        return
+
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resp = requests.post(webhook, json={"content": message}, headers=headers, timeout=(5, 10))
+        if resp.status_code in (200, 204):
+            print("  [Discord] Game lines card posted.")
+        else:
+            print(f"  [Discord] Post failed: HTTP {resp.status_code}")
+    except Exception as exc:
+        print(f"  [Discord] Post error: {exc}")
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -939,6 +996,7 @@ if __name__ == "__main__":
         if selected:
             n = _write_game_line_bets(selected, _PICK_LOG_GL_PATH)
             print(f"  Logged {n} bet(s) to {Path(_PICK_LOG_GL_PATH).name}")
+            _post_game_lines_discord(selected)
     print()
     print("Legend: STRONG>=8%  |  ***BET>=4%  |  positive edge only  |  stake=f*x10x0.75mult (min 0.25u, max 2.0u)")
     print("MLB: ML=NB(r=3.548) | TT=NB | spread/total/F5=Normal  sigma: total=4.6/spread=4.2  F5=2.65/2.70  scalar=0.540")

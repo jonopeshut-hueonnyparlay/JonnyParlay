@@ -111,6 +111,7 @@ DISCORD_ANNOUNCE_WEBHOOK:   str = os.getenv("DISCORD_ANNOUNCE_WEBHOOK",   "")  #
 DISCORD_FALLBACK_WEBHOOK:   str = os.getenv("DISCORD_FALLBACK_WEBHOOK",   "")  # optional alert channel
 DISCORD_LONGSHOT_WEBHOOK:   str = os.getenv("DISCORD_LONGSHOT_WEBHOOK",   "")  # #longshot (falls back to #bonus-drops)
 DISCORD_SGP_WEBHOOK:        str = os.getenv("DISCORD_SGP_WEBHOOK",        "")  # #sgp (falls back to #bonus-drops)
+DISCORD_GAME_LINES_WEBHOOK:  str = os.getenv("DISCORD_GAME_LINES_WEBHOOK",  "")  # #game-lines (optional — prints to console if blank)
 
 
 # â”€â”€ Helpers (fail-fast when a value is required at use-time) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -137,6 +138,7 @@ _WEBHOOK_REGISTRY = {
     "fallback":   ("DISCORD_FALLBACK_WEBHOOK",   DISCORD_FALLBACK_WEBHOOK),
     "longshot":   ("DISCORD_LONGSHOT_WEBHOOK",   DISCORD_LONGSHOT_WEBHOOK),   # L3
     "sgp":        ("DISCORD_SGP_WEBHOOK",        DISCORD_SGP_WEBHOOK),        # L3
+    "game_lines": ("DISCORD_GAME_LINES_WEBHOOK", DISCORD_GAME_LINES_WEBHOOK),
 }
 
 

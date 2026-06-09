@@ -89,6 +89,11 @@ for key in ["ODDS_API_KEY", "ANTHROPIC_API_KEY", "DISCORD_WEBHOOK_URL",
     else:
         check(f".env: {key} present", True)
 
+# Optional webhooks — warn if key line is not in .env at all
+for key in ["DISCORD_GAME_LINES_WEBHOOK"]:
+    if f"{key}=" not in env_content:
+        warn(f".env: {key} (optional)", "not in .env — add blank line to enable game-lines posting")
+
 # ── 3. No stale OneDrive paths ────────────────────────────────────────────────
 print("Checking for stale paths...")
 stale_pattern = "Documents\\JonnyParlay"
