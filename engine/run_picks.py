@@ -254,7 +254,7 @@ SHADOW_STATS = {
     "RBI", "RUNS",
     # Previously killed markets — rebuilt/re-enabled for shadow data accumulation
     "TB",    # G_TB_DISABLED removed; calc_tb_prob (Poisson convolution) was already the rebuild; NB r=1.3 fallback added
-    "HRR",   # G_HRR_DISABLED removed; NB r=1.5 already correct; was killed for 57.4% WR at line=0.5
+    "HRR",   # G_HRR_DISABLED removed; over at line<=0.5 blocked by G_HRR_OVER_LOW_LINE (2026-06-09 — 46.3% WR, r=1.5 too thin vs within-player ~1.1); under + over>0.5 still accumulating
     "NRFI",  # G_NRFI_DISABLED removed; was 28.9% WR on 211 shadow picks; re-shadowing for fresh data
     "YRFI",  # same generate_nrfi_picks path as NRFI; shadow alongside it
 }
@@ -1447,6 +1447,13 @@ def check_prop_gates(pick):
     # DATA_GATED: lift at n≥30, calib bias ±3pp + CLV≥0.
     if stat == "HITS" and direction == "over":
         return False, "G_HITS_OVER_SHADOW"
+    # G_HRR_OVER_LOW_LINE: HRR over at line <= 0.5 suspended 2026-06-09 — shadow gate
+    # analysis (n=54): 46.3% WR (25W/29L), -25.5% sized ROI, model overconfident -15.5pp.
+    # Root cause: NB r=1.5 too thin (within-player starters r≈1.1, mlb_batter_game_stats)
+    # plus residual mu inflation. July refit fixes r + audits the mu path; shadow log
+    # resets post-fix. HRR under and over at lines > 0.5 stay in shadow accumulation.
+    if stat == "HRR" and direction == "over" and line <= 0.5:
+        return False, "G_HRR_OVER_LOW_LINE"
 
     # G9: universal floor
     if edge < 0.05:
