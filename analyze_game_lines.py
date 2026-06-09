@@ -255,9 +255,10 @@ def team_total_odds(game, abbr_list):
 # ── Edge formatting ────────────────────────────────────────────────────────
 def edge_str(model_p, market_p, label, line=None, odds=None):
     edge = model_p - market_p
-    if abs(edge) < 0.020:
+    # Only show positive edges >= 4%
+    if edge < 0.04:
         return None
-    marker = "*** EDGE" if abs(edge) >= 0.04 else "  + edge"
+    marker = "🔥 STRONG" if edge >= 0.08 else "*** BET  "
     parts = [f"  {marker}  {label:<32}"]
     if line is not None:
         parts.append(f" line={line}")
@@ -297,7 +298,7 @@ def mlb_tt_prob(proj, line, direction="over"):
 def analyze_mlb(games_data, team_projs=None):
     print("\n" + "="*72)
     print("MLB GAME LINES")
-    print("  ML/spread/total: Normal  |  Team totals: NB(r=3.548)  |  ML: NB direct sum")
+    print("  Spread/total: Normal  |  Team totals: NB(r=3.548)  |  ML: NB direct sum")
     print("="*72)
 
     sig = SIGMA["MLB"]
@@ -477,7 +478,9 @@ def analyze_nba(games_data, team_projs=None):
             h = NBA_NAME_MAP.get((g.get("home_team","") or "").lower())
             if a and h and a in team_projs and h in team_projs:
                 proj_map[(a, h)] = (team_projs[a], team_projs[h])
-
+        for fa, ap, fh, hp in NBA_PROJS:
+            if (fa, fh) not in proj_map:
+                proj_map[(fa, fh)] = (ap, hp)
     else:
         proj_map = {(a, h): (ap, hp) for a, ap, h, hp in NBA_PROJS}
     matched = 0
@@ -600,6 +603,7 @@ def _load_team_projs_from_csv(csv_path):
         pass
     return team_projs
 
+
 def _auto_find_csv(sport_key):
     """Auto-find latest SaberSim CSV matching sport_key in Downloads."""
     import time as _time
@@ -614,6 +618,7 @@ def _auto_find_csv(sport_key):
     )
     return matches[0] if matches else None
 
+
 def _build_projs(sport):
     """Build game projection list from SaberSim CSV, falling back to hardcoded list."""
     csv_file = _auto_find_csv(sport.lower())
@@ -624,6 +629,7 @@ def _build_projs(sport):
             # Return as list of (away, away_proj, home, home_proj) — will be matched against API games
             return projs  # dict format: {team_abbr: proj}
     return {}
+
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -670,10 +676,12 @@ if __name__ == "__main__":
     analyze_mlb(mlb_data, team_projs=mlb_team_projs)
     analyze_nba(nba_data, team_projs=nba_team_projs)
 
-    print("\n\nLegend: '*** EDGE' >= 4%  |  '  + edge' = 2-4%  |  edge = model_prob - market_no_vig_prob")
+    print("\n\nLegend: '🔥 STRONG' >= 8% edge  |  '*** BET' >= 4% edge  |  positive only  |  edge = model_prob - market_no_vig_prob")
     print("Distributions:")
     print("  MLB  : ML = NB direct sum (r=3.548) | team totals = NB | total/spread/F5 = Normal")
     print("  NBA  : all markets = Normal")
     print("  NHL  : all markets = Normal (sigma: total=2.311, spread=2.614, team=1.744, ml=2.614)")
     print("MLB sigmas: total=4.6/spread=4.2  F5: total=2.65/spread=2.70  F5 scalar=0.540")
+
+
 
