@@ -82,8 +82,18 @@ def count_combo_platt(rows: list[dict]) -> int:
 
 
 def count_edgemodel_clv(rows: list[dict]) -> int:
-    """pick_log_custom.csv rows with a non-empty clv value."""
-    return sum(1 for r in rows if _nonempty(r.get("clv")))
+    """pick_log_custom.csv rows with a real (non-null, non-zero) clv value."""
+    count = 0
+    for r in rows:
+        raw = r.get("clv")
+        if not _nonempty(raw):
+            continue
+        try:
+            if float(raw) != 0:
+                count += 1
+        except (TypeError, ValueError):
+            continue
+    return count
 
 
 def count_wnba_graded(rows: list[dict]) -> int:
@@ -94,7 +104,7 @@ def count_wnba_graded(rows: list[dict]) -> int:
     return sum(
         1 for r in rows
         if r.get("date", "") >= WNBA_DAMPENER_DATE
-        and _nonempty(r.get("result"))
+        and r.get("result", "").strip().upper() in {"W", "L"}
         and float(r.get("pick_score", 0) or 0) > 0
     )
 
