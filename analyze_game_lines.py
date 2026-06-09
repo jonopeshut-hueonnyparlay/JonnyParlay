@@ -701,12 +701,13 @@ if __name__ == "__main__":
     analyze_mlb(mlb_data, team_projs=mlb_team_projs)
     analyze_nba(nba_data, team_projs=nba_team_projs)
 
-    print("\n\nLegend: '🔥 STRONG' >= 8%  |  '*** BET' >= 4%  |  positive only  |  stake = 1/6 Kelly (min 0.25u, max 2.0u)")
+    print("\n\nLegend: '🔥 STRONG' >= 8%  |  '*** BET' >= 4%  |  positive only  |  stake = f* x 10 x 0.75 market mult (min 0.25u, max 2.0u)")
     print("Distributions:")
     print("  MLB  : ML = NB direct sum (r=3.548) | team totals = NB | total/spread/F5 = Normal")
     print("  NBA  : all markets = Normal")
     print("  NHL  : all markets = Normal (sigma: total=2.311, spread=2.614, team=1.744, ml=2.614)")
     print("MLB sigmas: total=4.6/spread=4.2  F5: total=2.65/spread=2.70  F5 scalar=0.540")
+
 
 
 
