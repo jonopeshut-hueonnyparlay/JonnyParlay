@@ -460,7 +460,7 @@ def analyze_mlb(games_data, team_projs=None):
         else:
             print(f"\n{hdr}  -- no edge >= 2%")
 
-    print(f"\n  Matched {matched}/{len(MLB_PROJS)} games from API")
+    print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
 # ── NBA analysis ────────────────────────────────────────────────────────────
 def analyze_nba(games_data, team_projs=None):
@@ -477,10 +477,7 @@ def analyze_nba(games_data, team_projs=None):
             h = NBA_NAME_MAP.get((g.get("home_team","") or "").lower())
             if a and h and a in team_projs and h in team_projs:
                 proj_map[(a, h)] = (team_projs[a], team_projs[h])
-        # Fallback to hardcoded for any unmatched games
-        for fa, ap, fh, hp in NBA_PROJS:
-            if (fa, fh) not in proj_map:
-                proj_map[(fa, fh)] = (ap, hp)
+
     else:
         proj_map = {(a, h): (ap, hp) for a, ap, h, hp in NBA_PROJS}
     matched = 0
@@ -580,7 +577,7 @@ def analyze_nba(games_data, team_projs=None):
         else:
             print(f"\n{hdr}  -- no edge >= 2%")
 
-    print(f"\n  Matched {matched}/{len(NBA_PROJS)} games from API")
+    print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
 # ── Main ────────────────────────────────────────────────────────────────────
 def _load_team_projs_from_csv(csv_path):
@@ -603,7 +600,6 @@ def _load_team_projs_from_csv(csv_path):
         pass
     return team_projs
 
-
 def _auto_find_csv(sport_key):
     """Auto-find latest SaberSim CSV matching sport_key in Downloads."""
     import time as _time
@@ -618,7 +614,6 @@ def _auto_find_csv(sport_key):
     )
     return matches[0] if matches else None
 
-
 def _build_projs(sport):
     """Build game projection list from SaberSim CSV, falling back to hardcoded list."""
     csv_file = _auto_find_csv(sport.lower())
@@ -629,7 +624,6 @@ def _build_projs(sport):
             # Return as list of (away, away_proj, home, home_proj) — will be matched against API games
             return projs  # dict format: {team_abbr: proj}
     return {}
-
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -646,6 +640,33 @@ if __name__ == "__main__":
     nba_data = fetch_odds("basketball_nba", "h2h,spreads,totals")
     print(f"  {len(nba_data)} NBA games")
 
+    # Filter to today's unstarted games only, deduplicate by matchup
+    from datetime import datetime, timezone, timedelta
+    _local_tz = timezone(timedelta(hours=-6))  # MDT
+    _now_utc = datetime.now(timezone.utc)
+    _today_local = datetime.now(_local_tz).date()
+
+    def _is_valid(g):
+        try:
+            ct = datetime.fromisoformat(g.get("commence_time", "").replace("Z", "+00:00"))
+            ct_local = ct.astimezone(_local_tz)
+            return ct_local.date() == _today_local and ct > _now_utc
+        except Exception:
+            return False
+
+    def _dedup_today(games):
+        seen, out = set(), []
+        for g in sorted(games, key=lambda x: x.get("commence_time","")):
+            key = (g.get("away_team",""), g.get("home_team",""))
+            if key not in seen and _is_valid(g):
+                seen.add(key)
+                out.append(g)
+        return out
+
+    mlb_data = _dedup_today(mlb_data)
+    nba_data = _dedup_today(nba_data)
+    print(f"  Filtered to {len(mlb_data)} MLB / {len(nba_data)} NBA unstarted games")
+
     analyze_mlb(mlb_data, team_projs=mlb_team_projs)
     analyze_nba(nba_data, team_projs=nba_team_projs)
 
@@ -655,5 +676,4 @@ if __name__ == "__main__":
     print("  NBA  : all markets = Normal")
     print("  NHL  : all markets = Normal (sigma: total=2.311, spread=2.614, team=1.744, ml=2.614)")
     print("MLB sigmas: total=4.6/spread=4.2  F5: total=2.65/spread=2.70  F5 scalar=0.540")
-
 
