@@ -253,7 +253,7 @@ def team_total_odds(game, abbr_list):
     return result
 
 # ── Edge formatting ────────────────────────────────────────────────────────
-def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25):
+def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25, game_label=""):
     edge = model_p - market_p
     # Only show positive edges >= 4%
     if edge < 0.04:
@@ -266,6 +266,15 @@ def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25):
     if odds is not None:
         parts.append(f" odds={odds:+d}" if isinstance(odds, int) else f" odds={odds}")
     parts.append(f"  {stake:.2f}u  model={model_p:.3f}  mktNV={market_p:.3f}  edge={edge:+.3f}")
+    # Collect for ranked summary table
+    ALL_BETS.append({
+        "game":   game_label,
+        "label":  label.strip(),
+        "stake":  stake,
+        "model":  model_p,
+        "odds":   odds,
+        "edge":   edge,
+    })
     return "".join(parts)
 
 
@@ -291,6 +300,9 @@ def kelly_stake(model_p, odds_american, min_stake=0.25, max_stake=2.0):
     raw = f_star * GAME_LINE_KELLY_FRACTION * GAME_LINE_MARKET_MULT
     rounded = round(raw * 4) / 4
     return max(min_stake, min(max_stake, rounded))
+
+# Shared bet collector — populated by edge_str, printed as ranked table at end
+ALL_BETS = []
 
 def find_outcome(outcomes, name_map, abbr):
     for o in outcomes:
@@ -320,7 +332,7 @@ def mlb_tt_prob(proj, line, direction="over"):
             return negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)
 
 # ── MLB analysis ────────────────────────────────────────────────────────────
-def analyze_mlb(games_data, team_projs=None):
+def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
     print("\n" + "="*72)
     print("MLB GAME LINES")
     print("  Spread/total: Normal  |  Team totals: NB(r=3.548)  |  ML: NB direct sum")
@@ -478,18 +490,33 @@ def analyze_mlb(games_data, team_projs=None):
                 e = edge_str(1.0-cover_h,   pa_nv, f"F5 SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"])
                 if e: edges.append(e)
 
-        hdr = f"{away_abbr} ({away_proj}) @ {home_abbr} ({home_proj})  proj_total={total_proj:.1f}  margin={margin:+.1f}"
+        _ctx_tag = ""
+        if ctx_verdicts:
+            _al = (game.get("away_team","") or "").lower()
+            _hl = (game.get("home_team","") or "").lower()
+            for _k, _v in ctx_verdicts.items():
+                if (_al and _al in _k) or (_hl and _hl in _k):
+                    _vrd  = _v.get("verdict","neutral")
+                    _conf = int(_v.get("confidence",0)*100)
+                    _ctx_tag = f"  [CTX+ {_vrd} {_conf}%]" if _vrd=="confirms" else                                f"  [CTX- {_vrd} {_conf}%]" if _vrd=="contradicts" else                                f"  [CTX? {_conf}%]"
+                    break
+        hdr = f"{away_abbr} ({away_proj}) @ {home_abbr} ({home_proj})  proj_total={total_proj:.1f}  margin={margin:+.1f}{_ctx_tag}"
         if edges:
             print(f"\n{hdr}")
             for e in edges:
                 print(e)
         else:
             print(f"\n{hdr}  -- no edge >= 2%")
+        # Tag collected bets with this game's label
+        _game_short = f"{away_abbr}@{home_abbr}"
+        for b in ALL_BETS:
+            if b["game"] == "":
+                b["game"] = _game_short
 
     print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
 # ── NBA analysis ────────────────────────────────────────────────────────────
-def analyze_nba(games_data, team_projs=None):
+def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
     print("\n" + "="*72)
     print("NBA GAME LINES  (Normal distribution, all markets)")
     print("="*72)
@@ -597,13 +624,32 @@ def analyze_nba(games_data, team_projs=None):
                 e = edge_str(1.0-mov, pun_nv, f"TT UNDER {abbr} ({ttl})", odds=uo)
                 if e: edges.append(e)
 
-        hdr = f"{away_abbr} ({away_proj}) @ {home_abbr} ({home_proj})  proj_total={total_proj:.1f}  margin={margin:+.1f}"
+        _ctx_tag = ""
+        if ctx_verdicts:
+            _al = (game.get("away_team","") or "").lower()
+            _hl = (game.get("home_team","") or "").lower()
+            for _k, _v in ctx_verdicts.items():
+                if (_al and _al in _k) or (_hl and _hl in _k):
+                    _vrd  = _v.get("verdict","neutral")
+                    _conf = int(_v.get("confidence",0)*100)
+                    _ctx_tag = f"  [CTX+ {_vrd} {_conf}%]" if _vrd=="confirms" else                                f"  [CTX- {_vrd} {_conf}%]" if _vrd=="contradicts" else                                f"  [CTX? {_conf}%]"
+                    break
+        hdr = f"{away_abbr} ({away_proj}) @ {home_abbr} ({home_proj})  proj_total={total_proj:.1f}  margin={margin:+.1f}{_ctx_tag}"
         if edges:
             print(f"\n{hdr}")
             for e in edges:
                 print(e)
         else:
             print(f"\n{hdr}  -- no edge >= 2%")
+        _game_short = f"{away_abbr}@{home_abbr}"
+        for b in ALL_BETS:
+            if b["game"] == "":
+                b["game"] = _game_short
+        # Tag collected bets with this game's label
+        _game_short = f"{away_abbr}@{home_abbr}"
+        for b in ALL_BETS:
+            if b["game"] == "":
+                b["game"] = _game_short
 
     print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
@@ -698,9 +744,72 @@ if __name__ == "__main__":
     nba_data = _dedup_today(nba_data)
     print(f"  Filtered to {len(mlb_data)} MLB / {len(nba_data)} NBA unstarted games")
 
-    analyze_mlb(mlb_data, team_projs=mlb_team_projs)
-    analyze_nba(nba_data, team_projs=nba_team_projs)
+    # Load context verdicts if available
+    ctx_verdicts = {}
+    try:
+        import pathlib as _pl, json as _json
+        _ctx_path = _pl.Path(__file__).parent / "data" / "context_verdicts.json"
+        if _ctx_path.exists():
+            for v in _json.loads(_ctx_path.read_text(encoding="utf-8")):
+                ctx_verdicts[v["game"].lower()] = v
+            if ctx_verdicts:
+                print(f"  [ctx] {len(ctx_verdicts)} verdicts loaded")
+    except Exception:
+        pass
 
+    analyze_mlb(mlb_data, team_projs=mlb_team_projs, ctx_verdicts=ctx_verdicts)
+    analyze_nba(nba_data, team_projs=nba_team_projs, ctx_verdicts=ctx_verdicts)
+
+def print_ranked_table(bets):
+    """Print all qualifying bets sorted by edge desc as a box-drawing table."""
+    if not bets:
+        return
+    bets_sorted = sorted(bets, key=lambda b: b["edge"], reverse=True)
+
+    def prob_to_american(p):
+        if p <= 0 or p >= 1:
+            return "N/A"
+        if p >= 0.5:
+            return f"-{round(p / (1-p) * 100)}"
+        else:
+            return f"+{round((1-p) / p * 100)}"
+
+    # Build rows
+    rows = []
+    for b in bets_sorted:
+        game    = b["game"]
+        label   = b["label"]
+        pick    = f"{game} {label}"[:22]
+        size    = f"{b['stake']:.2f}u"
+        fair_p  = f"{b['model']*100:.1f}%"
+        fair_o  = prob_to_american(b["model"])
+        mkt_o   = f"{b['odds']:+d}" if isinstance(b['odds'], int) else (f"{b['odds']:+.0f}" if b['odds'] else "N/A")
+        edge    = f"+{b['edge']*100:.1f}pp"
+        rows.append((pick, size, fair_p, fair_o, mkt_o, edge))
+
+    # Column widths
+    hdrs = ["Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Edge"]
+    widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(hdrs)]
+
+    def row_str(cells, sep="│"):
+        return sep + sep.join(f" {c:<{widths[i]}} " for i, c in enumerate(cells)) + sep
+
+    top    = "┌" + "┬".join("─" * (w+2) for w in widths) + "┐"
+    mid    = "├" + "┼".join("─" * (w+2) for w in widths) + "┤"
+    bot    = "└" + "┴".join("─" * (w+2) for w in widths) + "┘"
+
+    print("\n" + "="*72)
+    print("QUALIFYING BETS  (ranked by edge)")
+    print("="*72)
+    print(top)
+    print(row_str(hdrs))
+    for i, r in enumerate(rows):
+        print(mid)
+        print(row_str(r))
+    print(bot)
+    print(f"  {len(bets_sorted)} qualifying bet(s)  |  total exposure: {sum(b['stake'] for b in bets_sorted):.2f}u")
+
+    print_ranked_table(ALL_BETS)
     print("\n\nLegend: '🔥 STRONG' >= 8%  |  '*** BET' >= 4%  |  positive only  |  stake = f* x 10 x 0.75 market mult (min 0.25u, max 2.0u)")
     print("Distributions:")
     print("  MLB  : ML = NB direct sum (r=3.548) | team totals = NB | total/spread/F5 = Normal")
