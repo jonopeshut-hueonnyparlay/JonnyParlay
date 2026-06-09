@@ -112,7 +112,7 @@ def test_manual_row_whitespace_only_counts_as_missing():
 
 def test_post_nrfi_bonus_routes_mlb_to_shadow_log(tmp_path, monkeypatch):
     """MLB went live 2026-05-20: MLB bonuses now go to pick_log.csv (main log)
-    and post to Discord. WNBA still goes to shadow log.
+    and post to Discord. (WNBA also live as of 2026-06-09 — no shadow sports remain.)
     """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -179,8 +179,9 @@ def test_post_nrfi_bonus_log_path_helper_routes_by_sport():
     # MLB is live (2026-05-20) → main log
     assert pnb._log_path_for("MLB") == pnb.MAIN_LOG
     assert pnb._log_path_for("mlb") == pnb.MAIN_LOG
-    # WNBA still shadow → shadow log
-    assert pnb._log_path_for("WNBA") == pnb.SHADOW_LOGS["WNBA"]
+    # WNBA live (2026-06-09) → main log
+    assert pnb._log_path_for("WNBA") == pnb.MAIN_LOG
+    assert pnb.SHADOW_LOGS == {}
 
 
 if __name__ == "__main__":

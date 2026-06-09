@@ -83,7 +83,6 @@ from paths import (  # noqa: E402
     PICK_LOG_PATH as _PICK_LOG_PATH_P,
     PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
-    PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
     PICK_LOG_SHADOW_STATS_PATH as _PICK_LOG_SHADOW_STATS_PATH_P,
     PICK_LOG_BLOCKED_PATH as _PICK_LOG_BLOCKED_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
@@ -235,7 +234,9 @@ BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636
 
 # Shadow sports — evaluated + logged internally but NEVER posted to Discord.
 # Remove a sport from this set once it's proven profitable over a meaningful sample.
-SHADOW_SPORTS = {"WNBA"}
+# WNBA went live 2026-06-09 (gate: ~100 graded picks post-dampener). Add a sport
+# here (plus a SHADOW_LOG_PATHS entry) to re-shadow it.
+SHADOW_SPORTS = set()
 
 # Shadow stats — new markets with zero live track record. Picks are scored,
 # sized, and logged to pick_log_shadow_stats.csv (NOT main pick_log.csv) but
@@ -285,10 +286,9 @@ _BLOCKED_LOG_COLS = [
 ]
 
 # Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
-# MLB went live 2026-05-20 — removed from shadow paths.
-SHADOW_LOG_PATHS = {
-    "WNBA": str(_PICK_LOG_WNBA_PATH_P),
-}
+# MLB went live 2026-05-20, WNBA 2026-06-09 — removed from shadow paths.
+# Legacy data/pick_log_wnba.csv is still graded (grade_picks.py) and CLV-watched.
+SHADOW_LOG_PATHS = {}
 
 # Per-sport alt spread market names for the parlay builder
 SPORT_ALT_MARKET = {
@@ -424,7 +424,7 @@ NB_R = {
 NB_R_WNBA = {
     "AST": 11.37,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
     "REB": 10.74,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
-    "3PM": 1.340,  # calibrated 2026-06-05: 13,725 rows (min>=8), var/mu=1.709, zero_rate=0.503
+    "3PM": 1.342,  # recalibrated 2026-06-09 (go-live): 13,970 rows (min>=8), var/mu=1.708, zero_rate=0.502
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
@@ -623,7 +623,7 @@ GAME_SIGMA = {
     # (total ~18.5; spread/ml ~12.5 per around-the-spread literature; team ~11.0).
     # Prior values (12/12/9/12) were never calibrated — total was ~40% too narrow.
     "NBA":  {"total": 18.5, "spread": 12.5, "team": 11.0,  "ml": 12.5},
-    "WNBA": {"total": 17.459, "spread": 10.0, "team": 11.271, "ml": 10.0},  # total+team calibrated 2026-06-05 from 837 games
+    "WNBA": {"total": 17.424, "spread": 10.0, "team": 11.253, "ml": 10.0},  # total+team recalibrated 2026-06-09 (go-live) from 851 games
     "NHL":  {"total": 2.311, "spread": 2.614, "team": 1.744, "ml": 2.614},
     "MLB":  {"total": 4.6,  "spread": 4.2,  "team": 3.0,   "ml": 4.2},  # interim per Plan 10 §O (2026-06-07): total below independence floor (team×√2≈4.4); ml=spread (NHL precedent). Recalibrate from 8095-game DB like NBA/NHL.
 }
@@ -790,7 +790,8 @@ KELLY_MARKET_MULT = {
     ("NHL", "SOG", None):        0.50,
     ("WNBA", "PTS", None):       1.00,
     ("WNBA", "AST", "over"):     0.10,
-    ("WNBA", "REB", "under"):    0.25,
+    ("WNBA", "REB", None):       0.10,  # 35.3% shadow WR (6W/11L) — pinned to 0.25u floor at go-live 2026-06-09, not excluded; revisit at n>=50
+
 }
 DEFAULT_MARKET_MULT = 0.75
 
@@ -6179,6 +6180,11 @@ def _passes_killshot_v2_gate(pick):
     Returns (True, "") on pass, (False, reason) on fail.
     Manual promotes bypass score/stat but NOT the odds/wp checks.
     """
+    # WNBA excluded from KILLSHOT until CLV history matures (pre-registered at
+    # go-live 2026-06-09 — TIER_FINDINGS.md / WNBA_RESEARCH_FINDINGS.md; was
+    # implicitly excluded by the SHADOW_SPORTS split pre-go-live).
+    if pick.get("sport") == "WNBA":
+        return False, "WNBA excluded from KILLSHOT (insufficient CLV history)"
     try:
         score = float(pick.get("pick_score", 0))
     except (TypeError, ValueError):

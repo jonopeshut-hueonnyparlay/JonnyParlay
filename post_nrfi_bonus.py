@@ -49,10 +49,9 @@ DATA_DIR = Path(__file__).parent / "data"
 MAIN_LOG: Path = DATA_DIR / "pick_log.csv"
 
 # Shadow logs: sports not yet at go-live post here instead of the main log
-# and Discord posting is suppressed.  MLB is live as of 2026-05-20.
-SHADOW_LOGS: dict[str, Path] = {
-    "WNBA": DATA_DIR / "pick_log_wnba.csv",
-}
+# and Discord posting is suppressed.  MLB live 2026-05-20, WNBA live 2026-06-09
+# — no shadow sports remain.
+SHADOW_LOGS: dict[str, Path] = {}
 
 _SHADOW_SPORTS: frozenset[str] = frozenset(SHADOW_LOGS.keys())
 
@@ -60,8 +59,8 @@ _SHADOW_SPORTS: frozenset[str] = frozenset(SHADOW_LOGS.keys())
 def _log_path_for(sport: str) -> Path:
     """Route a sport to the correct pick_log CSV path.
 
-    NBA/MLB (and any other live sport) → MAIN_LOG.
-    Shadow sports (WNBA)               → SHADOW_LOGS[sport].
+    Live sports (all, since WNBA go-live 2026-06-09) → MAIN_LOG.
+    Any future shadow sport                          → SHADOW_LOGS[sport].
     """
     return SHADOW_LOGS.get(sport.upper(), MAIN_LOG)
 

@@ -82,7 +82,7 @@ DISCORD_GUARD_FILE         = str(_DISCORD_GUARD_FILE_P)
 LOG_FILE_PATH        = str(_LOG_FILE_PATH_P)
 
 # Shadow sports: grade silently, no Discord post
-SHADOW_SPORTS = {"WNBA"}  # MLB went live 2026-05-20; removed from shadow
+SHADOW_SPORTS = set()  # MLB live 2026-05-20; WNBA live 2026-06-09 — no shadow sports remain
 
 BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636209221566625/JonnyParlaylogoRedBlack.png"
 

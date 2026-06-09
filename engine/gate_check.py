@@ -19,9 +19,6 @@ DATA = ROOT / "data"
 
 PICK_LOG        = DATA / "pick_log.csv"
 PICK_LOG_CUSTOM = DATA / "pick_log_custom.csv"
-PICK_LOG_WNBA   = DATA / "pick_log_wnba.csv"
-
-WNBA_DAMPENER_DATE = "2026-06-03"
 
 COMBO_STATS = {"RA", "PRA", "PR", "PA"}
 
@@ -96,19 +93,6 @@ def count_edgemodel_clv(rows: list[dict]) -> int:
     return count
 
 
-def count_wnba_graded(rows: list[dict]) -> int:
-    """Graded WNBA picks (pick_score>0) on or after dampener date.
-
-    score=0 rows are schema-version artifacts, not real picks.
-    """
-    return sum(
-        1 for r in rows
-        if r.get("date", "") >= WNBA_DAMPENER_DATE
-        and r.get("result", "").strip().upper() in {"W", "L"}
-        and float(r.get("pick_score", 0) or 0) > 0
-    )
-
-
 # ---------------------------------------------------------------------------
 # Gate definitions
 # ---------------------------------------------------------------------------
@@ -118,7 +102,7 @@ GATES = [
     ("H3 Platt refit",     count_h3_platt,      100, "graded over_p_raw rows (all sports)"),
     ("MLB Platt refit",    count_mlb_platt,      100, "graded MLB over_p_raw rows"),
     ("EdgeModel CLV",      count_edgemodel_clv,  100, "CLV rows in pick_log_custom.csv"),
-    ("WNBA go-live",       count_wnba_graded,    100, "graded picks (score>0) post-2026-06-03"),
+    # WNBA go-live gate CLOSED 2026-06-09 — went live at 98/100 (user-approved).
     ("SGP Platt calib",    count_sgp_platt,      100, "scored SGP slips"),
     ("Combo Platt calib",  count_combo_platt,    100, "scored RA/PRA/PR/PA picks"),
 ]
@@ -139,7 +123,6 @@ def _status(count: int, target: int) -> str:
 def main() -> None:
     main_rows   = _read_csv(PICK_LOG)
     custom_rows = _read_csv(PICK_LOG_CUSTOM)
-    wnba_rows   = _read_csv(PICK_LOG_WNBA)
 
     # Route the right row-set to each gate counter
     row_map = {
@@ -148,7 +131,6 @@ def main() -> None:
         count_sgp_platt:    main_rows,
         count_combo_platt:  main_rows,
         count_edgemodel_clv: custom_rows,
-        count_wnba_graded:  wnba_rows,
     }
 
     results = []

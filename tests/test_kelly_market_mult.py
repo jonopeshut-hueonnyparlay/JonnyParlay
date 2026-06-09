@@ -55,8 +55,10 @@ def test_wnba_pts_no_direction():
     assert get_market_mult("WNBA", "PTS", "under") == 1.00
 
 
-def test_wnba_reb_under():
-    assert get_market_mult("WNBA", "REB", "under") == 0.25
+def test_wnba_reb_pinned():
+    """WNBA REB pinned to 0.10 both directions at go-live 2026-06-09 (None-keyed)."""
+    assert get_market_mult("WNBA", "REB", "under") == 0.10
+    assert get_market_mult("WNBA", "REB", "over") == 0.10
 
 
 def test_mlb_outs_under():
