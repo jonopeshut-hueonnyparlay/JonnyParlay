@@ -6,9 +6,28 @@ Distributions:
   MLB moneyline   : NB direct probability sum (home wins)
   All other markets: Normal (same GAME_SIGMA values as run_picks.py)
 """
-import math, requests, sys
+import csv, datetime, math, os, requests, sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
+
+try:
+    from filelock import FileLock as _FileLock
+    _HAVE_FILELOCK = True
+except ImportError:
+    _HAVE_FILELOCK = False
+
+_ENGINE_DIR = Path(__file__).parent / "engine"
+if str(_ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_DIR))
+try:
+    from pick_log_schema import CANONICAL_HEADER as _CANONICAL_HEADER
+    from paths import PICK_LOG_GAME_LINES_PATH as _PICK_LOG_GL_PATH
+    _HAVE_SCHEMA = True
+except ImportError:
+    _HAVE_SCHEMA = False
+    _CANONICAL_HEADER = []
+    _PICK_LOG_GL_PATH = Path(__file__).parent / "data" / "pick_log_game_lines.csv"
 
 API_KEY   = "adb07e9742307895c8d7f14264f52aee"
 BASE      = "https://api.the-odds-api.com/v4/sports"
@@ -275,6 +294,7 @@ def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25, gam
         "odds":   odds,
         "edge":   edge,
         "book":   book,
+        "line":   line,
     })
     return "".join(parts)
 
@@ -514,8 +534,11 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
         _game_short = f"{away_abbr}@{home_abbr}"
         for b in ALL_BETS:
             if b["game"] == "":
-                b["game"] = _game_short
-                b["ctx"]  = _ctx_token
+                b["game"]      = _game_short
+                b["ctx"]       = _ctx_token
+                b["away_abbr"] = away_abbr
+                b["home_abbr"] = home_abbr
+                b["sport"]     = "MLB"
 
     print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
@@ -647,17 +670,15 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
                 print(e)
         else:
             print(f"\n{hdr}  -- no edge >= 4%")
-        _game_short = f"{away_abbr}@{home_abbr}"
-        for b in ALL_BETS:
-            if b["game"] == "":
-                b["game"] = _game_short
-                b["ctx"]  = _ctx_token
         # Tag collected bets with this game's label
         _game_short = f"{away_abbr}@{home_abbr}"
         for b in ALL_BETS:
             if b["game"] == "":
-                b["game"] = _game_short
-                b["ctx"]  = _ctx_token
+                b["game"]      = _game_short
+                b["ctx"]       = _ctx_token
+                b["away_abbr"] = away_abbr
+                b["home_abbr"] = home_abbr
+                b["sport"]     = "NBA"
 
     print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
@@ -724,16 +745,16 @@ def print_ranked_table(bets):
     show_ctx = any(b.get("ctx") for b in bets_sorted)
 
     rows = []
-    for b in bets_sorted:
+    for i, b in enumerate(bets_sorted):
         pick = f"{b['game']} {b['label']}"[:32]
         mkt  = f"{b['odds']:+d}" if isinstance(b['odds'], int) else "N/A"
-        cells = [pick, f"{b['stake']:.2f}u", f"{b['model']*100:.1f}%",
+        cells = [str(i + 1), pick, f"{b['stake']:.2f}u", f"{b['model']*100:.1f}%",
                  p2a(b["model"]), mkt, b.get("book","") or "-", f"+{b['edge']*100:.1f}pp"]
         if show_ctx:
             cells.append(b.get("ctx","") or "-")
         rows.append(tuple(cells))
 
-    hdrs   = ["Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Book", "Edge"]
+    hdrs   = ["#", "Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Book", "Edge"]
     if show_ctx:
         hdrs.append("CTX")
     widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(hdrs)]
@@ -754,7 +775,91 @@ def print_ranked_table(bets):
     print(f"  {len(bets_sorted)} bet(s)  |  total: {total:.2f}u")
     if total > 8.0:
         print(f"  ⚠ TOTAL EXPOSURE {total:.1f}u EXCEEDS MLB DAILY CAP (8.0u)")
+    return bets_sorted
 
+
+
+
+def _parse_label_meta(label):
+    """Return (stat, direction) from edge_str label string."""
+    s = label.strip().upper()
+    if s.startswith("F5 TOTAL"):  return "F5_TOTAL",   "over" if "OVER" in s else "under"
+    if s.startswith("F5 ML"):     return "F5_ML",      "home" if "HOME" in s else "away"
+    if s.startswith("F5 SPREAD"): return "F5_SPREAD",  "home" if "HOME" in s else "away"
+    if s.startswith("TT"):        return "TEAM_TOTAL",  "over" if "OVER" in s else "under"
+    if s.startswith("ML"):        return "ML",          "home" if "HOME" in s else "away"
+    if s.startswith("SPREAD"):    return "SPREAD",      "home" if "HOME" in s else "away"
+    if s.startswith("TOTAL"):     return "TOTAL",       "over" if "OVER" in s else "under"
+    return "TOTAL", "over"
+
+
+@contextmanager
+def _gl_lock(log_path):
+    if _HAVE_FILELOCK:
+        with _FileLock(str(log_path) + ".lock", timeout=30):
+            yield
+    else:
+        yield
+
+
+def _write_game_line_bets(bets, log_path):
+    """Write selected bets to pick_log_game_lines.csv using the 29-col schema."""
+    if not _HAVE_SCHEMA or not _CANONICAL_HEADER:
+        print("  [warn] pick_log_schema not available -- skipping log.")
+        return 0
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not log_path.exists() or log_path.stat().st_size == 0
+    today = datetime.date.today().isoformat()
+    now   = datetime.datetime.now().strftime("%H:%M:%S")
+    with _gl_lock(log_path):
+        with open(log_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=_CANONICAL_HEADER,
+                                    extrasaction="ignore", restval="")
+            if write_header:
+                writer.writeheader()
+            for b in bets:
+                stat, direction = _parse_label_meta(b.get("label", ""))
+                game_tag  = b.get("game", "")
+                away_abbr = b.get("away_abbr", game_tag.split("@")[0] if "@" in game_tag else "")
+                home_abbr = b.get("home_abbr", game_tag.split("@")[1] if "@" in game_tag else "")
+                model_p   = b["model"]
+                edge      = b["edge"]
+                row = {
+                    "date":            today,
+                    "run_time":        now,
+                    "run_type":        "game_line",
+                    "sport":           b.get("sport", ""),
+                    "player":          game_tag,
+                    "team":            home_abbr,
+                    "stat":            stat,
+                    "line":            b.get("line", ""),
+                    "direction":       direction,
+                    "proj":            f"{model_p:.4f}",
+                    "win_prob":        f"{model_p:.4f}",
+                    "edge":            f"{edge:.4f}",
+                    "odds":            b.get("odds", ""),
+                    "book":            b.get("book", ""),
+                    "tier":            "T2",
+                    "pick_score":      round(edge * 1000),
+                    "size":            f"{b["stake"]:.2f}",
+                    "game":            game_tag,
+                    "mode":            "Default",
+                    "result":          "",
+                    "closing_odds":    "",
+                    "clv":             "",
+                    "card_slot":       "GL",
+                    "is_home":         1 if direction == "home" else 0,
+                    "context_verdict": b.get("ctx", ""),
+                    "context_reason":  "",
+                    "context_score":   "",
+                    "legs":            1,
+                    "over_p_raw":      f"{model_p:.4f}",
+                }
+                writer.writerow(row)
+            f.flush()
+            os.fsync(f.fileno())
+    return len(bets)
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -814,7 +919,26 @@ if __name__ == "__main__":
     analyze_mlb(mlb_data, team_projs=mlb_team_projs, ctx_verdicts=ctx_verdicts)
     analyze_nba(nba_data, team_projs=nba_team_projs, ctx_verdicts=ctx_verdicts)
 
-    print_ranked_table(ALL_BETS)
+    bets_sorted = print_ranked_table(ALL_BETS)
+    print()
+    if bets_sorted:
+        raw = input("Log bets? Enter row numbers (e.g. 1,3,5), 'all', or press Enter to skip: ").strip()
+        if raw.lower() == "all":
+            selected = bets_sorted
+        elif raw:
+            idxs = []
+            for tok in raw.split(","):
+                tok = tok.strip()
+                if tok.isdigit() and 1 <= int(tok) <= len(bets_sorted):
+                    idxs.append(int(tok) - 1)
+                else:
+                    print(f"  [warn] invalid row '{tok}' -- skipped")
+            selected = [bets_sorted[i] for i in idxs]
+        else:
+            selected = []
+        if selected:
+            n = _write_game_line_bets(selected, _PICK_LOG_GL_PATH)
+            print(f"  Logged {n} bet(s) to {Path(_PICK_LOG_GL_PATH).name}")
     print()
     print("Legend: STRONG>=8%  |  ***BET>=4%  |  positive edge only  |  stake=f*x10x0.75mult (min 0.25u, max 2.0u)")
     print("MLB: ML=NB(r=3.548) | TT=NB | spread/total/F5=Normal  sigma: total=4.6/spread=4.2  F5=2.65/2.70  scalar=0.540")
