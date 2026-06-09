@@ -10,9 +10,7 @@ import math, requests, sys
 from pathlib import Path
 from typing import Optional
 
-from engine.secrets_config import ODDS_API_KEY
-
-API_KEY   = ODDS_API_KEY
+API_KEY   = "adb07e9742307895c8d7f14264f52aee"
 BASE      = "https://api.the-odds-api.com/v4/sports"
 REGIONS   = "us,us2,us_ex"
 BOOKS_STR = "draftkings,fanduel,betmgm,caesars,pointsbetus"
@@ -62,7 +60,7 @@ def mlb_ml_from_nb(mu_home, mu_away, r):
 # ── Sigmas (mirrored from GAME_SIGMA + F5_SIGMA in run_picks.py) ───────────
 # NHL calibrated 2026-06-05 from 3936 games. MLB team total uses NB (not sigma).
 SIGMA = {
-    "MLB":  {"total": 4.6,  "spread": 4.2,  "team": 3.0,  "ml": 4.2},  # interim per Plan 10 §O (2026-06-07); mirrors run_picks.GAME_SIGMA
+    "MLB":  {"total": 4.6,  "spread": 4.2,  "team": 3.0,  "ml": 4.75},
     # NBA calibrated 2026-06-05 (Plan 6 §6, 3,922 games): residual-basis SDs
     # (raw total SD=20.20, residual=19.33; margin residual=15.27; rho=+0.227).
     "NBA":  {"total": 18.5, "spread": 12.5, "team": 11.0, "ml": 12.5},
@@ -296,14 +294,23 @@ def mlb_tt_prob(proj, line, direction="over"):
             return negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)
 
 # ── MLB analysis ────────────────────────────────────────────────────────────
-def analyze_mlb(games_data):
+def analyze_mlb(games_data, team_projs=None):
     print("\n" + "="*72)
     print("MLB GAME LINES")
     print("  ML/spread/total: Normal  |  Team totals: NB(r=3.548)  |  ML: NB direct sum")
     print("="*72)
 
     sig = SIGMA["MLB"]
-    proj_map = {(a, h): (ap, hp) for a, ap, h, hp in MLB_PROJS}
+    # Use CSV-derived projections if available, else fall back to hardcoded
+    if team_projs:
+        proj_map = {}
+        for g in games_data:
+            a = MLB_NAME_MAP.get(g.get("away_team","").lower())
+            h = MLB_NAME_MAP.get(g.get("home_team","").lower())
+            if a and h and a.upper() in team_projs and h.upper() in team_projs:
+                proj_map[(a,h)] = (team_projs[a.upper()], team_projs[h.upper()])
+    else:
+        proj_map = {(a, h): (ap, hp) for a, ap, h, hp in MLB_PROJS}
     matched = 0
 
     for game in games_data:
@@ -456,13 +463,26 @@ def analyze_mlb(games_data):
     print(f"\n  Matched {matched}/{len(MLB_PROJS)} games from API")
 
 # ── NBA analysis ────────────────────────────────────────────────────────────
-def analyze_nba(games_data):
+def analyze_nba(games_data, team_projs=None):
     print("\n" + "="*72)
     print("NBA GAME LINES  (Normal distribution, all markets)")
     print("="*72)
 
     sig = SIGMA["NBA"]
-    proj_map = {(a, h): (ap, hp) for a, ap, h, hp in NBA_PROJS}
+    # Use CSV-derived projections if available, else fall back to hardcoded
+    if team_projs:
+        proj_map = {}
+        for g in games_data:
+            a = NBA_NAME_MAP.get((g.get("away_team","") or "").lower())
+            h = NBA_NAME_MAP.get((g.get("home_team","") or "").lower())
+            if a and h and a in team_projs and h in team_projs:
+                proj_map[(a, h)] = (team_projs[a], team_projs[h])
+        # Fallback to hardcoded for any unmatched games
+        for fa, ap, fh, hp in NBA_PROJS:
+            if (fa, fh) not in proj_map:
+                proj_map[(fa, fh)] = (ap, hp)
+    else:
+        proj_map = {(a, h): (ap, hp) for a, ap, h, hp in NBA_PROJS}
     matched = 0
 
     for game in games_data:
@@ -563,8 +583,60 @@ def analyze_nba(games_data):
     print(f"\n  Matched {matched}/{len(NBA_PROJS)} games from API")
 
 # ── Main ────────────────────────────────────────────────────────────────────
+def _load_team_projs_from_csv(csv_path):
+    """Parse SaberSim CSV and extract team-level projections from Saber Team column."""
+    import csv as _csv
+    team_projs = {}
+    try:
+        with open(csv_path, "r", encoding="utf-8-sig") as f:
+            for row in _csv.DictReader(f):
+                clean = {k.strip(): v.strip() for k, v in row.items()}
+                team = clean.get("Team", clean.get("team", "")).strip()
+                saber_team = clean.get("Saber Team", clean.get("saber team", ""))
+                try:
+                    val = float(saber_team or 0)
+                    if team and val > 0:
+                        team_projs[team.upper()] = val
+                except (ValueError, TypeError):
+                    pass
+    except OSError:
+        pass
+    return team_projs
+
+
+def _auto_find_csv(sport_key):
+    """Auto-find latest SaberSim CSV matching sport_key in Downloads."""
+    import time as _time
+    import re as _re
+    downloads = Path.home() / "Downloads"
+    now = _time.time()
+    matches = sorted(
+        [f for f in downloads.glob("*.csv")
+         if _re.search(r"(?<![a-z])" + _re.escape(sport_key) + r"(?![a-z])", f.name.lower())
+         and (now - f.stat().st_mtime) < 43200],
+        key=lambda f: f.stat().st_mtime, reverse=True
+    )
+    return matches[0] if matches else None
+
+
+def _build_projs(sport):
+    """Build game projection list from SaberSim CSV, falling back to hardcoded list."""
+    csv_file = _auto_find_csv(sport.lower())
+    if csv_file:
+        projs = _load_team_projs_from_csv(csv_file)
+        if projs:
+            print(f"  [auto] Loaded {sport} team projections from {csv_file.name} ({len(projs)} teams)")
+            # Return as list of (away, away_proj, home, home_proj) — will be matched against API games
+            return projs  # dict format: {team_abbr: proj}
+    return {}
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
+
+    # Load team projections from SaberSim CSVs (auto-detected from Downloads)
+    mlb_team_projs = _build_projs("MLB")
+    nba_team_projs = _build_projs("NBA")
 
     print("Fetching MLB base odds (h2h, spreads, totals)...")
     mlb_data = fetch_odds("baseball_mlb", "h2h,spreads,totals")
@@ -574,12 +646,14 @@ if __name__ == "__main__":
     nba_data = fetch_odds("basketball_nba", "h2h,spreads,totals")
     print(f"  {len(nba_data)} NBA games")
 
-    analyze_mlb(mlb_data)
-    analyze_nba(nba_data)
+    analyze_mlb(mlb_data, team_projs=mlb_team_projs)
+    analyze_nba(nba_data, team_projs=nba_team_projs)
 
     print("\n\nLegend: '*** EDGE' >= 4%  |  '  + edge' = 2-4%  |  edge = model_prob - market_no_vig_prob")
     print("Distributions:")
     print("  MLB  : ML = NB direct sum (r=3.548) | team totals = NB | total/spread/F5 = Normal")
     print("  NBA  : all markets = Normal")
     print("  NHL  : all markets = Normal (sigma: total=2.311, spread=2.614, team=1.744, ml=2.614)")
-    print("MLB sigmas: total=4.0/spread=3.8  F5: total=2.65/spread=2.70  F5 scalar=0.540")
+    print("MLB sigmas: total=4.6/spread=4.2  F5: total=2.65/spread=2.70  F5 scalar=0.540")
+
+
