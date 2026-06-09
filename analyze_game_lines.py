@@ -253,19 +253,44 @@ def team_total_odds(game, abbr_list):
     return result
 
 # ── Edge formatting ────────────────────────────────────────────────────────
-def edge_str(model_p, market_p, label, line=None, odds=None):
+def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25):
     edge = model_p - market_p
     # Only show positive edges >= 4%
     if edge < 0.04:
         return None
     marker = "🔥 STRONG" if edge >= 0.08 else "*** BET  "
+    stake = kelly_stake(model_p, odds) if odds is not None else min_stake
     parts = [f"  {marker}  {label:<32}"]
     if line is not None:
         parts.append(f" line={line}")
     if odds is not None:
         parts.append(f" odds={odds:+d}" if isinstance(odds, int) else f" odds={odds}")
-    parts.append(f"  model={model_p:.3f}  mktNV={market_p:.3f}  edge={edge:+.3f}")
+    parts.append(f"  {stake:.2f}u  model={model_p:.3f}  mktNV={market_p:.3f}  edge={edge:+.3f}")
     return "".join(parts)
+
+
+GAME_LINE_KELLY_FRACTION = 10.0  # Bigger than props (6.0) to produce usable stakes
+                                  # on game lines where WP clusters near 50-55%
+GAME_LINE_MARKET_MULT    = 0.75   # Game lines less reliable than props — mirrors run_picks DEFAULT_MARKET_MULT
+
+def kelly_stake(model_p, odds_american, min_stake=0.25, max_stake=2.0):
+    """Kelly stake sizing for game lines.
+    Formula: f* = (b*p - q) / b  then  units = f* * KELLY_FRACTION * MARKET_MULT
+    Matches run_picks.py convention: units = f_star * fraction (no ×100).
+    Uses GAME_LINE_KELLY_FRACTION=10.0 (bigger than props\'s 6.0) to produce
+    usable stakes at typical 50-55% game-line win probabilities.
+    """
+    if odds_american >= 0:
+        b = odds_american / 100.0
+    else:
+        b = 100.0 / abs(odds_american)
+    q = 1.0 - model_p
+    f_star = (b * model_p - q) / b
+    if f_star <= 0:
+        return 0.0
+    raw = f_star * GAME_LINE_KELLY_FRACTION * GAME_LINE_MARKET_MULT
+    rounded = round(raw * 4) / 4
+    return max(min_stake, min(max_stake, rounded))
 
 def find_outcome(outcomes, name_map, abbr):
     for o in outcomes:
@@ -676,7 +701,7 @@ if __name__ == "__main__":
     analyze_mlb(mlb_data, team_projs=mlb_team_projs)
     analyze_nba(nba_data, team_projs=nba_team_projs)
 
-    print("\n\nLegend: '🔥 STRONG' >= 8% edge  |  '*** BET' >= 4% edge  |  positive only  |  edge = model_prob - market_no_vig_prob")
+    print("\n\nLegend: '🔥 STRONG' >= 8%  |  '*** BET' >= 4%  |  positive only  |  stake = 1/6 Kelly (min 0.25u, max 2.0u)")
     print("Distributions:")
     print("  MLB  : ML = NB direct sum (r=3.548) | team totals = NB | total/spread/F5 = Normal")
     print("  NBA  : all markets = Normal")
