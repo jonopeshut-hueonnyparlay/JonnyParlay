@@ -72,6 +72,7 @@ from pick_log_schema import write_schema_sidecar as _write_schema_sidecar  # noq
 from paths import (  # noqa: E402
     DATA_DIR as _PATHS_DATA_DIR,
     PICK_LOG_PATH as _PATHS_PICK_LOG_PATH,
+    PICK_LOG_GAME_LINES_PATH as _PATHS_PICK_LOG_GAME_LINES_PATH,
 )
 
 # Shared HTTP helpers (audit M-16). Canonical User-Agent on every outbound
@@ -155,6 +156,67 @@ GAME_LINE_MARKET = {
 # Stats we skip (no standard market coverage)
 SKIP_STATS = {"NRFI", "YRFI", "TEAM_TOTAL", "GOLF_WIN", "PARLAY"}
 
+# ── Game-line CLV (pick_log_game_lines.csv) ───────────────────────────────────
+# Game-line bets are logged by analyze_game_lines.py with a shape distinct from
+# the prop/standard logs: `game`/`player` hold an abbreviated tag ("BOS@NYY"),
+# `team` holds the home abbrev, `direction` is home/away (spread/ML) or
+# over/under (totals), and the F5 stats refer to the first-5-innings markets.
+# This mapping is intentionally SEPARATE from GAME_LINE_MARKET above (which
+# serves the prop logs and maps F5 → full-game markets) so the prop CLV path is
+# never touched. F5 stats use the correct *_1st_5_innings market keys here.
+GAME_LINE_CLV_MARKET = {
+    "TOTAL":     "totals",
+    "SPREAD":    "spreads",
+    "ML":        "h2h",
+    "F5_TOTAL":  "totals_1st_5_innings",
+    "F5_SPREAD": "spreads_1st_5_innings",
+    "F5_ML":     "h2h_1st_5_innings",
+    # TEAM_TOTAL: deferred — needs team-filtered matching in team_totals market
+}
+
+# Full team name → abbreviation, MIRRORING analyze_game_lines.py's
+# MLB_NAME_MAP / NBA_NAME_MAP (the only sports the game-line analyzer produces
+# today). Matching MUST use the writer's maps so an Odds API full name resolves
+# to the SAME abbreviation stored in the log — run_picks.TEAM_ABBREV diverges
+# (Wizards WSH≠WAS, Athletics ATH≠OAK) and is a heavy import for the daemon.
+_GL_NAME_TO_ABBR: dict[str, dict[str, str]] = {
+    "MLB": {
+        "boston red sox": "BOS", "new york yankees": "NYY",
+        "baltimore orioles": "BAL", "toronto blue jays": "TOR",
+        "tampa bay rays": "TB", "miami marlins": "MIA",
+        "pittsburgh pirates": "PIT", "atlanta braves": "ATL",
+        "oakland athletics": "ATH", "athletics": "ATH",
+        "sacramento athletics": "ATH", "houston astros": "HOU",
+        "cleveland guardians": "CLE", "texas rangers": "TEX",
+        "kansas city royals": "KC", "minnesota twins": "MIN",
+        "cincinnati reds": "CIN", "st. louis cardinals": "STL",
+        "milwaukee brewers": "MIL", "colorado rockies": "COL",
+        "washington nationals": "WSH", "arizona diamondbacks": "ARI",
+        "new york mets": "NYM", "san diego padres": "SD",
+        "los angeles angels": "LAA", "los angeles dodgers": "LAD",
+        "chicago white sox": "CWS", "chicago cubs": "CHC",
+        "detroit tigers": "DET", "seattle mariners": "SEA",
+        "san francisco giants": "SF", "philadelphia phillies": "PHI",
+    },
+    "NBA": {
+        "new york knicks": "NYK", "san antonio spurs": "SAS",
+        "boston celtics": "BOS", "miami heat": "MIA",
+        "golden state warriors": "GSW", "los angeles lakers": "LAL",
+        "denver nuggets": "DEN", "oklahoma city thunder": "OKC",
+        "minnesota timberwolves": "MIN", "indiana pacers": "IND",
+        "cleveland cavaliers": "CLE", "detroit pistons": "DET",
+        "phoenix suns": "PHX", "dallas mavericks": "DAL",
+        "houston rockets": "HOU", "memphis grizzlies": "MEM",
+        "new orleans pelicans": "NOP", "chicago bulls": "CHI",
+        "atlanta hawks": "ATL", "milwaukee bucks": "MIL",
+        "toronto raptors": "TOR", "charlotte hornets": "CHA",
+        "orlando magic": "ORL", "washington wizards": "WSH",
+        "brooklyn nets": "BKN", "philadelphia 76ers": "PHI",
+        "portland trail blazers": "POR", "utah jazz": "UTA",
+        "sacramento kings": "SAC", "los angeles clippers": "LAC",
+    },
+}
+
 # Capture window: T-45 min to T+3 min. Player prop markets are pulled from the
 # Odds API feed at tip-off, and commence_time can shift backward by up to 60 min
 # as the API reconciles scheduled vs actual start. Widening the pre-tip window
@@ -223,6 +285,10 @@ CUSTOM_SHADOW_LOG = DATA_DIR / "pick_log_custom.csv"
 ENABLE_CUSTOM_CLV = True  # flip to False to pause CLV capture on custom shadow picks
 WNBA_LOG = DATA_DIR / "pick_log_wnba.csv"
 ENABLE_WNBA_CLV = True  # flip to False to pause WNBA CLV capture
+# Game-line bet log — written by analyze_game_lines.py. Processed additively by
+# process_game_lines() in the main loop (separate from the prop/standard logs).
+PICK_LOG_GAME_LINES = _PATHS_PICK_LOG_GAME_LINES_PATH
+ENABLE_GAME_LINE_CLV = True  # flip to False to pause game-line CLV capture
 
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
@@ -929,6 +995,247 @@ def calc_clv(your_odds: float, closing_odds: float,
     return a - b
 
 
+# ── Game-line CLV capture (additive — separate from the prop path) ─────────────
+
+def load_open_game_lines(run_date: str) -> list[dict]:
+    """Load game-line rows for `run_date` that still need a closing line.
+
+    Open = no closing_odds, no clv, not graded, and a supported game-line stat.
+    Locked read via load_picks (shares the writer's FileLock).
+    """
+    if not (ENABLE_GAME_LINE_CLV and PICK_LOG_GAME_LINES.exists()):
+        return []
+    rows = load_picks(PICK_LOG_GAME_LINES, run_date)
+    return [
+        r for r in rows
+        if not r.get("closing_odds", "").strip()
+        and not r.get("clv", "").strip()
+        and not r.get("result", "").strip()
+        and r.get("stat", "") in GAME_LINE_CLV_MARKET
+    ]
+
+
+def _gl_resolve_abbr(sport: str, full_name: str) -> str:
+    """Map an Odds API full team name → the log's abbreviation for `sport`.
+
+    Uses the writer-mirrored _GL_NAME_TO_ABBR map (exact, then substring
+    fallback). Returns '' when the sport/name is unknown.
+    """
+    name_map = _GL_NAME_TO_ABBR.get(sport, {})
+    low = (full_name or "").strip().lower()
+    if not low or not name_map:
+        return ""
+    if low in name_map:
+        return name_map[low]
+    # Substring fallback: handles minor API name-format drift (e.g. an extra
+    # qualifier). Longest key first so the most specific name wins.
+    for key in sorted(name_map, key=len, reverse=True):
+        if key in low or low in key:
+            return name_map[key]
+    return ""
+
+
+def find_game_line_event(game_tag: str, events: list[dict], sport: str) -> dict | None:
+    """Find the API event matching an abbreviated game tag ('AWAY@HOME').
+
+    The game-line log stores abbreviations, but the Odds API returns full team
+    names — so the prop matcher (find_event) can't be used. Resolve each event's
+    home/away full names to the writer's abbreviations and match the pair.
+    """
+    if "@" not in game_tag:
+        return None
+    away_abbr, home_abbr = (p.strip().upper() for p in game_tag.split("@", 1))
+    for ev in events:
+        ev_home = _gl_resolve_abbr(sport, ev.get("home_team", ""))
+        ev_away = _gl_resolve_abbr(sport, ev.get("away_team", ""))
+        if ev_home and ev_away and ev_home == home_abbr and ev_away == away_abbr:
+            return ev
+    return None
+
+
+def get_game_line_closing_odds(row: dict, outcomes_by_market: dict,
+                               home_team: str = "", away_team: str = "") -> tuple[float | None, str]:
+    """Best closing odds (across CO books) for a game-line row.
+
+    Returns (best_odds, book_key) or (None, '').
+      • TOTAL / F5_TOTAL — direction over/under → best_price (line ±0.25).
+      • SPREAD / F5_SPREAD — direction home/away → match the event team name in
+        the outcome + point within 0.25.
+      • ML / F5_ML — direction home/away → match the event team name (h2h).
+    """
+    stat = row.get("stat", "")
+    market_key = GAME_LINE_CLV_MARKET.get(stat)
+    if not market_key:
+        # TEAM_TOTAL: deferred — needs team-filtered matching in team_totals market
+        return None, ""
+
+    outcomes = outcomes_by_market.get(market_key, [])
+    direction = row.get("direction", "").strip().lower()
+    try:
+        line = float(row.get("line")) if row.get("line") not in ("", None) else None
+    except (ValueError, TypeError):
+        line = None
+
+    # Totals — reuse the over/under price finder.
+    if stat in ("TOTAL", "F5_TOTAL"):
+        return best_price(outcomes, direction, line)
+
+    # Spread / Moneyline — resolve the side from direction + event team names.
+    target_team = (home_team if direction == "home" else away_team).lower()
+    target_words = [w for w in target_team.split() if len(w) >= 3]
+    if not target_words:
+        # No reliable team to match against → skip rather than grab a random side.
+        return None, ""
+    want_line = stat in ("SPREAD", "F5_SPREAD")
+
+    best: float | None = None
+    best_book = ""
+    for oc in outcomes:
+        book = oc.get("book", "")
+        book_base = book.split("_")[0] if "_" in book else book
+        if book not in CO_LEGAL_BOOKS and book_base not in CO_LEGAL_BOOKS:
+            continue
+        price = oc.get("price")
+        if price is None:
+            continue
+        oc_name = oc.get("name", "").lower()
+        if not any(w in oc_name for w in target_words):
+            continue
+        if want_line:
+            point = oc.get("point")
+            if point is None or line is None or abs(float(point) - line) > 0.25:
+                continue
+        if best is None or price > best:
+            best = price
+            best_book = book
+    return best, best_book
+
+
+def process_game_lines(run_date: str, now: datetime) -> tuple[int, float]:
+    """Capture closing odds for game-line rows in pick_log_game_lines.csv.
+
+    Additive sibling to the prop capture loop: same capture window, T-10 write
+    gate, and filelock/atomic write — but for game-line stats which carry an
+    abbreviated game tag and home/away (or over/under) direction.
+
+    Returns (open_rows_remaining, secs_to_next_window) for the daemon's
+    termination + sleep logic.
+    """
+    open_rows = load_open_game_lines(run_date)
+    if not open_rows:
+        return 0, float("inf")
+
+    secs_to_next_window = float("inf")
+
+    by_sport: dict[str, list[dict]] = {}
+    for r in open_rows:
+        by_sport.setdefault(r.get("sport", ""), []).append(r)
+
+    for sport, rows in by_sport.items():
+        sport_key = SPORT_KEYS.get(sport)
+        if not sport_key:
+            continue
+        events = fetch_events(sport_key)
+        if not events:
+            continue
+
+        by_game: dict[str, list[dict]] = {}
+        for r in rows:
+            by_game.setdefault(r.get("game", ""), []).append(r)
+
+        for game_tag, game_rows in by_game.items():
+            event = find_game_line_event(game_tag, events, sport)
+            if not event:
+                continue
+
+            ct_str = event.get("commence_time", "")
+            try:
+                ct = datetime.fromisoformat(ct_str.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            secs_to_start = (ct - now).total_seconds()
+
+            # Outside the capture window — record when its window opens, skip.
+            if not (-CAPTURE_AFTER_SECS <= secs_to_start <= CAPTURE_BEFORE_SECS):
+                secs_until_window = secs_to_start - CAPTURE_BEFORE_SECS
+                if secs_until_window > 0:
+                    secs_to_next_window = min(secs_to_next_window, secs_until_window)
+                continue
+
+            markets_needed = {
+                GAME_LINE_CLV_MARKET[r.get("stat", "")] for r in game_rows
+                if r.get("stat", "") in GAME_LINE_CLV_MARKET
+            }
+            if not markets_needed:
+                continue
+
+            event_id = event.get("id", "")
+            event_data = fetch_game_odds(event_id, sport_key, list(markets_needed))
+            if not event_data:
+                continue
+            outcomes_by_market = flatten_outcomes(event_data)
+            ev_home = event.get("home_team", "")
+            ev_away = event.get("away_team", "")
+
+            # Write-gate: only commit the closing line within T-10 of tip.
+            if secs_to_start > CAPTURE_WRITE_BEFORE_SECS:
+                secs_to_next_window = min(secs_to_next_window,
+                                          secs_to_start - CAPTURE_WRITE_BEFORE_SECS)
+                continue
+
+            print(f"\n  🎯 [GL] CAPTURING: {game_tag} (T{int(secs_to_start/60):+d}min)")
+            updates: dict[tuple, dict] = {}
+            for r in game_rows:
+                closing_odds, closing_book = get_game_line_closing_odds(
+                    r, outcomes_by_market, home_team=ev_home, away_team=ev_away)
+                if closing_odds is None:
+                    print(f"    — [GL] {game_tag} {r.get('stat')} {r.get('direction')}: "
+                          f"no closing odds found")
+                    continue
+
+                your_odds = r.get("odds")
+                try:
+                    your_odds = float(your_odds)
+                except (ValueError, TypeError):
+                    your_odds = None
+
+                # Vig-free closing side for over/under; ML/spread fall back to
+                # vigged (no clean opposite) — identical policy to the prop path.
+                direction = r.get("direction", "").strip().lower()
+                closing_opp = None
+                opp_dir = _opposite_direction(direction)
+                if opp_dir is not None:
+                    opp_row = dict(r)
+                    opp_row["direction"] = opp_dir
+                    closing_opp, _ = get_game_line_closing_odds(
+                        opp_row, outcomes_by_market, home_team=ev_home, away_team=ev_away)
+
+                clv = (calc_clv(your_odds, closing_odds, closing_opp)
+                       if (your_odds is not None and your_odds != 0) else None)
+
+                key = (
+                    r.get("date", "").strip(),
+                    r.get("player", "").strip().lower(),
+                    r.get("stat", "").strip(),
+                    str(r.get("line", "")).strip(),
+                    r.get("direction", "").strip().lower(),
+                )
+                updates[key] = {"closing_odds": closing_odds, "clv": clv}
+
+                vf = " (vf)" if closing_opp is not None else ""
+                clv_str = f"{clv:+.1%}{vf}" if clv is not None else "n/a"
+                print(f"    ✓ [GL] {game_tag} {r.get('stat')} {direction}: "
+                      f"close {closing_odds:+.0f} "
+                      f"({BOOK_DISPLAY.get(closing_book, closing_book)}) → CLV {clv_str}")
+
+            if updates:
+                n = write_closing_odds(PICK_LOG_GAME_LINES, updates)
+                print(f"    📝 [GL] Wrote {n} update(s) → {PICK_LOG_GAME_LINES.name}")
+
+    open_after = len(load_open_game_lines(run_date))
+    return open_after, secs_to_next_window
+
+
 # ── Graceful shutdown (audit H-10) ─────────────────────────────────────────────
 # Signal handlers flip a flag that the poll loop checks at safe boundaries.
 # This way we never exit mid-write and always release the single-instance lock
@@ -1180,11 +1487,17 @@ def run(run_date: str):
             for p in open_picks:
                 all_picks.append((log_path, p))
 
-        if not all_picks:
+        # Game-line rows still needing CLV (separate log + processing path).
+        gl_open = load_open_game_lines(run_date)
+
+        if not all_picks and not gl_open:
             # Check if any picks exist today at all (may not have run picks yet)
             any_logged = any(
                 len(load_picks(lp, run_date)) > 0
                 for lp in log_paths if lp.exists()
+            ) or (
+                ENABLE_GAME_LINE_CLV and PICK_LOG_GAME_LINES.exists()
+                and len(load_picks(PICK_LOG_GAME_LINES, run_date)) > 0
             )
             if any_logged:
                 # ── MIN_UPTIME guard (2026-05-08 fix) ─────────────────────────
@@ -1460,12 +1773,18 @@ def run(run_date: str):
                         print(f"    ... Got {captured_picks_for_game}/{total_picks_for_game} closing odds "
                               f"(attempt {attempts}) -- will retry")
 
+        # Game-line CLV capture (additive — own log + matching path). Folds its
+        # next-window into the sleep timer and its pending count into `remaining`
+        # so the daemon stays alive until game-line rows are captured too.
+        gl_pending, gl_next_window = process_game_lines(run_date, now)
+        secs_to_next_window = min(secs_to_next_window, gl_next_window)
+
         # Check if all picks are done
         remaining = sum(
             len(picks_needing_clv(load_picks(lp, run_date)))
             for lp in log_paths
             if lp.exists()
-        )
+        ) + gl_pending
         if remaining == 0:
             # MIN_UPTIME guard — same logic as the top-of-loop check.
             # More picks may be logged later for a different sport.
