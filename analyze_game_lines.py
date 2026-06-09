@@ -16,7 +16,7 @@ REGIONS   = "us,us2,us_ex"
 BOOKS_STR = "draftkings,fanduel,betmgm,caesars,pointsbetus"
 HEADERS   = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-# ── Distributions ──────────────────────────────────────────────────────────
+# â”€â”€ Distributions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def normal_cdf(x, mu, sigma):
     if sigma <= 0:
         return 1.0 if x >= mu else 0.0
@@ -57,11 +57,11 @@ def mlb_ml_from_nb(mu_home, mu_away, r):
         home_wp += ph * (pa_lt + 0.5 * pa_eq)
     return min(max(home_wp, 0.0), 1.0)
 
-# ── Sigmas (mirrored from GAME_SIGMA + F5_SIGMA in run_picks.py) ───────────
+# â”€â”€ Sigmas (mirrored from GAME_SIGMA + F5_SIGMA in run_picks.py) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # NHL calibrated 2026-06-05 from 3936 games. MLB team total uses NB (not sigma).
 SIGMA = {
     "MLB":  {"total": 4.6,  "spread": 4.2,  "team": 3.0,  "ml": 4.75},
-    # NBA calibrated 2026-06-05 (Plan 6 §6, 3,922 games): residual-basis SDs
+    # NBA calibrated 2026-06-05 (Plan 6 Â§6, 3,922 games): residual-basis SDs
     # (raw total SD=20.20, residual=19.33; margin residual=15.27; rho=+0.227).
     "NBA":  {"total": 18.5, "spread": 12.5, "team": 11.0, "ml": 12.5},
     "NHL":  {"total": 2.311, "spread": 2.614, "team": 1.744, "ml": 2.614},
@@ -72,7 +72,7 @@ F5_SCALAR = 0.540
 # NB dispersion for MLB team run-scoring (calibrated 2026-06-05, n=8095 regular-season games)
 MLB_TEAM_RUN_R = 3.548
 
-# Team-specific sigma JSONs (mirrored from run_picks.py) — loaded at startup
+# Team-specific sigma JSONs (mirrored from run_picks.py) â€” loaded at startup
 _TEAM_SIGMAS_AGL: dict = {}
 _TEAM_SIGMAS_MEANSQ_AGL: dict = {}
 
@@ -94,8 +94,8 @@ _load_team_sigmas_agl()
 def get_game_sigma(sport, home_abbr, away_abbr, market):
     """Return matchup-specific sigma; falls back to SIGMA league average.
 
-    Plan 6 §6 (2026-06-05): relative-variability scaler on the per-market league
-    sigma — sigma_league(market) * sqrt((σh²+σa²)/(2·σ̄²)) — mirrors run_picks.py.
+    Plan 6 Â§6 (2026-06-05): relative-variability scaler on the per-market league
+    sigma â€” sigma_league(market) * sqrt((ÏƒhÂ²+ÏƒaÂ²)/(2Â·ÏƒÌ„Â²)) â€” mirrors run_picks.py.
     """
     league = SIGMA.get(sport, SIGMA["NBA"])
     league_sigma = league.get(market, 10.0)
@@ -114,7 +114,7 @@ def get_game_sigma(sport, home_abbr, away_abbr, market):
     return league_sigma
 
 def get_game_sigma_team(sport, team_abbr):
-    """Return sigma for one team's scoring — used for team total picks."""
+    """Return sigma for one team's scoring â€” used for team total picks."""
     league = SIGMA.get(sport, SIGMA["NBA"])
     league_sigma = league.get("team", 10.0)
     t = _TEAM_SIGMAS_AGL.get(sport, {}).get((team_abbr or "").upper())
@@ -124,7 +124,7 @@ def get_mlb_team_run_r(team_abbr):
     """Return per-team NB dispersion r for MLB run-scoring; falls back to MLB_TEAM_RUN_R."""
     return _TEAM_SIGMAS_AGL.get("MLB", {}).get((team_abbr or "").upper(), {}).get("nb_r", MLB_TEAM_RUN_R)
 
-# ── Projections (away_abbr, away_proj, home_abbr, home_proj) ───────────────
+# â”€â”€ Projections (away_abbr, away_proj, home_abbr, home_proj) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 MLB_PROJS = [
     ("BOS", 3.9, "NYY", 4.4),
     ("BAL", 4.1, "TOR", 4.6),
@@ -143,7 +143,7 @@ NBA_PROJS = [
     ("NYK", 107.7, "SAS", 109.1),
 ]
 
-# ── Team name to abbreviation ───────────────────────────────────────────────
+# â”€â”€ Team name to abbreviation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 MLB_NAME_MAP = {
     "boston red sox": "BOS", "new york yankees": "NYY",
     "baltimore orioles": "BAL", "toronto blue jays": "TOR",
@@ -180,7 +180,7 @@ NBA_NAME_MAP = {
     "sacramento kings": "SAC", "los angeles clippers": "LAC",
 }
 
-# ── API helpers ────────────────────────────────────────────────────────────
+# â”€â”€ API helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def fetch_odds(sport_key, markets):
     url = f"{BASE}/{sport_key}/odds"
     r = requests.get(url, params={
@@ -204,7 +204,7 @@ def fetch_event_odds(sport_key, event_id, markets):
         return None
     return r.json()
 
-# ── Odds math ──────────────────────────────────────────────────────────────
+# â”€â”€ Odds math â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def american_to_prob(odds):
     if odds >= 0:
         return 100 / (odds + 100)
@@ -252,13 +252,13 @@ def team_total_odds(game, abbr_list):
                         result[abbr]["line"] = out["point"]
     return result
 
-# ── Edge formatting ────────────────────────────────────────────────────────
+# â”€â”€ Edge formatting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25, game_label=""):
     edge = model_p - market_p
     # Only show positive edges >= 4%
     if edge < 0.04:
         return None
-    marker = "🔥 STRONG" if edge >= 0.08 else "*** BET  "
+    marker = "ðŸ”¥ STRONG" if edge >= 0.08 else "*** BET  "
     stake = kelly_stake(model_p, odds) if odds is not None else min_stake
     parts = [f"  {marker}  {label:<32}"]
     if line is not None:
@@ -280,12 +280,12 @@ def edge_str(model_p, market_p, label, line=None, odds=None, min_stake=0.25, gam
 
 GAME_LINE_KELLY_FRACTION = 10.0  # Bigger than props (6.0) to produce usable stakes
                                   # on game lines where WP clusters near 50-55%
-GAME_LINE_MARKET_MULT    = 0.75   # Game lines less reliable than props — mirrors run_picks DEFAULT_MARKET_MULT
+GAME_LINE_MARKET_MULT    = 0.75   # Game lines less reliable than props â€” mirrors run_picks DEFAULT_MARKET_MULT
 
 def kelly_stake(model_p, odds_american, min_stake=0.25, max_stake=2.0):
     """Kelly stake sizing for game lines.
     Formula: f* = (b*p - q) / b  then  units = f* * KELLY_FRACTION * MARKET_MULT
-    Matches run_picks.py convention: units = f_star * fraction (no ×100).
+    Matches run_picks.py convention: units = f_star * fraction (no Ã—100).
     Uses GAME_LINE_KELLY_FRACTION=10.0 (bigger than props\'s 6.0) to produce
     usable stakes at typical 50-55% game-line win probabilities.
     """
@@ -301,7 +301,7 @@ def kelly_stake(model_p, odds_american, min_stake=0.25, max_stake=2.0):
     rounded = round(raw * 4) / 4
     return max(min_stake, min(max_stake, rounded))
 
-# Shared bet collector — populated by edge_str, printed as ranked table at end
+# Shared bet collector â€” populated by edge_str, printed as ranked table at end
 ALL_BETS = []
 
 def find_outcome(outcomes, name_map, abbr):
@@ -312,11 +312,11 @@ def find_outcome(outcomes, name_map, abbr):
             return o
     return None
 
-# ── MLB team total NB probability ──────────────────────────────────────────
+# â”€â”€ MLB team total NB probability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def mlb_tt_prob(proj, line, direction="over"):
     """P(over/under) for MLB team total using NB distribution."""
     k_floor = int(math.floor(line))
-    if line == k_floor:  # integer line — push-adjusted
+    if line == k_floor:  # integer line â€” push-adjusted
         push = negbinom_pmf(k_floor, proj, MLB_TEAM_RUN_R)
         non_push = 1.0 - push
         if non_push <= 0:
@@ -331,7 +331,7 @@ def mlb_tt_prob(proj, line, direction="over"):
         else:
             return negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)
 
-# ── MLB analysis ────────────────────────────────────────────────────────────
+# â”€â”€ MLB analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
     print("\n" + "="*72)
     print("MLB GAME LINES")
@@ -371,7 +371,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
 
         edges = []
 
-        # MONEYLINE — NB direct sum
+        # MONEYLINE â€” NB direct sum
         ml = best_book_odds(game, "h2h")
         if ml:
             outs = ml["outcomes"]
@@ -386,7 +386,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 e = edge_str(ma, pa_nv, f"ML AWAY  {away_abbr}", odds=oa["price"])
                 if e: edges.append(e)
 
-        # RUN LINE (spread) — Normal
+        # RUN LINE (spread) â€” Normal
         sp = best_book_odds(game, "spreads")
         if sp:
             outs = sp["outcomes"]
@@ -401,7 +401,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 e = edge_str(1.0-cover_h,   pa_nv, f"SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"])
                 if e: edges.append(e)
 
-        # GAME TOTAL — Normal
+        # GAME TOTAL â€” Normal
         tot = best_book_odds(game, "totals")
         if tot:
             outs = tot["outcomes"]
@@ -423,7 +423,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
             ev = fetch_event_odds("baseball_mlb", eid,
                 "team_totals,h2h_1st_5_innings,spreads_1st_5_innings,totals_1st_5_innings")
 
-        # TEAM TOTALS — NB
+        # TEAM TOTALS â€” NB
         if ev:
             tt = team_total_odds(ev, [away_abbr, home_abbr])
             for abbr, proj in [(away_abbr, away_proj), (home_abbr, home_proj)]:
@@ -443,7 +443,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
 
         src = ev if ev else game
 
-        # F5 TOTAL — Normal
+        # F5 TOTAL â€” Normal
         f5t = best_book_odds(src, "totals_1st_5_innings")
         if f5t:
             outs = f5t["outcomes"]
@@ -459,7 +459,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 e = edge_str(1.0-mov, pun_nv, f"F5 TOTAL UNDER ({f5line})", odds=un["price"])
                 if e: edges.append(e)
 
-        # F5 ML — Normal
+        # F5 ML â€” Normal
         f5ml = best_book_odds(src, "h2h_1st_5_innings")
         if f5ml:
             outs = f5ml["outcomes"]
@@ -474,7 +474,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 e = edge_str(1.0-mh, pa_nv, f"F5 ML AWAY  {away_abbr}", odds=oa["price"])
                 if e: edges.append(e)
 
-        # F5 SPREAD — Normal
+        # F5 SPREAD â€” Normal
         f5sp = best_book_odds(src, "spreads_1st_5_innings")
         if f5sp:
             outs = f5sp["outcomes"]
@@ -515,7 +515,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
 
     print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
-# ── NBA analysis ────────────────────────────────────────────────────────────
+# â”€â”€ NBA analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
     print("\n" + "="*72)
     print("NBA GAME LINES  (Normal distribution, all markets)")
@@ -653,7 +653,7 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
 
     print(f"\n  Matched {matched}/{len(proj_map)} games from API")
 
-# ── Main ────────────────────────────────────────────────────────────────────
+# â”€â”€ Main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _load_team_projs_from_csv(csv_path):
     """Parse SaberSim CSV and extract team-level projections from Saber Team column."""
     import csv as _csv
@@ -697,9 +697,45 @@ def _build_projs(sport):
         projs = _load_team_projs_from_csv(csv_file)
         if projs:
             print(f"  [auto] Loaded {sport} team projections from {csv_file.name} ({len(projs)} teams)")
-            # Return as list of (away, away_proj, home, home_proj) — will be matched against API games
+            # Return as list of (away, away_proj, home, home_proj) â€” will be matched against API games
             return projs  # dict format: {team_abbr: proj}
     return {}
+
+
+
+def print_ranked_table(bets):
+    """Print all qualifying bets ranked by edge as ASCII table."""
+    if not bets:
+        return
+    bets_sorted = sorted(bets, key=lambda b: b["edge"], reverse=True)
+
+    def p2a(p):
+        if p <= 0 or p >= 1: return "N/A"
+        return f"-{round(p/(1-p)*100)}" if p >= 0.5 else f"+{round((1-p)/p*100)}"
+
+    rows = []
+    for b in bets_sorted:
+        pick = f"{b['game']} {b['label']}"[:26]
+        mkt  = f"{b['odds']:+d}" if isinstance(b['odds'], int) else "N/A"
+        rows.append((pick, f"{b['stake']:.2f}u", f"{b['model']*100:.1f}%",
+                     p2a(b["model"]), mkt, f"+{b['edge']*100:.1f}pp"))
+
+    hdrs   = ["Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Edge"]
+    widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(hdrs)]
+    div    = "+" + "+".join("-" * (w+2) for w in widths) + "+"
+    row_s  = lambda cells: "|" + "|".join(f" {c:<{widths[i]}} " for i,c in enumerate(cells)) + "|"
+
+    print()
+    print("=" * 72)
+    print("QUALIFYING BETS  (ranked by edge)")
+    print("=" * 72)
+    print(div)
+    print(row_s(hdrs))
+    for r in rows:
+        print(div)
+        print(row_s(r))
+    print(div)
+    print(f"  {len(bets_sorted)} bet(s)  |  total: {sum(b['stake'] for b in bets_sorted):.2f}u")
 
 
 if __name__ == "__main__":
@@ -760,56 +796,8 @@ if __name__ == "__main__":
     analyze_mlb(mlb_data, team_projs=mlb_team_projs, ctx_verdicts=ctx_verdicts)
     analyze_nba(nba_data, team_projs=nba_team_projs, ctx_verdicts=ctx_verdicts)
 
-def print_ranked_table(bets):
-    """Print all qualifying bets sorted by edge desc as a box-drawing table."""
-    if not bets:
-        return
-    bets_sorted = sorted(bets, key=lambda b: b["edge"], reverse=True)
-
-    def prob_to_american(p):
-        if p <= 0 or p >= 1:
-            return "N/A"
-        if p >= 0.5:
-            return f"-{round(p / (1-p) * 100)}"
-        else:
-            return f"+{round((1-p) / p * 100)}"
-
-    rows = []
-    for b in bets_sorted:
-        pick  = f"{b['game']} {b['label']}"[:24]
-        size  = f"{b['stake']:.2f}u"
-        fair_p = f"{b['model']*100:.1f}%"
-        fair_o = prob_to_american(b["model"])
-        mkt_o  = f"{b['odds']:+d}" if isinstance(b['odds'], int) else (f"{b['odds']:+.0f}" if b['odds'] else "N/A")
-        edge   = f"+{b['edge']*100:.1f}pp"
-        rows.append((pick, size, fair_p, fair_o, mkt_o, edge))
-
-    hdrs   = ["Pick", "Size", "Fair%", "Fair Odds", "Mkt Odds", "Edge"]
-    widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(hdrs)]
-
-    def row_str(cells, sep="│"):
-        return sep + sep.join(f" {c:<{widths[i]}} " for i, c in enumerate(cells)) + sep
-
-    top = "┌" + "┬".join("─" * (w+2) for w in widths) + "┐"
-    mid = "├" + "┼".join("─" * (w+2) for w in widths) + "┤"
-    bot = "└" + "┴".join("─" * (w+2) for w in widths) + "┘"
-
-    print("\n" + "="*72)
-    print("QUALIFYING BETS  (ranked by edge)")
-    print("="*72)
-    print(top)
-    print(row_str(hdrs))
-    for r in rows:
-        print(mid)
-        print(row_str(r))
-    print(bot)
-    print(f"  {len(bets_sorted)} bet(s)  |  total exposure: {sum(b['stake'] for b in bets_sorted):.2f}u")
-
-    # Print ranked summary table + legend
     print_ranked_table(ALL_BETS)
-    print("\n\nLegend: '🔥 STRONG' >= 8%  |  '*** BET' >= 4%  |  positive only  |  stake = f* x 10 x 0.75 market mult (min 0.25u, max 2.0u)")
-    print("Distributions:")
-    print("  MLB  : ML = NB direct sum (r=3.548) | team totals = NB | total/spread/F5 = Normal")
-    print("  NBA  : all markets = Normal")
-    print("  NHL  : all markets = Normal (sigma: total=2.311, spread=2.614, team=1.744, ml=2.614)")
-    print("MLB sigmas: total=4.6/spread=4.2  F5: total=2.65/spread=2.70  F5 scalar=0.540")
+    print()
+    print("Legend: STRONG>=8%  |  ***BET>=4%  |  positive edge only  |  stake=f*x10x0.75mult (min 0.25u, max 2.0u)")
+    print("MLB: ML=NB(r=3.548) | TT=NB | spread/total/F5=Normal  sigma: total=4.6/spread=4.2  F5=2.65/2.70  scalar=0.540")
+    print("NBA: all Normal  |  NHL: all Normal (total=2.311, spread=2.614, team=1.744)")
