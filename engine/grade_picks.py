@@ -2131,8 +2131,9 @@ def _grade_one_log(log_path_str, args, is_shadow=False,
             print(f"  {label} No graded picks found for {date_str}")
             return (False, set())
         print(f"  {label} Reposting recap for {date_str} ({len(day_picks)} picks)…")
-        post_grading_results(date_str, day_picks, rows,
-                             suppress_ping=args.test, force=True)
+        if not getattr(args, "no_discord", False):
+            post_grading_results(date_str, day_picks, rows,
+                                 suppress_ping=args.test, force=True)
         return (True, {date_str})
 
     # ── Find ungraded picks ────────────────────────────────────
@@ -2353,6 +2354,8 @@ def _post_merged_recaps(dates_for_recap, main_rows, recap_merge_logs, args):
     """
     # Note: recap_merge_logs is intentionally ignored here \u2014 manual picks
     # are not shown in Discord recaps. The parameter is kept for API compat.
+    if getattr(args, "no_discord", False):
+        return
     for date_str in sorted(dates_for_recap):
         # Bug fix: removed `sport not in SHADOW_SPORTS` filter. Shadow-sport
         # filtering applies to the *separate* shadow-log Discord posts (graded
@@ -2472,7 +2475,7 @@ def _grade_game_lines_log(args):
         print("  (dry run — no changes written)")
 
     # Discord recap — one embed per newly-graded date
-    if not args.dry_run and not getattr(args, "repost", False):
+    if not args.dry_run and not getattr(args, "repost", False) and not getattr(args, "no_discord", False):
         dates_graded = {
             rows[idx]["date"] for idx, _ in ungraded
             if _is_terminal_result(rows[idx].get("result"))
@@ -2497,6 +2500,7 @@ Examples:
   python grade_picks.py                        # Grade all ungraded picks
   python grade_picks.py --date 2026-04-13      # Grade specific date only
   python grade_picks.py --dry-run              # Preview without writing
+  python grade_picks.py --no-discord           # Grade + write, but skip all Discord posts
   python grade_picks.py --test                 # Grade + post without @everyone ping
   python grade_picks.py --repost --date 2026-04-13           # Re-fire recap embed
   python grade_picks.py --repost --date 2026-04-13 --test    # Repost without ping
@@ -2504,6 +2508,8 @@ Examples:
     )
     parser.add_argument("--date",    default=None,  help="Grade / repost only this date (YYYY-MM-DD)")
     parser.add_argument("--dry-run", action="store_true", help="Preview grading without writing")
+    parser.add_argument("--no-discord", action="store_true",
+                        help="Grade and write results as normal but skip all Discord posts")
     parser.add_argument("--test",    action="store_true", help="Suppress @everyone ping (safe preview)")
     parser.add_argument("--repost",  action="store_true", help="Re-fire Discord recap for --date (skip grading)")
     parser.add_argument("--confirm", action="store_true", help="Prompt y/n before every Discord post")
