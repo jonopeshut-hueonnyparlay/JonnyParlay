@@ -810,8 +810,8 @@ def _write_game_line_bets(bets, log_path):
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not log_path.exists() or log_path.stat().st_size == 0
-    today = datetime.date.today().isoformat()
-    now   = datetime.datetime.now().strftime("%H:%M:%S")
+    today = datetime.today().isoformat()[:10]
+    now   = datetime.now().strftime("%H:%M:%S")
     with _gl_lock(log_path):
         with open(log_path, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=_CANONICAL_HEADER,
@@ -865,7 +865,7 @@ def _write_game_line_bets(bets, log_path):
 def _post_game_lines_discord(bets):
     """Post logged game-line bets to Discord. Prints card to console if webhook not configured."""
     webhook = os.getenv("DISCORD_GAME_LINES_WEBHOOK", "")
-    today   = datetime.date.today().strftime("%b %d, %Y")
+    today   = datetime.today().strftime("%b %d, %Y")
 
     def _p2a(p):
         if p <= 0 or p >= 1:
