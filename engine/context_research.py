@@ -63,9 +63,10 @@ _OUT_PATH = data_path("context_verdicts.json")
 
 _MODEL = "claude-opus-4-8"
 _WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search"}
-# Worst case is 5 groups x 6 outdoor MLB games = 30 calls; sized so a full
-# slate runs in a single concurrent wave (<2 min target with web search).
-_MAX_WORKERS = 30
+# Capped at 10 to stay under the 50 req/min Anthropic rate limit: an 11-game
+# slate is 11 games x 5 groups = 55 calls, which would exceed the limit in a
+# single wave. 10 concurrent workers keeps the in-flight rate safe.
+_MAX_WORKERS = 10
 
 _LOCAL_TZ = ZoneInfo("America/Denver")
 _ALL_SPORTS = ["NBA", "MLB", "NHL", "WNBA"]

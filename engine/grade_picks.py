@@ -10,7 +10,7 @@ Usage:
     python grade_picks.py --dry-run        # Show what would be graded without writing
 """
 
-import csv, json, os, sys, time, argparse, logging, tempfile
+import csv, json, os, re, sys, time, argparse, logging, tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -913,6 +913,21 @@ def _find_linescore_innings(game_str, linescores):
             for w in words:
                 if any(w in kp for kp in key_parts):
                     return _unpack(val)
+
+    # Abbreviation match — the game-line log stores 'AWAY@HOME' as team
+    # abbreviations, which the >3-char word filter above can never match
+    # against the full-name linescore keys. Resolve both sides through the
+    # MLB name→abbrev map (linescores are MLB-only) and compare the pair.
+    abbrs = {p.upper() for p in parts}
+    if len(abbrs) == 2:
+        mlb_map = _GL_NAME_TO_ABBR.get("MLB", {})
+        for key, val in linescores.items():
+            kparts = [p.strip() for p in re.split(r"\s*@\s*", key) if p.strip()]
+            if len(kparts) != 2:
+                continue
+            kabbrs = {mlb_map.get(kp) for kp in kparts}
+            if None not in kabbrs and kabbrs == abbrs:
+                return _unpack(val)
     return None
 
 
@@ -973,6 +988,102 @@ def _resolve_pick_is_home(pick, away_team):
     return not is_away
 
 
+# ── Game-line score matching ──────────────────────────────────────────────────
+# analyze_game_lines.py writes the `game` field as 'AWAY@HOME' using team
+# ABBREVIATIONS with no spaces (e.g. 'MIL@ATH'), but fetch_scores() keys games
+# by the Odds API FULL team names ('Milwaukee Brewers @ Athletics'). The legacy
+# substring matcher never bridged the two, so every game-line row failed to
+# match and graded None. This map resolves a full team name back to the same
+# abbreviation the writer stored, so the two can be compared.
+#
+# Mirrors capture_clv._GL_NAME_TO_ABBR and analyze_game_lines' NAME maps (the
+# only sports the game-line analyzer produces today are MLB and NBA). Keep these
+# three copies in sync if a sport/team is added. run_picks.TEAM_ABBREV is not
+# reused on purpose — it diverges (Athletics ATH≠OAK, Wizards WSH≠WAS).
+_GL_NAME_TO_ABBR: dict[str, dict[str, str]] = {
+    "MLB": {
+        "boston red sox": "BOS", "new york yankees": "NYY",
+        "baltimore orioles": "BAL", "toronto blue jays": "TOR",
+        "tampa bay rays": "TB", "miami marlins": "MIA",
+        "pittsburgh pirates": "PIT", "atlanta braves": "ATL",
+        "oakland athletics": "ATH", "athletics": "ATH",
+        "sacramento athletics": "ATH", "houston astros": "HOU",
+        "cleveland guardians": "CLE", "texas rangers": "TEX",
+        "kansas city royals": "KC", "minnesota twins": "MIN",
+        "cincinnati reds": "CIN", "st. louis cardinals": "STL",
+        "milwaukee brewers": "MIL", "colorado rockies": "COL",
+        "washington nationals": "WSH", "arizona diamondbacks": "ARI",
+        "new york mets": "NYM", "san diego padres": "SD",
+        "los angeles angels": "LAA", "los angeles dodgers": "LAD",
+        "chicago white sox": "CWS", "chicago cubs": "CHC",
+        "detroit tigers": "DET", "seattle mariners": "SEA",
+        "san francisco giants": "SF", "philadelphia phillies": "PHI",
+    },
+    "NBA": {
+        "new york knicks": "NYK", "san antonio spurs": "SAS",
+        "boston celtics": "BOS", "miami heat": "MIA",
+        "golden state warriors": "GSW", "los angeles lakers": "LAL",
+        "denver nuggets": "DEN", "oklahoma city thunder": "OKC",
+        "minnesota timberwolves": "MIN", "indiana pacers": "IND",
+        "cleveland cavaliers": "CLE", "detroit pistons": "DET",
+        "phoenix suns": "PHX", "dallas mavericks": "DAL",
+        "houston rockets": "HOU", "memphis grizzlies": "MEM",
+        "new orleans pelicans": "NOP", "chicago bulls": "CHI",
+        "atlanta hawks": "ATL", "milwaukee bucks": "MIL",
+        "toronto raptors": "TOR", "charlotte hornets": "CHA",
+        "orlando magic": "ORL", "washington wizards": "WSH",
+        "brooklyn nets": "BKN", "philadelphia 76ers": "PHI",
+        "portland trail blazers": "POR", "utah jazz": "UTA",
+        "sacramento kings": "SAC", "los angeles clippers": "LAC",
+    },
+}
+
+
+def _resolve_score_game(pick, scores_by_game):
+    """Find the score dict matching this pick's game.
+
+    Robust to the 'AWAY@HOME' abbreviation format written by
+    analyze_game_lines.py. Returns the matched game dict, or None.
+
+    Strategy:
+      1. Legacy fuzzy substring match — handles full-name 'Away @ Home' keys
+         (e.g. prop-style rows or any caller that stores full names).
+      2. Abbreviation match — split the pick's game on '@' (with or without
+         surrounding spaces) and compare the {away, home} abbreviation pair
+         against each score game's abbreviations (derived from its full team
+         names via _GL_NAME_TO_ABBR). Requires both teams to resolve, so the
+         wrong game is never matched on a single-team coincidence.
+    """
+    game = (pick.get("game", "") or "").strip()
+    if not game or not scores_by_game:
+        return None
+
+    # 1) Legacy substring match (full-name keys)
+    gl = game.lower()
+    for key, gdata in scores_by_game.items():
+        kl = key.lower()
+        if gl in kl or kl in gl:
+            return gdata
+
+    # 2) Abbreviation-aware match
+    abbrs = {t.strip().upper() for t in re.split(r"\s*@\s*", game) if t.strip()}
+    if len(abbrs) == 2:
+        name_map = _GL_NAME_TO_ABBR.get((pick.get("sport", "") or "").upper(), {})
+        if name_map:
+            for gdata in scores_by_game.values():
+                home_ab = name_map.get((gdata.get("home_team", "") or "").lower())
+                away_ab = name_map.get((gdata.get("away_team", "") or "").lower())
+                if home_ab and away_ab and {home_ab, away_ab} == abbrs:
+                    return gdata
+    return None
+
+
+# Game-line stats where a point spread / total is meaningless (moneyline). These
+# may legitimately carry a blank `line` field, so grade_game_line must not bail
+# on float('') for them.
+_MONEYLINE_STATS = frozenset({"ML", "ML_FAV", "ML_DOG", "F5_ML"})
+
+
 def grade_game_line(pick, scores_by_game, linescores=None, nhl_ot_info=None):
     """Grade a game-line pick (spread, total, ML, F5, NRFI) using scores.
 
@@ -986,27 +1097,17 @@ def grade_game_line(pick, scores_by_game, linescores=None, nhl_ot_info=None):
     try:
         line = float(pick["line"])
     except (ValueError, TypeError, KeyError):
-        logger.warning(f"[grade_game_line] Bad line value for {pick.get('game','?')} {stat}: {pick.get('line','')!r} — skipping")
-        return None
+        # Moneyline markets have no line — grade them with a 0.0 placeholder
+        # (the ML branches never use `line`). Any other stat genuinely needs a
+        # line, so a blank one is ungradable.
+        if stat in _MONEYLINE_STATS:
+            line = 0.0
+        else:
+            logger.warning(f"[grade_game_line] Bad line value for {pick.get('game','?')} {stat}: {pick.get('line','')!r} — skipping")
+            return None
 
-    # Find matching game in scores
-    matched = None
-    for key, gdata in scores_by_game.items():
-        if game.lower() in key.lower() or key.lower() in game.lower():
-            matched = gdata
-            break
-
-    if not matched:
-        # Try partial team name matching
-        teams = game.replace(" @ ", "|").split("|")
-        for key, gdata in scores_by_game.items():
-            for t in teams:
-                if t.strip().lower() in key.lower():
-                    matched = gdata
-                    break
-            if matched:
-                break
-
+    # Find matching game in scores (handles the 'AWAY@HOME' abbreviation format)
+    matched = _resolve_score_game(pick, scores_by_game)
     if not matched:
         return None
 

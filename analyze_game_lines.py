@@ -780,6 +780,23 @@ def print_ranked_table(bets):
 
 
 
+def _line_from_label(label):
+    """Extract the signed line embedded in an edge_str label.
+
+    The point spread / total is rendered in parentheses at the end of the
+    label, e.g. 'SPREAD HOME ATH (-1.5)' -> '-1.5', 'TOTAL OVER  (8.5)' -> '8.5',
+    'TT OVER  COL (4.5)' -> '4.5'. Moneyline labels carry no parenthesised
+    number ('ML HOME  ATH') and return '' — those stats have no line.
+
+    This is the structured source for the CSV `line` column: the per-market
+    edge_str() callers don't pass line=, so without this the column was written
+    empty and grade_game_line() bailed at float('').
+    """
+    import re
+    m = re.search(r"\(([+-]?\d+(?:\.\d+)?)\)", label or "")
+    return m.group(1) if m else ""
+
+
 def _parse_label_meta(label):
     """Return (stat, direction) from edge_str label string."""
     s = label.strip().upper()
@@ -825,6 +842,12 @@ def _write_game_line_bets(bets, log_path):
                 home_abbr = b.get("home_abbr", game_tag.split("@")[1] if "@" in game_tag else "")
                 model_p   = b["model"]
                 edge      = b["edge"]
+                # The edge_str() callers don't pass line=, so b["line"] is None for
+                # every game-line bet — recover it from the label text instead. ML
+                # markets legitimately have no line and stay blank.
+                line_val  = b.get("line")
+                if line_val is None or line_val == "":
+                    line_val = _line_from_label(b.get("label", ""))
                 row = {
                     "date":            today,
                     "run_time":        now,
@@ -833,7 +856,7 @@ def _write_game_line_bets(bets, log_path):
                     "player":          game_tag,
                     "team":            home_abbr,
                     "stat":            stat,
-                    "line":            b.get("line", ""),
+                    "line":            line_val,
                     "direction":       direction,
                     "proj":            f"{model_p:.4f}",
                     "win_prob":        f"{model_p:.4f}",
