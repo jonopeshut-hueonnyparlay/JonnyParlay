@@ -134,7 +134,7 @@ rp = read_file(RUN_PICKS)
 thresholds_src = read_file(ENGINE / "thresholds.py")
 calibrated_src = read_file(ENGINE / "calibrated.py")
 
-# Still defined in run_picks.py
+# Local to evaluate_nrfi() in engine/evaluators.py (moved in Phase 2a refactor)
 EXPECTED_RP = {
     "NRFI_GAMMA = 0.65": 'NRFI_GAMMA = 0.65',
 }
@@ -171,7 +171,7 @@ EXPECTED_CALIBRATED = {
 }
 
 for label, pattern in EXPECTED_RP.items():
-    check(f"run_picks.py: {label}", pattern in rp, f"Pattern not found: '{pattern}'")
+    check(f"evaluators.py: {label}", pattern in read_file(ENGINE / "evaluators.py"), f"Pattern not found: '{pattern}'")
 for label, pattern in EXPECTED_THRESHOLDS.items():
     check(f"thresholds.py: {label}", pattern in thresholds_src, f"Pattern not found: '{pattern}'")
 for label, pattern in EXPECTED_CALIBRATED.items():
