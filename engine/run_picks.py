@@ -130,14 +130,16 @@ if _ctx_path.exists():
     except Exception:
         pass
 
-ODDS_BASE    = "https://api.the-odds-api.com/v4"
-ODDS_REGIONS = "us,us2,us_ex"
-API_SLEEP    = 1.3  # seconds between calls
-
-SPORT_KEYS = {"NBA": "basketball_nba", "NHL": "icehockey_nhl",
-              "NFL": "americanfootball_nfl", "MLB": "baseball_mlb",
-              "WNBA": "basketball_wnba",
-              "NCAAB": "basketball_ncaab", "NCAAF": "americanfootball_ncaaf"}
+# Runtime/market wiring constants live in market_config.py (extract-and-re-export
+# refactor, Step 8). Re-imported here so existing call sites and
+# `from run_picks import ...` keep resolving.
+from market_config import (  # noqa: E402
+    ODDS_BASE, ODDS_REGIONS, API_SLEEP, SPORT_KEYS,
+    SHADOW_SPORTS, SHADOW_STATS, SHADOW_GATE_CODES,
+    _BLOCKED_LOG_SKIP_GATES, _BLOCKED_LOG_COLS, SHADOW_LOG_PATHS,
+    SPORT_ALT_MARKET, PROP_MARKETS, MARKET_TO_STAT, MARKET_TO_STAT_OVERRIDE,
+    WNBA_TEAM_ABBREV, SUSPENDED_STATS, SLOW_BOOKS, TEAM_ABBREV,
+)
 
 # Colorado-legal sportsbooks — line shopping filtered to these only.
 # Canonical definition lives in book_names.py (audit H-13).
@@ -185,330 +187,48 @@ from io_utils import atomic_write_json  # noqa: E402
 # To rotate, edit `.env` (gitignored) at project root or user home dir.
 # Bot display name on all webhooks: PicksByJonny
 
-BONUS_DAILY_CAP = 5             # Max bonus posts per calendar day
-MIN_BONUS_SCORE = 65            # Minimum pick_score to qualify for a bonus drop
-MIN_BONUS_WIN_PROB = 0.65       # Minimum win probability to qualify for a bonus drop
-MIN_DAILY_LAY_PROB = 0.50       # Minimum combined cover probability before posting daily lay
-                                 # 0.50 guarantees EV > 0 at +100 cap: 0.50 × 2.00 = 1.00 (break-even at minimum).
-                                 # Kelly is negative at 47% for any realistic odds range; the 0.25u
-                                 # floor in size_daily_lay() handles under-Kelly stakes. Old 0.33
-                                 # allowed zero-EV posts at the parlay level.
-MIN_DAILY_LAY_MARGIN = 4.0      # Minimum projected margin (pts) for a team to qualify as a daily lay leg
-MIN_LEG_EDGE_DAILY = 0.025      # Minimum per-leg edge for daily lay legs (screens out noise)
-MIN_LEG_COVER_PROB_DAILY = 0.58 # Minimum per-leg cover probability for daily lay legs
-LONGSHOT_SIZE = 0.25            # Unit size for longshot parlay (high variance, small stake)
-VALUE_PARLAY_SIZE = 0.25        # Unit size for 5-leg value parlay fallback; tune separately after data
-LONGSHOT_MAX_PER_GAME = 2       # F2.20: moved from inside build_safest6_parlay to top-level constant
-LONGSHOT_PAIR_RHO = 0.35        # Plan 9 §9B: +ρ ranking boost for pitcher OUTS-under +
-                                # opposing TEAM_TOTAL-over in the same game (ρ ≈ +0.30-0.40,
-                                # mirror image of the X1 negative pair). Ranking-only —
-                                # never blocks; displayed combined_prob stays independence.
-SGP_LOG_SIZE  = 0.25            # Unit size for SGP when logged (mirrors sgp_builder.SGP_SIZE)
-
-# ── KILLSHOT tier (v3 — Plan 6 §13 redesign 2026-06-05; see CLAUDE.md) ─────────
-# v2 was internally dead (0 KILLSHOTs in 5+ weeks): PTS is T2 so PTS ∧ tier=T1 was
-# unsatisfiable, SOG is suspended — only NBA AST could ever fire. v3 changes:
-#   - tier requirement dropped (T1 WR=46.6% < T2=60.3%; selection on floors is
-#     strictly better — tier already enters via BM shrinkage on win_prob, Plan 9 §9F)
-#   - static wp floor replaced by odds-dependent: wp >= implied_prob(odds) + MARGIN
-#     (closes the latent −EV window: wp=0.65 at −200 was −2.5%/unit)
-#   - manual path now also enforces the odds range + wp floor (was score-only)
-#   - SOG removed from allowlist while G_SOG_SUSPENDED — re-add at July refit
-#   - _assert_killshot_invariants() fails fast at module load on dead entries
-# Auto-qualify gate: ALL must pass
-KILLSHOT_SCORE_FLOOR    = 65.0                             # Pick Score floor
-KILLSHOT_WP_MARGIN      = 0.03                             # v3: wp >= implied_prob(odds) + 0.03 (breakeven + EV cushion)
-KILLSHOT_ODDS_MIN       = -200                             # no razor-thin chalk (−EV window closed by the wp floor)
-KILLSHOT_ODDS_MAX       =  110                             # no live dogs
-KILLSHOT_STAT_ALLOW     = frozenset({"PTS", "AST"})        # v3: SOG removed while G_SOG_SUSPENDED (re-add at July refit); REB dropped (L9), 3PM dropped (CV 0.65-1.2 incompatible)
-# Manual override (via --killshot NAME): bypasses score/stat selection but still
-# counts toward weekly cap AND must pass the odds range + odds-dependent wp floor (v3).
-KILLSHOT_MANUAL_FLOOR   = 75.0                             # Minimum score to allow manual promote
-KILLSHOT_WEEKLY_CAP     = 2                                # rarer = more signal
-# Sizing: replaces VAKE for KILLSHOT picks. Flat-ish — safer plays don't argue for bigger size.
-KILLSHOT_SIZE_BASE       = 3.0   # default
-KILLSHOT_SIZE_BUMP       = 4.0   # bump ceiling
-KILLSHOT_BUMP_WIN_PROB   = 0.70  # bump requires BOTH wp and edge
-KILLSHOT_BUMP_EDGE       = 0.06
+# Structural decision-boundary constants live in thresholds.py (extract-and-re-export
+# refactor, Step 9). Re-imported here so existing call sites and
+# `from run_picks import ...` keep resolving.
+from thresholds import (  # noqa: E402
+    BONUS_DAILY_CAP, MIN_BONUS_SCORE, MIN_BONUS_WIN_PROB,
+    MIN_DAILY_LAY_PROB, MIN_DAILY_LAY_MARGIN, MIN_LEG_EDGE_DAILY, MIN_LEG_COVER_PROB_DAILY,
+    LONGSHOT_SIZE, VALUE_PARLAY_SIZE, LONGSHOT_MAX_PER_GAME, LONGSHOT_PAIR_RHO, SGP_LOG_SIZE,
+    KILLSHOT_SCORE_FLOOR, KILLSHOT_WP_MARGIN, KILLSHOT_ODDS_MIN, KILLSHOT_ODDS_MAX,
+    KILLSHOT_STAT_ALLOW, KILLSHOT_MANUAL_FLOOR, KILLSHOT_WEEKLY_CAP,
+    KILLSHOT_SIZE_BASE, KILLSHOT_SIZE_BUMP, KILLSHOT_BUMP_WIN_PROB, KILLSHOT_BUMP_EDGE,
+    POISSON_CUTOFF,
+    WNBA_SEASON_START, WNBA_OPENING_GATE_DAYS, WNBA_OPENING_GATE_GAMES,
+    WNBA_EARLY_SEASON_EDGE_MULT, WNBA_EV_FLOOR,
+    PLATT_SPACE, F5_SCALAR, BLEND_ALPHA,
+    BM_SHRINKAGE_DEFAULT, KELLY_FRACTION, DEFAULT_MARKET_MULT,
+    MAX_PREMIUM_PICKS, MIN_PICK_SCORE, MIN_OVER_SCORE, MIN_WIN_PROB,
+)
 BRAND_LOGO = "https://cdn.discordapp.com/attachments/1115840612915228727/1225636209221566625/JonnyParlaylogoRedBlack.png"
-
-# Shadow sports — evaluated + logged internally but NEVER posted to Discord.
-# Remove a sport from this set once it's proven profitable over a meaningful sample.
-# WNBA went live 2026-06-09 (gate: ~100 graded picks post-dampener). Add a sport
-# here (plus a SHADOW_LOG_PATHS entry) to re-shadow it.
-SHADOW_SPORTS = set()
-
-# Shadow stats — new markets with zero live track record. Picks are scored,
-# sized, and logged to pick_log_shadow_stats.csv (NOT main pick_log.csv) but
-# are NEVER included in the Discord card or bonus drops.
-# Go-live gate: remove a stat once it has n>=30 logged picks at >=55% WR.
-# Check pick_log_shadow_stats.csv manually or via analyze_picks.py --shadow-stats
-SHADOW_STATS = {
-    # NHL skater — added 2026-05-26, no live history
-    "GOALS", "NHLPTS", "NHLBLK",
-    # NHL goalie — added 2026-05-26, no live history
-    "SV", "GA",
-    # MLB pitcher — added 2026-05-26, no live history
-    "ER", "BB", "PC",
-    # MLB batter — added 2026-05-26, no live history
-    "RBI", "RUNS",
-    # Previously killed markets — rebuilt/re-enabled for shadow data accumulation
-    "TB",    # G_TB_DISABLED removed; calc_tb_prob (Poisson convolution) was already the rebuild; NB r=1.3 fallback added
-    "HRR",   # G_HRR_DISABLED removed; over at line<=0.5 blocked by G_HRR_OVER_LOW_LINE (2026-06-09 — 46.3% WR, r=1.5 too thin vs within-player ~1.1); under + over>0.5 still accumulating
-    "NRFI",  # G_NRFI_DISABLED removed; was 28.9% WR on 211 shadow picks; re-shadowing for fresh data
-    "YRFI",  # same generate_nrfi_picks path as NRFI; shadow alongside it
-}
-
-# Gate codes that should route to the shadow log instead of the failed/dropped pool.
-# These are direction- or line-specific kills where the stat itself is still bettable on
-# the other side or at higher lines. Picks hitting these gates go to pick_log_shadow_stats.csv.
-SHADOW_GATE_CODES = {
-    "G8B",           # AST over ≤4.5 (0-5 NBA record; ≥5.5 is live)
-    "G8C",           # SOG under ≤3.5 (42-52% WR; >3.5 is live)
-    "G8D",           # 3PM over ≤1.5 (50% actual vs 70% model; >1.5 is live)
-    "G_TT_OVER_NBA", # TEAM_TOTAL over NBA (45.5% WR n=11; under is live; NBA-only block)
-    "R4_REB_OVER",   # REB over (structural over-projection; under is live)
-    "R4_REB_U25",    # REB under ≤2.5 (volatile at low lines; >2.5 under is live)
-    "R11_AST_U25",   # AST under 1.5 and 2.5 (sub-elite lines; 0.5 and >2.5 are live)
-    "G_HITS_OVER_SHADOW",  # HITS over (Plan 10 §T — was hard kill; shadow to accrue data, n≥30)
-}
-
-# Gates that are full-stat suspensions pending investigation — excluded from
-# pick_log_blocked.csv because suspension frequency tells us nothing structural.
-_BLOCKED_LOG_SKIP_GATES = frozenset({
-    "G_SOG_SUSPENDED",
-    "G_HA_SUSPENDED",
-    "G_RA_DISABLED",
-})
-_BLOCKED_LOG_COLS = [
-    "date", "sport", "player", "stat", "line", "direction",
-    "odds", "edge", "win_prob", "gate_result",
-]
-
-# Each shadow sport logs to its own isolated CSV (keeps main pick_log clean).
-# MLB went live 2026-05-20, WNBA 2026-06-09 — removed from shadow paths.
-# Legacy data/pick_log_wnba.csv is still graded (grade_picks.py) and CLV-watched.
-SHADOW_LOG_PATHS = {}
-
-# Per-sport alt spread market names for the parlay builder
-SPORT_ALT_MARKET = {
-    "NBA": "alternate_spreads",
-    "NHL": "alternate_puck_line",
-    "MLB": "alternate_run_line",
-}
-
-PROP_MARKETS = {
-    "NBA": [
-        "player_assists", "player_rebounds", "player_points", "player_threes",
-        "player_points_rebounds_assists", "player_points_rebounds",
-        "player_points_assists", "player_rebounds_assists",
-    ],
-    "WNBA": [
-        "player_assists", "player_rebounds", "player_points", "player_threes",
-        "player_points_rebounds_assists", "player_points_rebounds",
-        "player_points_assists", "player_rebounds_assists",
-    ],
-    "NHL": [
-        "player_shots_on_goal", "player_assists",
-        "player_goals", "player_points", "player_blocked_shots",
-    ],
-    "MLB": [
-        "pitcher_outs", "pitcher_hits_allowed",
-        "batter_hits", "batter_hits_runs_rbis",
-        "batter_rbis", "batter_runs_scored", "pitcher_earned_runs",
-    ],
-}
-
-# Maps API market key → our stat label (sport-agnostic)
-MARKET_TO_STAT = {
-    "player_assists": "AST", "player_rebounds": "REB",
-    "player_points": "PTS", "player_threes": "3PM",
-    "player_points_rebounds_assists": "PRA",
-    "player_points_rebounds": "PR",
-    "player_points_assists": "PA",
-    "player_rebounds_assists": "RA",
-    "player_shots_on_goal": "SOG",
-    # NHL skater
-    "player_goals": "GOALS",
-    "player_blocked_shots": "NHLBLK",
-    "goalie_saves": "SV",
-    "goalie_goals_against": "GA",
-    # player_points for NHL → NHLPTS (G+A) via MARKET_TO_STAT_OVERRIDE below
-    # MLB pitcher
-    "pitcher_outs": "OUTS",
-    "pitcher_hits_allowed": "HA",
-    "pitcher_earned_runs": "ER",
-    "pitcher_walks": "BB",
-    "pitcher_pitches_thrown": "PC",
-    # MLB batter
-    "batter_hits": "HITS", "batter_total_bases": "TB",
-    "batter_hits_runs_rbis": "HRR",
-    "batter_rbis": "RBI",
-    "batter_runs_scored": "RUNS",
-}
-
-# Sport-specific market key overrides — applied after MARKET_TO_STAT when sport is known.
-# Handles market keys shared between sports that map to different stat labels.
-# player_points: NBA/WNBA → PTS (points scored); NHL → NHLPTS (goals + assists)
-MARKET_TO_STAT_OVERRIDE = {
-    "NHL": {"player_points": "NHLPTS"},
-}
 
 # ============================================================
 #  SIGMA & TIER CONFIG (v9.4)
 # ============================================================
 
-SIGMA = {
-    # NBA / NHL — Normal distribution sigma: σ = max(proj * mult, min)
-    # NOTE: SOG/HITS removed — POISSON_STATS takes priority.
-    # REB and AST kept here for combo path (_combo_mu_sigma) only:
-    #   single-stat REB → NB_STATS (r=14.7); single-stat AST → NB_STATS (r=12.16).
-    # Calibrated 2026-05-25 from 84k+ player-games (3 seasons), within-player CV at min>=20.
-    "REB": {"mult": 0.48, "min": 2.0},  # was 0.58/2.5 — empirical median CV=0.483 (3-season stable)
-    "AST": {"mult": 0.53, "min": 2.0},  # NEW — combo path only; 3-season median CV=0.507; fallback was 0.40/2.0
-    # "REC" removed — POISSON_STATS takes priority (REC is in POISSON_STATS); SIGMA["REC"] was unreachable dead code.
-    "PTS": {"mult": 0.35, "min": 5.0},  # mult confirmed by MAE backtest (σ≈6.74 at proj=20 → CV=0.337); min raised 4.5→5.0 (MAE by role: spot=5.15, rotation=5.98)
-    # "3PM" not here — NB_STATS/NB_R (Negative Binomial, r=9.15). Do NOT add.
-    # MLB — calibrated 2026-05-26 from 69k pitcher / 169k batter game logs (2023-2026).
-    # "HA" not here — NB_STATS (NB r=13.41; within-player var/mu=1.204, overdispersed).
-    # "HRR" not here — NB_STATS (Negative Binomial, r=1.5).
-    # "TB" not here — G_TB_DISABLED (structural kill A2 2026-05-22).
-    # "HITS" not here — POISSON_STATS takes priority.
-    # OUTS/PC recalibrated 2026-06-05 (Plan 6 §1C) on STARTS ONLY (is_starter=1, 16,187 starts,
-    # 345 pitchers n>=10). Prior 0.311/0.375 were contaminated by relief appearances (the market
-    # prices starters only): within-CV starts-only = 0.228/0.142 vs relief 0.443/0.460.
-    "OUTS": {"mult": 0.27, "min": 1.0},   # pooled-start CV=0.276; within=0.228 — 0.27 keeps a left-tail buffer
-    "PC":   {"mult": 0.19, "min": 6.0},   # within=0.142, pooled-start=0.204 — 0.19 mid-band; skew −1.93, Normal provisional (empirical-CDF candidate at July refit)
-    # NHL goalie — calibrated 2026-05-26 from 15k goalie game-logs (2023-2026), within-player CV=0.253.
-    # High-count stat (mean=26.6); Normal is correct (continuous-ish, high-volume).
-    "SV":   {"mult": 0.253, "min": 3.5},
-}
+# Calibrated/fitted constants live in calibrated.py (extract-and-re-export refactor,
+# Step 10). Re-imported here so existing call sites and `from run_picks import ...`
+# keep resolving. The get_game_sigma* accessors stay below (they use resolve_team_abbrev
+# + math) and read the re-imported _TEAM_SIGMAS / GAME_SIGMA. _load_team_sigmas() runs
+# at calibrated.py import — _TEAM_SIGMAS / _TEAM_SIGMAS_MEANSQ arrive already populated.
+from calibrated import (  # noqa: E402
+    SIGMA, POISSON_STATS, NB_STATS, NB_R, NB_R_WNBA,
+    COMBO_STATS, COMBO_COMPONENTS, COMBO_RHO, SIGMA_WNBA, COMBO_RHO_WNBA,
+    PITCHER_STATS, BATTER_CORR_STATS, MLB_CORR_GROUPS,
+    PLATT_A, PLATT_B, GAME_SIGMA,
+    _TEAM_SIGMAS, _TEAM_SIGMAS_MEANSQ,
+    _FIXED_SPREAD_SPORTS, F5_SIGMA, MLB_PARK_FACTORS, MLB_TEAM_RUN_R,
+    STAT_FAMILY_TIER, TIERS, BM_SHRINKAGE_WEIGHT, KELLY_MARKET_MULT, VAKE_MULT,
+    PICK_SCORE_MODES, COLD_START_SCORE_PENALTY,
+    INJURY_TRIGGER_BONUS, INJURY_TRIGGER_BONUS_DEFAULT,
+)
 
-# HA removed from Poisson — overdispersed at typical lines; moved to NB_STATS (within-player var/mu=1.204, r=13.41)
-# GOALS, NHLPTS, NHLBLK: NHL skater stats — perfect Poisson (var/mu=0.989, 0.983, 1.081 from 141k skater games)
-# RUNS: MLB batter runs — Poisson (var/mu=0.969 from 169k batter games)
-# GA: NHL goalie goals against — Poisson (within-player var/mu=0.830 from 15k goalie game-logs; sub-Poisson is fine)
-# BB: MLB pitcher walks — Poisson (within-player var/mu=0.992 from 69k pitcher game-logs; Poisson confirmed)
-POISSON_STATS = {"SOG", "REC", "HITS", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB"}  # AST/REB moved to NB_STATS; REC here makes SIGMA["REC"] unreachable (removed from SIGMA)
-POISSON_CUTOFF = 8.5
-
-# P16 — Negative binomial distribution for overdispersed count stats.
-# NB(mu, r): var = mu + mu²/r.  r calibrated from within-player conditional variance
-# (avg_var / avg_mu per player across 2024-25 DB), NOT population-level cross-player variance.
-# All values via: r = SUM(n*mu^2) / SUM(n*max(var-mu, 0.001)). Source: engine/calibrate_distributions.py.
-# Last deployed: 2026-05-30 from EdgeModel calibrate_distributions.py. To redeploy: python engine/calibrate_distributions.py --sport NBA --save and update values below.
-#   3PM: avg(var/mu)=1.1486 across n=1246 player-seasons -> r=9.15 (was 12.3 — too tight)
-#   AST: avg(var/mu)=1.3234 across n=69773 game-logs (582 players) -> r=12.16 (was 9.68 from 1395 player-seasons; game-level refit 2026-05-30)
-#   REB: avg(var/mu)=1.3873 across n=69773 game-logs (582 players) -> r=14.7 (was 10.18 from 1395 player-seasons; game-level refit 2026-05-30)
-#   HRR: r=1.5 calibrated from shadow log: NB(r=1.5, mu=2.0) gives P(X>=2)=47.8% matching empirical 48% WR.
-#        Normal was giving 63% for same projection — structural zero-inflation (batter 0-H/R/RBI ~37% of games).
-#   HA:  r=13.41 — calibrated 2026-05-26 from 69k pitcher game-logs (2023-2026); within-player var/mu=1.204.
-#        Confirmed 2026-05-30 by EdgeModel (56280 game-logs, var/mu=1.2037); no change.
-#   RBI: r=0.87 — calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535.
-#        Low r means heavy zero-inflation (batters go 0-RBI in ~74% of games) with long right tail.
-#   ER:  r=2.62 — calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700.
-#        Overdispersed relative to Poisson; bullpen usage and run-support create heavy tails.
-# STL/BLK/TOV: Poisson confirmed 2026-05-30 (69773 game-logs): var/mu=1.072/1.113/1.050 — all below NB threshold. No move to NB_STATS.
-NB_STATS = {"3PM", "HRR", "AST", "REB", "HA", "RBI", "ER", "TB"}
-NB_R = {
-    "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
-    "AST": 12.16,  # recalibrated 2026-05-30: 582 players/69773 game-logs, avg(var/mu)=1.3234 (was 9.68 from player-seasons)
-    "REB": 14.7,   # recalibrated 2026-05-30: 582 players/69773 game-logs, avg(var/mu)=1.3873 (was 10.18 from player-seasons)
-    "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) -> P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
-    "HA":  13.41,  # calibrated 2026-05-26: 69k pitcher game-logs; var/mu=1.204. Confirmed 2026-05-30 EdgeModel (56280 games, var/mu=1.2037); no change.
-    "RBI": 0.87,   # calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535. r<1 is valid NB; reflects heavy zero-inflation (~74% of games are 0 RBI).
-    "ER":  2.62,   # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700. Bullpen + run-support variance creates heavy tails vs Poisson.
-    "TB":  1.3,    # calibrated 2026-05-26: 169k batter game-logs, within-player var/mu=2.117. Fallback only — calc_tb_prob() uses component Poisson convolution (1B/2B/3B/HR) when TB_1B available, which is more accurate.
-}
-
-NB_R_WNBA = {
-    "AST": 11.37,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
-    "REB": 10.74,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
-    "3PM": 1.342,  # recalibrated 2026-06-09 (go-live): 13,970 rows (min>=8), var/mu=1.708, zero_rate=0.502
-}
-
-# Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
-# Projection = sum of individual components. Probability via correlated Normal.
-COMBO_STATS = {"PRA", "PR", "PA", "RA"}
-COMBO_COMPONENTS = {
-    "PRA": ("PTS", "REB", "AST"),
-    "PR":  ("PTS", "REB"),
-    "PA":  ("PTS", "AST"),
-    "RA":  ("REB", "AST"),
-}
-# Intra-player pairwise ρ — calibrated from 76,960 player-games (595 players,
-# n>=20, min>=5) across all seasons in projections.db. Weighted average of
-# within-player Pearson correlations; reflects total game-to-game covariance
-# including minute variance (correct, since SIGMA already captures total σ).
-# Re-verified 2026-05-25 after DB update: all three pairs stable to <0.001.
-# Normal approximation validity (min>=20 pop): PRA skew=0.74, PR skew=0.72,
-# PA skew=0.80, RA skew=0.94 — all ACCEPTABLE. RA is the most skewed (small
-# count stats) but error at typical prop lines is within model uncertainty.
-COMBO_RHO = {
-    ("PTS", "REB"): 0.333,
-    ("PTS", "AST"): 0.233,
-    ("REB", "AST"): 0.251,
-}
-
-# WNBA-specific sigma (used for G14 z-score proxy and combo sigma).
-# Recalibrated 2026-06-05 (Plan 6 §1C) on the PRICED population: min>=20 minutes,
-# 153 players n>=10 (2023–2026 RS, EdgeModel projections.db). The prior min>=8 frame
-# (PTS 0.618 / AST 0.779 / REB 0.633) was a sampling artifact — median player in that
-# frame scores 7.2 PPG and is never actually priced (NBA same-frame check gives 0.615).
-# AST/REB use NB for probability (NB_R_WNBA) but Normal sigma here (G14 + combos).
-SIGMA_WNBA = {
-    "PTS": {"mult": 0.48, "min": 3.5},   # min>=20 median within-CV=0.479
-    "AST": {"mult": 0.65, "min": 1.0},   # min>=20 median within-CV=0.650 (was 0.779)
-    "REB": {"mult": 0.54, "min": 1.0},   # min>=20 median within-CV=0.537 (was 0.633)
-    "3PM": {"mult": 0.48, "min": 0.70},  # z-score/combo proxy only — 3PM probability uses NB (NB_R_WNBA)
-}
-
-# WNBA combo correlations — calibrated 2026-06-04 from 202 players / 13,322 games
-# (2023–2026 Regular Season, min>=8, n>=10 per player). Within-player weighted
-# Pearson; SE≈0.009. All three pairs ~0.04–0.05 below NBA equivalents, consistent
-# with slightly lower WNBA pace/usage variance.
-COMBO_RHO_WNBA = {
-    ("PTS", "REB"): 0.294,
-    ("PTS", "AST"): 0.188,
-    ("REB", "AST"): 0.200,
-}
-
-# WNBA early-season gate — opening-day extreme variance is structural (SaberSim cannot
-# price new-team/new-role stars; Section 1 + 6 research). Plan 6 §14 (2026-06-05):
-#   - opening gate re-keyed to GAMES PLAYED (both teams >= WNBA_OPENING_GATE_GAMES);
-#     WNBA_OPENING_GATE_DAYS retained only as the fallback when the games-played
-#     count is unavailable (EdgeModel DB missing/stale).
-#   - early-season dampener rewired from edge-multiplication to SIGMA INFLATION
-#     (sigma /= factor in calc_prop_prob) so win_prob, edge, score AND Kelly size
-#     all shrink coherently — the old edge-mult lowered ranking but sized at full
-#     confidence. Factors are DATA_GATED: recalibrate at WNBA go-live (100 graded).
-WNBA_SEASON_START = date(2026, 5, 13)   # update each season
-WNBA_OPENING_GATE_DAYS = 3              # FALLBACK day gate (games-played source unavailable)
-WNBA_OPENING_GATE_GAMES = 2             # both teams need >= 2 current-season games
-WNBA_EARLY_SEASON_EDGE_MULT = [         # (day_threshold, factor) — ascending; sigma /= factor
-    (14, 0.80),   # days 4-14:  sigma × 1.25
-    (21, 0.90),   # days 15-21: sigma × 1.11
-]
-# G_WNBA_EDGE is an EV-PER-UNIT floor (Plan 6 §14 option B; replaced the dead
-# WNBA_EDGE_FLOOR=0.035, which was always dominated by G9=0.05). Bar = the net EV
-# of NBA's G9 floor pick at standard vig: edge 0.05 at −110 → EV = 0.05 × 1.9091
-# ≈ 0.0955/unit. EV computed from ACTUAL quoted odds, so the floor auto-adjusts
-# to vig (at −115 it requires ~5.1% edge; wider vig → higher edge required).
-# (§14's "6.2% at −115" figure measured edge against p=0.50, not the engine's
-# vigged-implied edge — corrected to the engine's frame here.)
-WNBA_EV_FLOOR = 0.0955
-
-# WNBA team name → abbrev for the games-played opening gate. Odds pipeline carries
-# full names; wnba_player_game_stats (EdgeModel DB) is keyed by team_abbrev.
-# PHX appears as both PHO (2023-24) and PHX (2025+) in the DB — query matches either.
-WNBA_TEAM_ABBREV = {
-    "atlanta dream": "ATL", "chicago sky": "CHI", "connecticut sun": "CON",
-    "dallas wings": "DAL", "golden state valkyries": "GSV", "indiana fever": "IND",
-    "las vegas aces": "LVA", "los angeles sparks": "LAS", "minnesota lynx": "MIN",
-    "new york liberty": "NYL", "phoenix mercury": "PHX", "portland fire": "PDX",
-    "seattle storm": "SEA", "toronto tempo": "TOR", "washington mystics": "WAS",
-}
-
+# WNBA early-season/opening gate constants (WNBA_SEASON_START, WNBA_OPENING_GATE_*,
+# WNBA_EARLY_SEASON_EDGE_MULT, WNBA_EV_FLOOR) now live in thresholds.py (re-imported at top).
 _WNBA_GP_CACHE: dict = {}   # per-run cache: (abbrev, iso_date) -> int
 
 
@@ -573,82 +293,10 @@ def _wnba_team_games_played(team_name: str, today=None):
     _WNBA_GP_CACHE[key] = count   # count==0 with season rows present = real late opener
     return count
 
-# MLB Correlation Groups — stats driven by the same hidden variable (IP for pitchers, PA for batters)
-# G11/G11b: max 1 prop per player within each correlated group
-PITCHER_STATS = {"OUTS", "HA", "ER", "BB", "PC"}  # All functions of IP — r ≈ 0.70+ between OUTS/HA; ER/BB/PC added 2026-05-26
-
-# Suspended stats — single source of truth (Plan 6 §13, 2026-06-05).
-# check_prop_gates() blocks these via one lookup; _assert_killshot_invariants()
-# asserts KILLSHOT_STAT_ALLOW never contains a suspended stat (the v2 PTS/SOG
-# dead-entry problem took 5+ weeks to discover).
-#   SOG: suspended 2026-06-05 pending distribution investigation — lift at July refit.
-#   HA:  suspended 2026-06-05 pending model investigation — lift after WR ≥40% at n≥20.
-#   RA:  disabled 2026-06-05 — 0W/7L (0% actual vs 56.7% model, n=11 live picks).
-SUSPENDED_STATS = {
-    "SOG": "G_SOG_SUSPENDED",
-    "HA":  "G_HA_SUSPENDED",
-    "RA":  "G_RA_DISABLED",
-}
-BATTER_CORR_STATS = {"HITS", "TB", "HRR"}           # HITS is component of TB and HRR — r ≈ 0.70+
-MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
-
-# P9 — Platt scaling calibration for prop win_prob (2026-05-01).
-# Fitted from 76 settled primary/bonus props (NBA + NHL) via Nelder-Mead NLL.
-# FORMULA: raw-probability space — sigmoid(PLATT_A * over_p + PLATT_B)
-# These coefficients were fitted FOR this formula. Do NOT use them with logit-space.
-#
-# !! MIGRATION NOTE (2026-05-25): calibrate_platt.py now fits logit-space:
-#    i.e. sigmoid(A * logit(over_p) + B)
-#    When H3 fires (100 native rows), BOTH of the following must happen together:
-#      1. Update _platt_calibrate_prop() below to use logit-space
-#      2. Paste new A/B from calibrate_platt.py (they will be different values)
-#    Pasting logit-space A/B into the current raw-space formula is WRONG —
-#    at over_p=0.75 it would shift output by ~12pp.
-#
-# Result at fit time: model mean win_prob 0.696 → calibrated 0.579 = actual 0.579.
-# Brier improvement: 6.0% (in-sample). H3 gate: 100 native over_p_raw rows.
-PLATT_A = 1.4988   # slope  — raw-probability space (not logit-space)
-PLATT_B = -0.8102  # intercept — raw-probability space (not logit-space)
-PLATT_SPACE = "raw"  # "raw"=sigmoid(A*p+B); "logit"=sigmoid(A*logit(p)+B). Change SIMULTANEOUSLY with formula+A/B at H3.
-
-GAME_SIGMA = {
-    # NHL sigmas calibrated 2026-06-05 from 3936 games (2023-24 + 2024-25).
-    # total=std(home+away)=2.311; spread=std(home-away)=2.614; team=avg(std(home),std(away))=1.744
-    # ml uses spread sigma — P(win) = P(margin > 0) under same goal-differential distribution.
-    # Prior values (total=1.2, spread=1.5, ml=4.0) were wrong by ~2x.
-    # NBA calibrated 2026-06-05 (Plan 6 §6) from 3,922 reconstructed games (projections.db, 3 seasons):
-    #   raw total SD=20.20, raw margin SD=16.04, rho(home,away)=+0.227,
-    #   residual SDs vs team-season means: total=19.33, margin=15.27, home=12.23.
-    # Deployed values are residual-basis, split toward published around-the-line estimates
-    # (total ~18.5; spread/ml ~12.5 per around-the-spread literature; team ~11.0).
-    # Prior values (12/12/9/12) were never calibrated — total was ~40% too narrow.
-    "NBA":  {"total": 18.5, "spread": 12.5, "team": 11.0,  "ml": 12.5},
-    "WNBA": {"total": 17.424, "spread": 10.0, "team": 11.253, "ml": 10.0},  # total+team recalibrated 2026-06-09 (go-live) from 851 games
-    "NHL":  {"total": 2.311, "spread": 2.614, "team": 1.744, "ml": 2.614},
-    "MLB":  {"total": 4.6,  "spread": 4.2,  "team": 3.0,   "ml": 4.2},  # interim per Plan 10 §O (2026-06-07): total below independence floor (team×√2≈4.4); ml=spread (NHL precedent). Recalibrate from 8095-game DB like NBA/NHL.
-}
-
-# Team-specific sigma JSONs — loaded at startup, fallback to GAME_SIGMA league average.
-# Generated by: python engine/calibrate_distributions.py --mode team-sigmas --sport all
-_TEAM_SIGMAS: dict = {}
-# Per-sport mean of score_sigma² across teams (n_games>=20 only) — denominator of the
-# relative-variability scaler in get_game_sigma(). 0.0 when no usable team data.
-_TEAM_SIGMAS_MEANSQ: dict = {}
-
-def _load_team_sigmas():
-    import json as _json
-    _data_dir = Path(__file__).parent.parent / "data"
-    for sport, fname in [("NHL", "team_sigmas_nhl.json"), ("MLB", "team_sigmas_mlb.json"),
-                         ("NBA", "team_sigmas_nba.json"), ("WNBA", "team_sigmas_wnba.json")]:
-        p = _data_dir / fname
-        if p.exists():
-            data = _json.loads(p.read_text())
-            _TEAM_SIGMAS[sport] = data
-            sq = [t["score_sigma"] ** 2 for t in data.values()
-                  if isinstance(t, dict) and t.get("score_sigma") and t.get("n_games", 0) >= 20]
-            _TEAM_SIGMAS_MEANSQ[sport] = (sum(sq) / len(sq)) if sq else 0.0
-
-_load_team_sigmas()
+# PLATT_A/PLATT_B, GAME_SIGMA, and the team-sigma loader (_TEAM_SIGMAS,
+# _TEAM_SIGMAS_MEANSQ, _load_team_sigmas) now live in calibrated.py (re-imported at top;
+# _load_team_sigmas runs at that import, so _TEAM_SIGMAS arrives populated). The accessor
+# functions below stay here — they use resolve_team_abbrev + math.
 
 def get_game_sigma(sport: str, home_team: str, away_team: str, market: str) -> float:
     """Return matchup-specific sigma; falls back to GAME_SIGMA league average.
@@ -691,197 +339,18 @@ def get_mlb_team_run_r(team_abbr: str) -> float:
     data = _TEAM_SIGMAS.get("MLB", {})
     return data.get(team_abbr, {}).get("nb_r", MLB_TEAM_RUN_R)
 
-# Sports where the spread is always a fixed ±1.5 line (MLB runline, NHL puck line).
-# The fixed line is a derivative of the ML — it does not carry independent run/goal-margin
-# information. ML win_prob must NOT blend against it; use ML no-vig as the market anchor.
-_FIXED_SPREAD_SPORTS = {"MLB", "NHL"}
+# _FIXED_SPREAD_SPORTS, F5_SIGMA, MLB_PARK_FACTORS, MLB_TEAM_RUN_R now live in
+# calibrated.py (re-imported at top).
 
-# First 5 innings sigmas (MLB only — starter matchup, no bullpen noise)
-F5_SIGMA = {"total": 2.65, "spread": 2.70, "team": 2.10}  # calibrated 2026-05-29; total/team raised ±0.1 for park variance
-F5_SCALAR = 0.540  # F5 ≈ 54% of full-game total; market-calibrated 2022-2025 (was 0.503 — too low by ~4pp)
-
-# Park run factors by HOME team — multiplied onto projected runs.
-# Source: Baseball Savant 2022-2025 Statcast park factors (100 = neutral).
-# Applied to F5 and NRFI projections; SaberSim team totals don't carry park-factor information.
-# ⚠ STALE/UNVERIFIED as of 2026-06-07 (Plan 10 §M): TEX inverted (~1.05 here was pitcher-friendly,
-# now plays ~0.95), COL too low (~1.28 → ~1.33), KC/MIN/DET now hitter-friendly. Do NOT apply
-# without a refit from current Fangraphs/Savant park factors.
-MLB_PARK_FACTORS = {
-    "COL": 1.28, "CIN": 1.08, "BOS": 1.07, "PHI": 1.06, "TEX": 1.05,
-    "NYY": 1.04, "HOU": 1.03, "ATL": 1.02, "CHC": 1.01, "LAD": 1.00,
-    "MIL": 0.99, "ARI": 0.99, "MIN": 0.98, "DET": 0.97, "WSH": 0.97,
-    "BAL": 0.97, "MIA": 0.96, "TOR": 0.96, "CLE": 0.96, "STL": 0.95,
-    "KC":  0.95, "PIT": 0.95, "NYM": 0.95, "CHW": 0.95, "TB":  0.94,
-    "SEA": 0.93, "OAK": 0.93, "LAA": 0.93, "SF":  0.92, "SD":  0.91,
-}
-
-# Game line projection blending: anchor SaberSim to the market line.
-# Formula in prose: the blended projection equals the market line plus
-# BLEND_ALPHA of the gap between the SaberSim projection and the market.
-# 0.25 means we trust SaberSim for 25% of any disagreement and the
-# market for the remaining 75% — this prevents massive edge calculations
-# when SaberSim disagrees with Vegas by 10+ pts.
-BLEND_ALPHA = 0.25
-
-# NB dispersion for MLB team run-scoring; calibrated 2026-06-05 from 8095 regular-season games.
-# var/mu=2.261 (pooled); r = mu^2/(var-mu) = 3.548. Used for team-total NB CDF and ML NB sum.
-MLB_TEAM_RUN_R = 3.548
-
-# Plan 9 §9F tier restructure (2026-06-06): tiers are stat-routing buckets keyed
-# by empirical calibration quality — NOT conviction levels. T2 = best-calibrated
-# families → lowest floor. Floors monotone in calibration: T2 0.05 < T1B/T3 0.06 < T1 0.07.
-# The old framing was inverted: "T1 = highest conviction" had the LOWEST floor (0.03)
-# on the WORST-calibrated families (T1 WR 46.6%, ROI −10.2% vs T2 WR 60.3%).
-STAT_FAMILY_TIER = {
-    # T2 — well-calibrated families
-    "PTS": "T2", "OUTS": "T2", "PA": "T2", "PR": "T2", "PRA": "T2", "RA": "T2",
-    "NRFI": "T2", "YRFI": "T2", "TEAM_TOTAL": "T2", "F5_TOTAL": "T2",
-    "YARDS": "T2", "TB": "T2", "BB": "T2", "PC": "T2",
-    "REC": "T2",    # Plan 10 §Group A: was T1 — target-driven, more projectable than YARDS
-    # T1B — binary/low-line
-    "AST": "T1B", "HITS": "T1B",
-    "RUNS": "T1B",  # Plan 10 §Group A: was T2 — lineup/context-dependent (one step less than RBI)
-    # T1 — moderate calibration, needs monitoring
-    "REB": "T1", "HRR": "T1",
-    "RBI": "T1",    # Plan 10 §Group A: was T2 — ~74% zero games, opportunity-dependent
-    "ER": "T1",     # Plan 10 §Group A: was T2 — BABIP/LOB%-driven, regression-prone
-    "HA": "T1",     # Plan 10 §Group A: was T1B — least-controllable pitcher stat (on HA unsuspension)
-    # T3 — specialty/low-n
-    "3PM": "T3", "SOG": "T3", "NHLPTS": "T3", "NHLBLK": "T3",
-    "TDS": "T3", "GOALS": "T3", "ML_DOG": "T3",
-    "GA": "T3",     # Plan 10 §Group A: was T2 — goaltending least-predictable (RS→PO r≈0.15)
-    "SV": "T3",     # Plan 10 §Group A: was T2 — doubly-conditional event; Normal poor fit
-}
-
-TIERS = {
-    # min_edge floors only — stat membership lives in STAT_FAMILY_TIER (Plan 9 §9F).
-    "T1":  {"min_edge": 0.07},   # was 0.03 — raised to match G9B NBA floor
-    "T1B": {"min_edge": 0.06},   # was 0.03 — binary/low-line needs a higher floor
-    "T2":  {"min_edge": 0.05},   # unchanged (G9 universal floor)
-    "T3":  {"min_edge": 0.06},   # unchanged
-    # T4 (GOLF_WIN) removed — see archived_golf_code.py
-}
-
-# Baker–McHale (2013) shrinkage weight per tier: shrunk_p = w·model_p + (1−w)·implied_p.
-# Replaces PICK_SCORE_TIER_MULT + VAKE_MULT["tier"] — one mechanism that moves win_prob,
-# edge, pick_score AND Kelly stake coherently (Plan 9 §9F).
-# DATA_GATED: refit per-family from pick_log calibration at n≥150 graded picks/family.
-BM_SHRINKAGE_WEIGHT = {"T2": 0.85, "T1": 0.75, "T1B": 0.80, "T3": 0.70}
-BM_SHRINKAGE_DEFAULT = 0.80
-
-KELLY_FRACTION = 6.0  # Units converter for Kelly sizing under the 100u bankroll convention:
-                      # units = f* × 6, so stake fraction = f* × 6/100 ≈ 1/16.7 Kelly —
-                      # NOT "1/6 Kelly" (Plan 6 §4 relabel; the value is correct, the old
-                      # label was wrong). Calibrated 2026-06-01 on 207 primary/bonus picks
-                      # (mid-band median implied-F ≈ 5.9).
-
-# Per-market Kelly multipliers applied BEFORE rounding and floor/cap.
-# Lookup: (sport, stat, direction) → (sport, stat, None) → DEFAULT_MARKET_MULT.
-# Only applied to straight prop sizing (not SGP/parlay/daily_lay).
-KELLY_MARKET_MULT = {
-    ("NBA", "PTS", "over"):      0.50,
-    ("NBA", "PTS", "under"):     1.00,
-    ("NBA", "PTS", None):        1.00,
-    ("NBA", "3PM", "under"):     0.75,
-    ("NBA", "3PM", "over"):      0.10,
-    ("NBA", "REB", "under"):     0.50,
-    ("MLB", "OUTS", "under"):    0.50,
-    ("MLB", "TEAM_TOTAL", None): 0.75,
-    ("NHL", "SOG", None):        0.50,
-    ("WNBA", "PTS", None):       1.00,
-    ("WNBA", "AST", "over"):     0.10,
-    ("WNBA", "REB", None):       0.10,  # 35.3% shadow WR (6W/11L) — pinned to 0.25u floor at go-live 2026-06-09, not excluded; revisit at n>=50
-
-}
-DEFAULT_MARKET_MULT = 0.75
-
-# "tier" key retired 2026-06-06 (Plan 9 §9F) — replaced by BM shrinkage on win_prob.
-# "variance" kept as a legacy tier-keyed sizing damper; candidate for the DATA_GATED
-# Kelly multiplier-stack consolidation (single empirical-Bayes per-market mult at
-# n≥50 graded/market — see CLAUDE.md).
-VAKE_MULT = {
-    "variance":    {"T1": 1.00, "T1B": 1.00, "T2": 0.85, "T3": 0.65},
-}
-
-PICK_SCORE_MODES = {
-    "Default":      (0.40, 0.60),
-    "Conservative": (0.55, 0.45),
-    "Aggressive":   (0.30, 0.70),
-}
-
-# PICK_SCORE_TIER_MULT retired 2026-06-06 (Plan 9 §9F): the 0.90× T1 mult was a 10%
-# patch on a >100% win_prob overstatement, and the n=30 checkpoint was uninformative
-# (SE ±9.1pp). Tier calibration quality now enters via BM_SHRINKAGE_WEIGHT, which
-# adjusts win_prob/edge/score/stake coherently.
-
-# Additive score penalties for cold_start sub-types (lower projection reliability).
-COLD_START_SCORE_PENALTY = {
-    "taxi":             -15,
-    "returner":         -10,
-    "extended_absence":  -8,
-    "new_acquisition":   -5,
-}
-
-INJURY_TRIGGER_BONUS = {   # redistribution-bump picks — stat-keyed score bonus
-    "AST":  10,  # primary distributor absent → backup AST spike, high book lag
-    "PTS":   8,  # scorer absent → role bump, moderate lag
-    "SOG":   8,  # NHL SOG replacement, similar lag profile to PTS
-    "REB":   7,  # rebounder absent, default
-}
-INJURY_TRIGGER_BONUS_DEFAULT = 7  # fallback for stats not in the dict above
-
-SLOW_BOOKS = frozenset({"fanatics", "hardrockbet", "betrivers"})  # 15-40 min injury lag — exploitable on --late-run
+# STAT_FAMILY_TIER, TIERS, BM_SHRINKAGE_WEIGHT, KELLY_MARKET_MULT, VAKE_MULT,
+# PICK_SCORE_MODES, COLD_START_SCORE_PENALTY, INJURY_TRIGGER_BONUS(_DEFAULT) now live in
+# calibrated.py (re-imported at top).
 
 # Sportsbook display / normalization — imported above from book_names (audit H-13).
 # Keeping CO_LEGAL_BOOKS, BOOK_DISPLAY, _norm_book, display_book callable at
 # module level for backwards-compat with legacy call sites that reference them
 # as run_picks.CO_LEGAL_BOOKS etc.
-
-# Team abbreviation reverse lookup (full API name → abbreviation)
-TEAM_ABBREV = {
-    # NBA
-    "boston celtics": "BOS", "brooklyn nets": "BKN", "new york knicks": "NYK",
-    "philadelphia 76ers": "PHI", "toronto raptors": "TOR", "chicago bulls": "CHI",
-    "cleveland cavaliers": "CLE", "detroit pistons": "DET", "indiana pacers": "IND",
-    "milwaukee bucks": "MIL", "atlanta hawks": "ATL", "charlotte hornets": "CHA",
-    "miami heat": "MIA", "orlando magic": "ORL", "washington wizards": "WAS",
-    "dallas mavericks": "DAL", "houston rockets": "HOU", "memphis grizzlies": "MEM",
-    "new orleans pelicans": "NOP", "san antonio spurs": "SAS",
-    "denver nuggets": "DEN", "minnesota timberwolves": "MIN",
-    "oklahoma city thunder": "OKC", "portland trail blazers": "POR",
-    "utah jazz": "UTA", "golden state warriors": "GSW",
-    "la clippers": "LAC", "los angeles clippers": "LAC",
-    "los angeles lakers": "LAL", "la lakers": "LAL",
-    "phoenix suns": "PHX", "sacramento kings": "SAC",
-    # NHL
-    "anaheim ducks": "ANA", "arizona coyotes": "ARI", "boston bruins": "BOS",
-    "buffalo sabres": "BUF", "calgary flames": "CGY", "carolina hurricanes": "CAR",
-    "chicago blackhawks": "CHI", "colorado avalanche": "COL",
-    "columbus blue jackets": "CBJ", "dallas stars": "DAL", "detroit red wings": "DET",
-    "edmonton oilers": "EDM", "florida panthers": "FLA", "los angeles kings": "LAK",
-    "minnesota wild": "MIN", "montreal canadiens": "MTL", "nashville predators": "NSH",
-    "new jersey devils": "NJD", "new york islanders": "NYI", "new york rangers": "NYR",
-    "ottawa senators": "OTT", "philadelphia flyers": "PHI",
-    "pittsburgh penguins": "PIT", "san jose sharks": "SJS",
-    "seattle kraken": "SEA", "st louis blues": "STL", "tampa bay lightning": "TBL",
-    "toronto maple leafs": "TOR", "vancouver canucks": "VAN",
-    "vegas golden knights": "VGK", "washington capitals": "WSH", "winnipeg jets": "WPG",
-    "utah hockey club": "UTA",
-    # MLB
-    "arizona diamondbacks": "ARI", "atlanta braves": "ATL", "baltimore orioles": "BAL",
-    "boston red sox": "BOS", "chicago cubs": "CHC", "chicago white sox": "CWS",
-    "cincinnati reds": "CIN", "cleveland guardians": "CLE", "colorado rockies": "COL",
-    "detroit tigers": "DET", "houston astros": "HOU", "kansas city royals": "KC",
-    "los angeles angels": "LAA", "los angeles dodgers": "LAD", "miami marlins": "MIA",
-    "milwaukee brewers": "MIL", "minnesota twins": "MIN", "new york mets": "NYM",
-    "new york yankees": "NYY", "oakland athletics": "OAK", "philadelphia phillies": "PHI",
-    "pittsburgh pirates": "PIT", "san diego padres": "SD", "san francisco giants": "SF",
-    "seattle mariners": "SEA", "st. louis cardinals": "STL", "st louis cardinals": "STL",
-    "tampa bay rays": "TB", "texas rangers": "TEX", "toronto blue jays": "TOR",
-    "washington nationals": "WSH",
-    # Odds API alternate name formats
-    "la angels": "LAA", "la dodgers": "LAD",
-}
+# SLOW_BOOKS and TEAM_ABBREV now live in market_config.py (re-imported at top).
 
 def resolve_team_abbrev(api_name):
     """Resolve a full API team name (e.g., 'Los Angeles Clippers') to abbreviation.
@@ -1547,10 +1016,8 @@ def apply_r12_cooldown(picks, cooldown_players):
     cool_set = {normalize_name(n) for n in cooldown_players}
     return [p for p in picks if normalize_name(p["player"]) not in cool_set]
 
-MAX_PREMIUM_PICKS = 3  # per-sport cap (multi-sport days: MLB+WNBA+NHL+NBA)
-MIN_PICK_SCORE    = 15  # lowered 2026-05-27 — probability calibration improved, 25 was too restrictive
-MIN_OVER_SCORE    = 15  # lowered to match MIN_PICK_SCORE — over/under treated equally
-MIN_WIN_PROB      = 0.50  # floor removed 2026-05-27 — probability calibration improved
+# MAX_PREMIUM_PICKS, MIN_PICK_SCORE, MIN_OVER_SCORE, MIN_WIN_PROB now live in
+# thresholds.py (re-imported at top).
 
 def apply_soft_rules_premium(premium, all_qualifying, max_per_game=2):
     """

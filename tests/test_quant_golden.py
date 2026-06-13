@@ -128,3 +128,13 @@ def test_copula_joint_prob_deterministic_golden():
     # Seeded MC (random.Random(seed)) — deterministic across runs/machines.
     assert sgp._copula_joint_prob([0.68, 0.7], [[1.0, 0.35], [0.35, 1.0]], n_samples=200, seed=42) == 0.46
     assert sgp._copula_joint_prob([0.68, 0.7, 0.66], [[1.0, 0.3, 0.2], [0.3, 1.0, 0.15], [0.2, 0.15, 1.0]], n_samples=200, seed=42) == 0.37
+
+
+def test_copula_module_matches_sgp_reexport():
+    # quant.copula is the canonical home; sgp_builder re-exports the underscore
+    # aliases. Both paths must be bit-identical for the same inputs/seed.
+    from quant import copula
+    assert copula.probit(0.75) == sgp._probit(0.75) == 0.6744897496907685
+    assert copula.cholesky([[1.0, 0.3], [0.3, 1.0]]) == sgp._cholesky([[1.0, 0.3], [0.3, 1.0]])
+    assert copula.copula_joint_approx((0.68, 0.7), 0.35) == sgp._copula_joint_approx((0.68, 0.7), 0.35) == 0.476238
+    assert copula.copula_joint_prob([0.68, 0.7], [[1.0, 0.35], [0.35, 1.0]], n_samples=200, seed=42) == 0.46
