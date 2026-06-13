@@ -129,6 +129,7 @@ Discord bot display name: **PicksByJonny**
 | `docs/research/MARKET_FOUNDATIONS.md` | **Market-facing foundations audit (Plan 9, 2026-06-06).** 11 sections (9A–9K) validating NRFI/YRFI model, anti-correlation filters (X1, ρ bands), CLV methodology, SLOW_BOOKS, parlay construction (Daily Lay/Longshot/SGP), tier system, hard card rules (R4/R7/R9/R10/R12), daily caps. Counts: 24 LOCKED · 9 PERIODIC_RECAL · 13 DATA_GATED · 12 NEEDS_CHANGE — **all 12 RESOLVED 2026-06-06** (76fbb36, 3aad87f, c4380ca). **Before changing any market-facing constant, gate, or card rule, check this doc.** **Plan 10 (2026-06-06): ~70 assumed-value items audited A–GG; ~22 CHANGE/NEEDS_CHANGE backlog + corrected STAT_FAMILY_TIER. All implementation PENDING.** |
 
 ## Engine Module Map (post-2026-06-12 refactor)
+*Test suite: 1318 passing as of 2026-06-13 (commit ae2e7b3 added direct-module coverage for the refactored modules).*
 `run_picks.py` is now a thin orchestrator; constants and logic live in focused modules under `engine/`:
 - **`engine/quant/`** — pure math: `distributions.py`, `odds.py`, `derived.py`, `copula.py` (probit/cholesky/copula_joint_prob/copula_joint_approx).
 - **`calibrated.py`** — fitted values: `SIGMA`, `SIGMA_WNBA`, `NB_R`, `NB_R_WNBA`, `COMBO_RHO_WNBA`, `GAME_SIGMA`, `F5_SIGMA`, `MLB_TEAM_RUN_R`, `MLB_PARK_FACTORS`, `KELLY_MARKET_MULT`, `PLATT_A`/`PLATT_B`, `STAT_FAMILY_TIER`, `BM_SHRINKAGE_WEIGHT`, `_load_team_sigmas()`.
