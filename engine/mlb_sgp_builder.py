@@ -103,30 +103,17 @@ _POISSON_STATS_MLB = {"HITS"}
 _OUTS_SIGMA = {"mult": 0.27, "min": 1.0}
 
 
-# -- Math helpers (self-contained; Poisson/Normal CDF) -------------------------
-
-def _poisson_pmf(k, lam):
-    if lam <= 0:
-        return 1.0 if k == 0 else 0.0
-    return math.exp(-lam) * (lam ** k) / math.factorial(k)
-
-
-def _poisson_cdf(k, lam):
-    if lam <= 0:
-        return 1.0
-    return min(sum(_poisson_pmf(i, lam) for i in range(int(k) + 1)), 1.0)
+# -- Math helpers (consolidated in quant/distributions.py) ---------------------
+# Previously private copies of the Poisson/Normal CDF math; now aliased to the
+# single canonical implementation.
+from quant.distributions import (
+    poisson_pmf as _poisson_pmf,
+    poisson_cdf as _poisson_cdf,
+    normal_cdf as _normal_cdf,
+)
 
 
-def _normal_cdf(x, mu, sigma):
-    if sigma <= 0:
-        return 1.0 if x >= mu else 0.0
-    return 0.5 * (1.0 + math.erf((x - mu) / (sigma * math.sqrt(2))))
-
-
-def _implied_prob(odds):
-    if odds == 0:
-        return 0.0
-    return abs(odds) / (abs(odds) + 100.0) if odds < 0 else 100.0 / (odds + 100.0)
+from quant.odds import implied_prob as _implied_prob
 
 
 def _fair_prob_mlb(proj, line, stat, direction):

@@ -172,48 +172,18 @@ def _check_parlay_correlations(legs):
     return True
 
 
-# -- Math (mirrors run_picks.py) -------------------------------------------
+# -- Math (consolidated in quant/distributions.py) -------------------------
+# Previously private copies of run_picks.py's distribution math; now the single
+# canonical implementation, aliased to the historical underscore names.
+from quant.distributions import (
+    poisson_pmf as _poisson_pmf,
+    poisson_cdf as _poisson_cdf,
+    normal_cdf as _normal_cdf,
+    negbinom_pmf as _negbinom_pmf,
+    negbinom_cdf as _negbinom_cdf,
+)
 
-def _poisson_pmf(k, lam):
-    if lam <= 0:
-        return 1.0 if k == 0 else 0.0
-    return math.exp(-lam) * (lam ** k) / math.factorial(k)
-
-def _poisson_cdf(k, lam):
-    if lam <= 0:
-        return 1.0
-    return min(sum(_poisson_pmf(i, lam) for i in range(int(k) + 1)), 1.0)
-
-def _normal_cdf(x, mu, sigma):
-    if sigma <= 0:
-        return 1.0 if x >= mu else 0.0
-    return 0.5 * (1.0 + math.erf((x - mu) / (sigma * math.sqrt(2))))
-
-def _negbinom_pmf(k, mu, r):
-    """Negative binomial PMF with mean=mu, dispersion=r. Mirrors run_picks.py."""
-    if mu <= 0:
-        return 1.0 if k == 0 else 0.0
-    k = int(k)
-    if k < 0:
-        return 0.0
-    p = r / (r + mu)
-    log_pmf = (
-        math.lgamma(k + r) - math.lgamma(r) - math.lgamma(k + 1)
-        + r * math.log(p)
-        + k * math.log(1.0 - p)
-    )
-    return math.exp(log_pmf)
-
-def _negbinom_cdf(k, mu, r):
-    """Negative binomial CDF: P(X <= k). Mirrors run_picks.py."""
-    if mu <= 0:
-        return 1.0
-    return min(sum(_negbinom_pmf(i, mu, r) for i in range(int(k) + 1)), 1.0)
-
-def _implied_prob(odds):
-    if odds == 0:
-        return 0.0
-    return abs(odds) / (abs(odds) + 100.0) if odds < 0 else 100.0 / (odds + 100.0)
+from quant.odds import implied_prob as _implied_prob
 
 def _fair_prob(proj, line, stat, direction):
     if stat in POISSON_STATS and line <= POISSON_CUTOFF:
@@ -424,14 +394,13 @@ def _copula_joint_approx(probs, avg_rho):
     return (p_indep + avg_rho * (p_min - p_indep)) * 0.87
 
 
-def _american_to_decimal(odds):
-    return 1 + odds / 100 if odds > 0 else 1 + 100 / abs(odds)
-
-def _decimal_to_american(dec):
-    if dec >= 2.0:
-        return int(round((dec - 1) * 100))
-    else:
-        return int(round(-100 / (dec - 1)))
+# Odds<->decimal converters consolidated in quant/odds.py; aliased to the historical
+# underscore names so `from sgp_builder import _american_to_decimal, ...` (used by
+# mlb_sgp_builder.py) keeps resolving.
+from quant.odds import (
+    american_to_decimal as _american_to_decimal,
+    decimal_to_american as _decimal_to_american,
+)
 
 
 # -- CSV loader ------------------------------------------------------------

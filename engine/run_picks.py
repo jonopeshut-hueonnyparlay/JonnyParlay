@@ -938,103 +938,23 @@ def get_team_abbrev(game_str, team_csv=""):
 #  MATH ENGINE
 # ============================================================
 
-def poisson_pmf(k, lam):
-    """Poisson PMF: P(X = k) given lambda."""
-    if lam <= 0:
-        return 1.0 if k == 0 else 0.0
-    return math.exp(-lam) * (lam ** k) / math.factorial(k)
-
-def poisson_cdf(k, lam):
-    """Poisson CDF: P(X <= k)."""
-    if lam <= 0:
-        return 1.0
-    total = 0.0
-    for i in range(int(k) + 1):
-        total += poisson_pmf(i, lam)
-    return min(total, 1.0)
-
-def normal_cdf(x, mu, sigma):
-    """Normal CDF using math.erf."""
-    if sigma <= 0:
-        return 1.0 if x >= mu else 0.0
-    return 0.5 * (1.0 + math.erf((x - mu) / (sigma * math.sqrt(2))))
+# Distribution PMFs/CDFs extracted to quant/distributions.py (pure, property-tested).
+# Re-imported here so every call site below and `from run_picks import ...` keep working.
+from quant.distributions import (  # noqa: E402
+    poisson_pmf,
+    poisson_cdf,
+    normal_cdf,
+    negbinom_pmf,
+    negbinom_cdf,
+)
 
 
-def negbinom_pmf(k, mu, r):
-    """Negative binomial PMF: P(X = k) with mean=mu, dispersion=r.
-
-    Parameterisation: p = r/(r+mu), n = r (number of successes).
-    P(X=k) = C(k+r-1, k) * p^r * (1-p)^k.
-    Uses log-space arithmetic to avoid overflow at large k.
-    """
-    if mu <= 0:
-        return 1.0 if k == 0 else 0.0
-    if r <= 0:
-        raise ValueError("negbinom_pmf: r must be > 0")
-    k = int(k)
-    if k < 0:
-        return 0.0
-    p = r / (r + mu)
-    # log PMF = lgamma(k+r) - lgamma(r) - lgamma(k+1) + r*log(p) + k*log(1-p)
-    log_pmf = (
-        math.lgamma(k + r) - math.lgamma(r) - math.lgamma(k + 1)
-        + r * math.log(p)
-        + k * math.log(1.0 - p)
-    )
-    return math.exp(log_pmf)
+# Derived probability calcs extracted to quant/derived.py (pure, property-tested).
+from quant.derived import mlb_ml_from_nb, calc_tb_prob, calc_edge  # noqa: E402
 
 
-def negbinom_cdf(k, mu, r):
-    """Negative binomial CDF: P(X <= k) with mean=mu, dispersion=r."""
-    if mu <= 0:
-        return 1.0
-    total = 0.0
-    for i in range(int(k) + 1):
-        total += negbinom_pmf(i, mu, r)
-    return min(total, 1.0)
-
-
-def mlb_ml_from_nb(mu_home, mu_away, r):
-    """P(home wins) via direct NB probability sum over discrete run totals.
-
-    More accurate than Normal(margin, sigma) for MLB because run-scoring is
-    discrete and overdispersed (var/mu~2.26). Ties (extra innings) treated
-    as 50/50 split. Sum to 30 runs per team covers >99.99% of probability mass.
-    """
-    if mu_home <= 0 or mu_away <= 0:
-        return 0.5
-    home_wp = 0.0
-    for k in range(31):
-        ph = negbinom_pmf(k, mu_home, r)
-        pa_lt = negbinom_cdf(k - 1, mu_away, r) if k > 0 else 0.0
-        pa_eq = negbinom_pmf(k, mu_away, r)
-        home_wp += ph * (pa_lt + 0.5 * pa_eq)
-    return min(max(home_wp, 0.0), 1.0)
-
-
-def implied_prob(odds):
-    """American odds → implied probability."""
-    if odds == 0:
-        return 0.0
-    if odds < 0:
-        return abs(odds) / (abs(odds) + 100.0)
-    else:
-        return 100.0 / (odds + 100.0)
-
-def no_vig(imp1, imp2):
-    """Remove vig from two-sided implied probs."""
-    total = imp1 + imp2
-    if total == 0:
-        return 0.5, 0.5
-    return imp1 / total, imp2 / total
-
-def is_decimal_leak(odds):
-    """Check if odds look like decimal format leaked through.
-    Range 1.0 < odds < 2.5 catches decimal (e.g. 1.91 for -110).
-    Upper bound is 2.5 (not 3.0) to avoid rejecting valid +100 to +149 American odds,
-    whose decimal equivalents are 2.0–2.49.
-    """
-    return 1.0 < odds < 2.5
+# Odds/probability conversions extracted to quant/odds.py (pure, property-tested).
+from quant.odds import implied_prob, no_vig, is_decimal_leak  # noqa: E402
 
 def _platt_calibrate_prop(over_p: float) -> float:
     """Apply Platt scaling to raw over_p. Formula: sigmoid(PLATT_A * over_p + PLATT_B).
@@ -1145,41 +1065,7 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
             over_p = 1.0 - normal_cdf(line, proj, sigma)
     return over_p, under_p
 
-def calc_tb_prob(singles: float, doubles: float, triples: float, hr: float, line: float):
-    """Discrete total-bases probability via Poisson convolution.
-
-    Models each hit type as an independent Poisson process (lambda = projected
-    count per game) and computes P(TB > line) by convolving the distributions
-    exactly. Replaces Normal(mean_TB, sigma) which misrepresents the discrete,
-    zero-inflated, right-skewed nature of total bases — the Normal model was
-    predicting ~56% for O1.5 when the empirical rate is 35-38%.
-
-    SaberSim provides 1B/2B/3B/HR separately; this function uses all four.
-    """
-    max_tb = 16  # ceiling: 4 HR = 16 TB
-    threshold = int(math.floor(line)) + 1  # P(TB >= threshold) for half-integer lines
-
-    dist = [0.0] * (max_tb + 1)
-    dist[0] = 1.0  # start with P(0 TB) = 1
-
-    for lam, weight in ((singles, 1), (doubles, 2), (triples, 3), (hr, 4)):
-        if lam <= 0:
-            continue
-        new_dist = [0.0] * (max_tb + 1)
-        max_count = max(8, int(lam * 5))
-        for count in range(max_count + 1):
-            pmf = poisson_pmf(count, lam)
-            if pmf < 1e-9:
-                continue
-            added = count * weight
-            for tb in range(max_tb + 1):
-                target = min(tb + added, max_tb)
-                new_dist[target] += dist[tb] * pmf
-        dist = new_dist
-
-    over_p = sum(dist[threshold:])
-    under_p = 1.0 - over_p
-    return over_p, under_p
+# calc_tb_prob moved to quant/derived.py (imported above with mlb_ml_from_nb / calc_edge).
 
 
 def _combo_mu_sigma(proj_player: dict, stat: str, sport: str = "") -> tuple:
@@ -1219,15 +1105,7 @@ def calc_combo_prob(proj_player: dict, stat: str, line: float, sport: str = "") 
     return over_p, 1.0 - over_p
 
 
-def calc_edge(model_prob, over_odds, under_odds):
-    """Calculate no-vig edge for both sides. Returns (over_edge, under_edge)."""
-    imp_over = implied_prob(over_odds)
-    imp_under = implied_prob(under_odds)
-    nv_over, nv_under = no_vig(imp_over, imp_under)
-    # Convention: model_prob is interpreted as the probability of the over.
-    over_edge = model_prob - nv_over
-    under_edge = (1.0 - model_prob) - nv_under
-    return over_edge, under_edge, nv_over, nv_under
+# calc_edge moved to quant/derived.py (imported above with mlb_ml_from_nb / calc_tb_prob).
 
 def pick_score(win_prob, edge, mode="Default", tier=None,
                cold_start_subtype=None, injury_trigger=False, stat=None):
@@ -4209,14 +4087,8 @@ def print_thesis_block(picks_pre: list, picks_post: list) -> None:
 #  PARLAY BUILDERS
 # ============================================================
 
-def prob_to_american(prob):
-    """Convert probability to American odds."""
-    if prob <= 0 or prob >= 1:
-        return 0
-    if prob >= 0.5:
-        return -(prob / (1.0 - prob)) * 100
-    else:
-        return ((1.0 - prob) / prob) * 100
+# prob_to_american extracted to quant/odds.py (pure, property-tested).
+from quant.odds import prob_to_american  # noqa: E402
 
 def _longshot_pos_corr_pair(a, b):
     """True iff (a, b) is the positively-correlated pair: pitcher OUTS under +
