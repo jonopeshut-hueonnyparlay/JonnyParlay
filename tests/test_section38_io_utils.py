@@ -143,7 +143,8 @@ _CONSUMERS_WITH_SAVE_FN = [
     ("capture_clv.py",     "save_checkpoint"),
     ("grade_picks.py",     "_save_guard"),
     ("weekly_recap.py",    "_save_guard"),
-    ("run_picks.py",       "_save_discord_guard"),
+    # _save_discord_guard moved run_picks.py → discord_post.py (extract refactor Step 16)
+    ("discord_post.py",    "_save_discord_guard"),
 ]
 
 
@@ -179,7 +180,8 @@ _MIGRATED_SAVE_FNS = [
     ("capture_clv.py",     "save_checkpoint"),
     ("grade_picks.py",     "_save_guard"),
     ("weekly_recap.py",    "_save_guard"),
-    ("run_picks.py",       "_save_discord_guard"),
+    # _save_discord_guard moved run_picks.py → discord_post.py (extract refactor Step 16)
+    ("discord_post.py",    "_save_discord_guard"),
 ]
 
 

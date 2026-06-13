@@ -34,6 +34,7 @@ if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
 import run_picks  # noqa: E402
+import killshot  # noqa: E402  — select_killshots / invariants / _killshots_this_week live here (Step 15); monkeypatch them on this module
 from run_picks import (  # noqa: E402
     _assert_killshot_invariants,
     _killshot_odds_wp_ok,
@@ -197,15 +198,15 @@ def test_invariant_passes_on_current_config():
 
 
 def test_invariant_rejects_suspended_stat_in_allowlist(monkeypatch):
-    monkeypatch.setattr(run_picks, "KILLSHOT_STAT_ALLOW", frozenset({"PTS", "SOG"}))
+    monkeypatch.setattr(killshot, "KILLSHOT_STAT_ALLOW", frozenset({"PTS", "SOG"}))
     with pytest.raises(AssertionError, match="suspended"):
-        run_picks._assert_killshot_invariants()
+        killshot._assert_killshot_invariants()
 
 
 def test_invariant_rejects_tier_orphan_stat(monkeypatch):
-    monkeypatch.setattr(run_picks, "KILLSHOT_STAT_ALLOW", frozenset({"PTS", "NOT_A_STAT"}))
+    monkeypatch.setattr(killshot, "KILLSHOT_STAT_ALLOW", frozenset({"PTS", "NOT_A_STAT"}))
     with pytest.raises(AssertionError, match="tier"):
-        run_picks._assert_killshot_invariants()
+        killshot._assert_killshot_invariants()
 
 
 def test_allowlist_has_no_suspended_stats():
@@ -275,7 +276,7 @@ def test_size_falls_back_to_edge_when_adj_edge_absent():
 # ─── select_killshots integration ────────────────────────────────────────────────
 
 def test_select_includes_clean_pick():
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         picks = [_pick()]
         ks = select_killshots(picks, "2026-04-21")
     assert len(ks) == 1
@@ -285,7 +286,7 @@ def test_select_includes_clean_pick():
 
 def test_select_includes_T1B_and_T2_in_v3():
     """v2 excluded everything but strict T1 — v3 selects on floors only."""
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         picks = [_pick(player="A", tier="T1B", pick_score=95.0),
                  _pick(player="B", tier="T2", pick_score=94.0)]
         ks = select_killshots(picks, "2026-04-21")
@@ -293,7 +294,7 @@ def test_select_includes_T1B_and_T2_in_v3():
 
 
 def test_select_excludes_disallowed_stat():
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         picks = [_pick(stat="TEAM_TOTAL")]
         ks = select_killshots(picks, "2026-04-21")
     assert len(ks) == 0
@@ -305,14 +306,14 @@ def test_select_respects_weekly_cap_of_2():
         _pick(player="B", pick_score=91.0),
         _pick(player="C", pick_score=90.5),  # should be cut by cap
     ]
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         ks = select_killshots(picks, "2026-04-21")
     assert len(ks) == KILLSHOT_WEEKLY_CAP == 2, "weekly cap should limit to 2"
 
 
 def test_select_empty_when_cap_already_reached():
     picks = [_pick()]
-    with patch.object(run_picks, "_killshots_this_week", return_value=KILLSHOT_WEEKLY_CAP):
+    with patch.object(killshot, "_killshots_this_week", return_value=KILLSHOT_WEEKLY_CAP):
         ks = select_killshots(picks, "2026-04-21")
     assert len(ks) == 0
 
@@ -323,7 +324,7 @@ def test_select_remaining_cap_limits_qualifiers():
         _pick(player="A", pick_score=92.0),
         _pick(player="B", pick_score=91.0),
     ]
-    with patch.object(run_picks, "_killshots_this_week", return_value=1):
+    with patch.object(killshot, "_killshots_this_week", return_value=1):
         ks = select_killshots(picks, "2026-04-21")
     assert len(ks) == 1
     assert ks[0]["player"] == "A", "highest score should win the remaining cap slot"
@@ -335,7 +336,7 @@ def test_select_sorts_by_score_desc():
         _pick(player="High", pick_score=95.0),
         _pick(player="Mid",  pick_score=92.0),
     ]
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         ks = select_killshots(picks, "2026-04-21")
     # Cap is 2, so High + Mid make it; Low is cut
     assert [p["player"] for p in ks] == ["High", "Mid"]
@@ -348,7 +349,7 @@ def test_near_miss_logged_to_blocked_csv(tmp_path):
     pick_log_blocked.csv as KILLSHOT_{code} — v2's dead gate was console-only."""
     import csv
     blocked = Path(run_picks.PICK_LOG_BLOCKED_PATH)
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         select_killshots([_pick(stat="TEAM_TOTAL")], "2026-04-21")   # near-miss: STAT
         select_killshots([_pick(odds=-250, win_prob=0.80)], "2026-04-21")  # near-miss: ODDS
     assert blocked.exists()
@@ -361,7 +362,7 @@ def test_near_miss_logged_to_blocked_csv(tmp_path):
 def test_low_score_disqualification_not_logged():
     """Score-floor failures are not near-misses — they must NOT flood the log."""
     blocked = Path(run_picks.PICK_LOG_BLOCKED_PATH)
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         select_killshots([_pick(pick_score=40.0)], "2026-04-21")
     assert not blocked.exists()
 
@@ -371,7 +372,7 @@ def test_low_score_disqualification_not_logged():
 def test_manual_override_bypasses_score_and_stat_selection():
     # T2 PARLAY with score=80 (below auto behavior for stat) — manual promote works
     # as long as odds/wp pass: -130 with wp=0.62 (floor ≈0.595).
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         picks = [_pick(player="Doncic Luka", tier="T2", pick_score=80.0,
                        win_prob=0.62, odds=-130, stat="PARLAY")]
         ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
@@ -383,7 +384,7 @@ def test_manual_override_still_requires_manual_floor():
     # Score below manual floor (75) — should NOT promote even with name match.
     # stat=PARLAY keeps the auto path closed so only the manual path is in play
     # (in v3 a T2 PTS pick at score 74.9 would auto-qualify on floors alone).
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         picks = [_pick(player="Doncic Luka", tier="T2", stat="PARLAY",
                        pick_score=KILLSHOT_MANUAL_FLOOR - 0.1)]
         ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
@@ -393,7 +394,7 @@ def test_manual_override_still_requires_manual_floor():
 def test_manual_override_enforces_odds_range_in_v3():
     """v2's manual path bypassed odds entirely — a +150 dog could be promoted.
     v3 enforces the odds range on manual promotes."""
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         picks = [_pick(player="Doncic Luka", pick_score=90.0, odds=150, win_prob=0.58)]
         ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
     assert len(ks) == 0, "manual promote must respect the odds range in v3"
@@ -402,7 +403,7 @@ def test_manual_override_enforces_odds_range_in_v3():
 def test_manual_override_enforces_wp_floor_in_v3():
     """v2's manual path bypassed the wp floor — a −EV promote was possible.
     v3 enforces wp >= breakeven + margin on manual promotes."""
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         picks = [_pick(player="Doncic Luka", pick_score=90.0, odds=-200, win_prob=0.66)]
         ks = select_killshots(picks, "2026-04-21", manual_players={"Doncic"})
     assert len(ks) == 0, "manual promote at -200 with wp=0.66 is -EV and must be rejected"
@@ -414,13 +415,13 @@ def test_manual_override_counts_toward_weekly_cap():
         _pick(player="Pastrnak David", tier="T2", pick_score=78.0),
         _pick(player="McDavid Connor", tier="T2", pick_score=77.0),
     ]
-    with patch.object(run_picks, "_killshots_this_week", return_value=1):
+    with patch.object(killshot, "_killshots_this_week", return_value=1):
         ks = select_killshots(picks, "2026-04-21", manual_players={"Pastrnak", "McDavid"})
     assert len(ks) == 1, "manual promotes must respect remaining weekly cap"
 
 
 def test_manual_player_match_case_insensitive():
-    with patch.object(run_picks, "_killshots_this_week", return_value=0):
+    with patch.object(killshot, "_killshots_this_week", return_value=0):
         picks = [_pick(player="McDavid Connor", tier="T2", pick_score=80.0)]
         ks = select_killshots(picks, "2026-04-21", manual_players={"mcdavid"})
     assert len(ks) == 1
