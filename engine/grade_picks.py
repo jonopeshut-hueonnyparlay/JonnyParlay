@@ -114,6 +114,7 @@ ODDS_BASE = "https://api.the-odds-api.com/v4"
 SPORT_KEYS = {
     "NBA": "basketball_nba", "NHL": "icehockey_nhl",
     "NFL": "americanfootball_nfl", "MLB": "baseball_mlb",
+    "WNBA": "basketball_wnba",
     "NCAAB": "basketball_ncaab", "NCAAF": "americanfootball_ncaaf",
 }
 
@@ -132,7 +133,7 @@ STAT_SOURCES = {
 }
 
 # Game-line stat types (graded from scores, not player stats)
-GAME_LINE_STATS = {"TOTAL", "SPREAD", "TEAM_TOTAL", "ML_FAV", "ML_DOG",
+GAME_LINE_STATS = {"TOTAL", "SPREAD", "TEAM_TOTAL", "ML", "ML_FAV", "ML_DOG",
                    "F5_TOTAL", "F5_SPREAD", "F5_ML", "NRFI", "YRFI",
                    "GOLF_WIN"}
 
@@ -1160,7 +1161,7 @@ def grade_game_line(pick, scores_by_game, linescores=None, nhl_ot_info=None):
         elif result_val < 0: return "L"
         else: return "P"
 
-    elif stat in ("ML_FAV", "ML_DOG"):
+    elif stat in ("ML", "ML_FAV", "ML_DOG"):
         pick_is_home = _resolve_pick_is_home(pick, away_team)
         if pick_is_home is None:
             return None  # H-4: ambiguous team code, ungradable
@@ -1626,7 +1627,7 @@ def _recap_pick_line(p) -> str:
         dir_  = p.get("direction", "").upper()
         if stat == "SPREAD":
             label = f"{team} {odds_}{book}"
-        elif stat in ("ML_FAV", "ML_DOG"):
+        elif stat in ("ML", "ML_FAV", "ML_DOG"):
             label = f"{team} ML {odds_}{book}"
         elif stat == "TOTAL":
             label = f"Total {dir_} {line_} {odds_}{book}"
@@ -2553,6 +2554,11 @@ def _grade_game_lines_log(args):
         scores_by_game = all_scores.get((date_str, sport), {})
 
         result = grade_game_line(row, scores_by_game, linescores=ls, nhl_ot_info=nhl_ot)
+        if result is None:
+            print(f"  ⏳ ungradable: {row.get('game','?')} | {row.get('stat','?')} "
+                  f"{row.get('direction','')} line={row.get('line','')!r} — "
+                  f"no result (missing line, no score match, or game not final)")
+            continue
         if result:
             existing = rows[idx].get("result")
             if _is_terminal_result(existing):

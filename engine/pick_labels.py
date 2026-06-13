@@ -35,7 +35,7 @@ from typing import Any, Mapping
 # ``player`` field — treating it as a prop produced garbage output like
 # "3-LEG COVER  PARLAY".
 GAME_LINE_STATS: frozenset[str] = frozenset({
-    "TOTAL", "SPREAD", "TEAM_TOTAL", "ML_FAV", "ML_DOG",
+    "TOTAL", "SPREAD", "TEAM_TOTAL", "ML", "ML_FAV", "ML_DOG",
     "F5_TOTAL", "F5_SPREAD", "F5_ML", "NRFI", "YRFI",
     "GOLF_WIN", "PARLAY",
 })
@@ -76,7 +76,7 @@ def short_label(p: Mapping[str, Any]) -> str:
         line = (p.get("line") or "").strip()
         if stat == "SPREAD":
             return f"{team} {line}".strip()
-        if stat in ("ML_FAV", "ML_DOG"):
+        if stat in ("ML", "ML_FAV", "ML_DOG"):
             return f"{team} ML".strip()
         if stat == "TOTAL":
             return f"Total {dir_} {line}".strip()
