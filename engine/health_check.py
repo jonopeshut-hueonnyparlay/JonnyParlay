@@ -240,7 +240,7 @@ check("AGL no stale sigma print", "total=4.0/spread=3.8" not in agl, "Stale sigm
 # ── 11. context_research.py ───────────────────────────────────────────────────
 print("Checking context_research.py...")
 ctx = read_file(CTX)
-check("context_research web search enabled", "web_search_20250305" in ctx, "Web search not added")
+check("context_research web search enabled", "web_search_20260209" in ctx, "Web search not added")
 check("context_research date filter", "today_local" in ctx, "Date filter missing")
 check("context_research dedup", "seen" in ctx, "Dedup missing")
 check("context_research response parsing", "hasattr(block" in ctx or "block.text" in ctx,
