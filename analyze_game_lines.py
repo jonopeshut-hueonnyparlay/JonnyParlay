@@ -957,8 +957,9 @@ if __name__ == "__main__":
     print(f"  {len(nba_data)} NBA games")
 
     # Filter to today's unstarted games only, deduplicate by matchup
-    from datetime import datetime, timezone, timedelta
-    _local_tz = timezone(timedelta(hours=-6))  # MDT
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    _local_tz = ZoneInfo("America/Denver")  # MT (DST-aware)
     _now_utc = datetime.now(timezone.utc)
     _today_local = datetime.now(_local_tz).date()
 

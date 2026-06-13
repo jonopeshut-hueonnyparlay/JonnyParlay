@@ -147,7 +147,7 @@ def filter_game_line_correlations(picks):
                     th = tt_pick.get("is_home")
                     if ws in {"ML_FAV", "ML_DOG", "SPREAD"} and ts == "TEAM_TOTAL" and td == "over":
                         if wh is None or th is None:
-                            log.warning(
+                            logger.warning(
                                 f"GLC Rule 1 scan: is_home=None for "
                                 f"{win_pick.get('player', '?')}/{ws} — "
                                 "ML/SPREAD correlation detection skipped"

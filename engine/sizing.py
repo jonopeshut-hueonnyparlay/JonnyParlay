@@ -67,7 +67,7 @@ def size_bonus_pick(pick):
             "raw VAKE %.3fu rounded to %.2fu, below floor %.2fu. "
             "edge=%.1f%%, win_prob=%.3f. Not shipping.",
             pick.get("player", "?"), pick.get("stat", "?"), pick.get("direction", "?"), tier,
-            raw, final, floor, edge * 100, pick.get("win_prob", 0),
+            raw, final, floor, pick.get("edge", 0) * 100, pick.get("win_prob", 0),
         )
         return None
     final = min(final, 1.25)
