@@ -13,6 +13,7 @@ import datetime
 import pytest
 
 import run_picks
+import prob_core
 from run_picks import (
     _wnba_early_season_factor,
     _wnba_team_games_played,
@@ -72,7 +73,8 @@ def test_wnba_normal_sigma_inflated_early_season(monkeypatch):
     """Early-season WNBA PTS probability must sit closer to 1/2 than late-season
     (sigma /= 0.80 widens the distribution)."""
     over_late, _ = calc_prop_prob(18.0, 14.5, "PTS", sport="WNBA")
-    monkeypatch.setattr(run_picks, "_wnba_early_season_factor", lambda today=None: 0.80)
+    # calc_prop_prob now lives in prob_core (Phase 2a Step 5); patch the factor there.
+    monkeypatch.setattr(prob_core, "_wnba_early_season_factor", lambda today=None: 0.80)
     over_early, _ = calc_prop_prob(18.0, 14.5, "PTS", sport="WNBA")
     assert over_late > 0.5
     assert 0.5 < over_early < over_late, (
@@ -83,7 +85,8 @@ def test_wnba_nb_prob_shrunk_early_season(monkeypatch):
     """WNBA NB-routed stats (AST/REB/3PM) have no sigma — the probability is
     shrunk toward 1/2 by the same factor."""
     over_late, under_late = calc_prop_prob(5.0, 3.5, "AST", sport="WNBA")
-    monkeypatch.setattr(run_picks, "_wnba_early_season_factor", lambda today=None: 0.80)
+    # calc_prop_prob now lives in prob_core (Phase 2a Step 5); patch the factor there.
+    monkeypatch.setattr(prob_core, "_wnba_early_season_factor", lambda today=None: 0.80)
     over_early, under_early = calc_prop_prob(5.0, 3.5, "AST", sport="WNBA")
     assert over_early == pytest.approx(0.5 + (over_late - 0.5) * 0.80)
     assert over_early + under_early == pytest.approx(1.0)
@@ -92,7 +95,8 @@ def test_wnba_nb_prob_shrunk_early_season(monkeypatch):
 def test_nba_unaffected_by_wnba_dampener(monkeypatch):
     """The dampener is WNBA-only — NBA probabilities must not move."""
     before = calc_prop_prob(25.0, 22.5, "PTS", sport="NBA")
-    monkeypatch.setattr(run_picks, "_wnba_early_season_factor", lambda today=None: 0.80)
+    # calc_prop_prob now lives in prob_core (Phase 2a Step 5); patch the factor there.
+    monkeypatch.setattr(prob_core, "_wnba_early_season_factor", lambda today=None: 0.80)
     after = calc_prop_prob(25.0, 22.5, "PTS", sport="NBA")
     assert before == after
 
@@ -148,7 +152,10 @@ def test_games_played_unknown_team_returns_none():
 
 
 def test_games_played_missing_db_returns_none(monkeypatch):
-    monkeypatch.setattr(run_picks, "EDGEMODEL_DB_PATH", r"C:\nonexistent\nope.db")
+    # _wnba_team_games_played now lives in wnba_gate (Phase 2a Step 3); patch the
+    # DB path it actually reads. The cache is the same dict object via re-export.
+    import wnba_gate
+    monkeypatch.setattr(wnba_gate, "EDGEMODEL_DB_PATH", r"C:\nonexistent\nope.db")
     run_picks._WNBA_GP_CACHE.clear()
     assert _wnba_team_games_played("Las Vegas Aces") is None
     run_picks._WNBA_GP_CACHE.clear()

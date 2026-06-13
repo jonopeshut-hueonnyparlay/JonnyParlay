@@ -315,9 +315,12 @@ def test_run_picks_imports_normalizers():
 
 
 def test_run_picks_write_sites_use_normalize_size():
-    """Look for the bare ``{p.get('size', 0):.2f}`` pattern in run_picks —
-    that was the old inline formatter, now replaced by normalize_size."""
-    rp = HERE.parent / "engine" / "run_picks.py"
+    """Look for the bare ``{p.get('size', 0):.2f}`` pattern in the pick-log writers —
+    that was the old inline formatter, now replaced by normalize_size.
+
+    The writers (log_picks / _log_bonus_pick) moved to engine/pick_log_writers.py in
+    the Phase 2a Step 7 extract-and-re-export refactor; scan there."""
+    rp = HERE.parent / "engine" / "pick_log_writers.py"
     src = rp.read_text(encoding="utf-8")
     # The pattern must be GONE from writer rows. It's OK if it remains in
     # an isolated utility, but no writerow([...]) should still use it.

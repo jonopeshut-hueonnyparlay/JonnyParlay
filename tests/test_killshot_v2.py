@@ -59,8 +59,12 @@ from run_picks import (  # noqa: E402
 @pytest.fixture(autouse=True)
 def _patch_blocked_log(tmp_path, monkeypatch):
     """Near-miss disqualifications append to pick_log_blocked.csv — redirect."""
-    monkeypatch.setattr(run_picks, "PICK_LOG_BLOCKED_PATH",
-                        str(tmp_path / "pick_log_blocked.csv"))
+    # log_blocked_pick now lives in pick_log_writers (Phase 2a Step 7); patch the path
+    # it reads there AND the run_picks re-export some tests assert against.
+    import pick_log_writers
+    blocked = str(tmp_path / "pick_log_blocked.csv")
+    monkeypatch.setattr(pick_log_writers, "PICK_LOG_BLOCKED_PATH", blocked)
+    monkeypatch.setattr(run_picks, "PICK_LOG_BLOCKED_PATH", blocked)
 
 
 def _pick(**overrides):

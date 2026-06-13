@@ -14,6 +14,10 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "engine"))
 
+# OddsFetcher moved to odds_io in the Phase 2a Step 11 extract-and-re-export refactor;
+# _get reads odds_io.requests / odds_io.time, so the mocks target odds_io.
+import odds_io
+
 
 class _FakeResponse:
     def __init__(self, status_code=200, json_raises=None, json_body=None):
@@ -40,9 +44,9 @@ def test_malformed_json_returns_empty_list():
     import run_picks
     resp = _FakeResponse(status_code=200, json_raises=ValueError("no json"))
 
-    with mock.patch.object(run_picks, "requests") as mock_req:
+    with mock.patch.object(odds_io, "requests") as mock_req:
         mock_req.get.return_value = resp
-        with mock.patch.object(run_picks, "time") as mock_time:
+        with mock.patch.object(odds_io, "time") as mock_time:
             mock_time.sleep = lambda _: None
             client = _make_client()
             result = client._get("https://example.com/odds", {"regions": "us"})
@@ -57,9 +61,9 @@ def test_json_decode_error_returns_empty_list():
     exc = json.JSONDecodeError("Expecting value", "", 0)
     resp = _FakeResponse(status_code=200, json_raises=exc)
 
-    with mock.patch.object(run_picks, "requests") as mock_req:
+    with mock.patch.object(odds_io, "requests") as mock_req:
         mock_req.get.return_value = resp
-        with mock.patch.object(run_picks, "time") as mock_time:
+        with mock.patch.object(odds_io, "time") as mock_time:
             mock_time.sleep = lambda _: None
             client = _make_client()
             result = client._get("https://example.com/odds", {"regions": "us"})
@@ -73,7 +77,7 @@ def test_valid_json_passes_through():
     body = [{"id": "abc", "home_team": "Lakers"}]
     resp = _FakeResponse(status_code=200, json_body=body)
 
-    with mock.patch.object(run_picks, "requests") as mock_req:
+    with mock.patch.object(odds_io, "requests") as mock_req:
         mock_req.get.return_value = resp
         client = _make_client()
         result = client._get("https://example.com/odds", {"regions": "us"})

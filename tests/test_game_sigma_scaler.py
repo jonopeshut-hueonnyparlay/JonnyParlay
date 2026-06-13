@@ -16,6 +16,7 @@ import math
 import pytest
 
 import run_picks
+import team_resolve
 from run_picks import GAME_SIGMA, get_game_sigma
 
 
@@ -38,8 +39,10 @@ def fake_teams(monkeypatch):
         "FFF": {"score_sigma": 12.0, "n_games": 100},   # league-average
         "GGG": {"score_sigma": 14.0, "n_games": 5},     # below n_games floor
     }
-    monkeypatch.setattr(run_picks, "_TEAM_SIGMAS", {"NBA": data})
-    monkeypatch.setattr(run_picks, "_TEAM_SIGMAS_MEANSQ", {"NBA": LEAGUE_MEANSQ})
+    # get_game_sigma now lives in team_resolve (Phase 2a Step 2); patch the
+    # tables it actually reads.
+    monkeypatch.setattr(team_resolve, "_TEAM_SIGMAS", {"NBA": data})
+    monkeypatch.setattr(team_resolve, "_TEAM_SIGMAS_MEANSQ", {"NBA": LEAGUE_MEANSQ})
     return data
 
 
@@ -113,14 +116,14 @@ def test_thin_sample_team_falls_back_to_league(fake_teams):
 
 
 def test_no_team_data_falls_back_to_league(monkeypatch):
-    monkeypatch.setattr(run_picks, "_TEAM_SIGMAS", {})
-    monkeypatch.setattr(run_picks, "_TEAM_SIGMAS_MEANSQ", {})
+    monkeypatch.setattr(team_resolve, "_TEAM_SIGMAS", {})
+    monkeypatch.setattr(team_resolve, "_TEAM_SIGMAS_MEANSQ", {})
     assert get_game_sigma("NBA", "AAA", "BBB", "ml") == pytest.approx(12.5)
 
 
 def test_zero_meansq_falls_back_to_league(monkeypatch, fake_teams):
     """Defensive: a sport whose JSON had no qualifying teams must not divide by 0."""
-    monkeypatch.setattr(run_picks, "_TEAM_SIGMAS_MEANSQ", {"NBA": 0.0})
+    monkeypatch.setattr(team_resolve, "_TEAM_SIGMAS_MEANSQ", {"NBA": 0.0})
     assert get_game_sigma("NBA", "AAA", "BBB", "total") == pytest.approx(18.5)
 
 

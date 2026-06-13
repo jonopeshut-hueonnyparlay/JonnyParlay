@@ -31,7 +31,10 @@ def _pick(gate_result, stat="PTS", sport="NBA", direction="over",
 def patch_blocked_path(tmp_path, monkeypatch):
     """Redirect PICK_LOG_BLOCKED_PATH to a temp file for every test."""
     blocked = tmp_path / "pick_log_blocked.csv"
-    monkeypatch.setattr(run_picks, "PICK_LOG_BLOCKED_PATH", str(blocked))
+    # log_blocked_pick now lives in pick_log_writers (Phase 2a Step 7); patch the
+    # path it actually reads.
+    import pick_log_writers
+    monkeypatch.setattr(pick_log_writers, "PICK_LOG_BLOCKED_PATH", str(blocked))
     return blocked
 
 
