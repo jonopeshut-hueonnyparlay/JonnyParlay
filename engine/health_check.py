@@ -122,13 +122,36 @@ claude_size = len(claude_content)
 check("CLAUDE.md under 40k chars", claude_size < 40000, f"{claude_size} chars")
 # API key not stored in CLAUDE.md by design — check .env instead (done above)
 
-# ── 5. run_picks.py constants ─────────────────────────────────────────────────
-print("Checking run_picks.py constants...")
+# ── 5. Critical constants (post-refactor e2a4721) ─────────────────────────────
+# Phase 1 split (commit e2a4721) moved most constants out of run_picks.py into
+# sibling modules. run_picks.py re-imports them, but this check greps source files,
+# so each constant is verified in the file where it is now DEFINED:
+#   thresholds.py — sizing/gate decision-boundary constants (Step 9)
+#   calibrated.py — empirically fitted values (Step 10)
+# Patterns/values are unchanged from before the refactor; only the file searched moved.
+print("Checking critical constants...")
 rp = read_file(RUN_PICKS)
+thresholds_src = read_file(ENGINE / "thresholds.py")
+calibrated_src = read_file(ENGINE / "calibrated.py")
 
+# Still defined in run_picks.py
 EXPECTED_RP = {
-    "KELLY_FRACTION = 6.0": "KELLY_FRACTION = 6.0",
     "NRFI_GAMMA = 0.65": 'NRFI_GAMMA = 0.65',
+}
+
+# Moved to engine/thresholds.py (Step 9)
+EXPECTED_THRESHOLDS = {
+    "KELLY_FRACTION = 6.0": "KELLY_FRACTION = 6.0",
+    "BLEND_ALPHA = 0.25": "BLEND_ALPHA = 0.25",
+    "F5_SCALAR = 0.540": "F5_SCALAR = 0.540",
+    "LONGSHOT_SIZE = 0.25": "LONGSHOT_SIZE = 0.25",
+    "VALUE_PARLAY_SIZE = 0.25": "VALUE_PARLAY_SIZE = 0.25",
+    "KILLSHOT_SIZE_BASE = 3.0": "KILLSHOT_SIZE_BASE       = 3.0",
+    "KILLSHOT_WEEKLY_CAP = 2": "KILLSHOT_WEEKLY_CAP     = 2",
+}
+
+# Moved to engine/calibrated.py (Step 10)
+EXPECTED_CALIBRATED = {
     "MLB GAME_SIGMA total=4.6": '"total": 4.6',
     "MLB GAME_SIGMA spread=4.2": '"spread": 4.2',
     "NBA GAME_SIGMA total=18.5": '"total": 18.5',
@@ -137,33 +160,29 @@ EXPECTED_RP = {
     "BM_SHRINKAGE T1=0.75": '"T1": 0.75',
     "BM_SHRINKAGE T1B=0.80": '"T1B": 0.80',
     "BM_SHRINKAGE T3=0.70": '"T3": 0.70',
-    "BLEND_ALPHA = 0.25": "BLEND_ALPHA = 0.25",
-    "F5_SCALAR = 0.540": "F5_SCALAR = 0.540",
     "NB_R AST=12.16": '"AST": 12.16',
     "NB_R REB=14.7": '"REB": 14.7',
-    "LONGSHOT_SIZE = 0.25": "LONGSHOT_SIZE = 0.25",
-    "VALUE_PARLAY_SIZE = 0.25": "VALUE_PARLAY_SIZE = 0.25",
-    "KILLSHOT_SIZE_BASE = 3.0": "KILLSHOT_SIZE_BASE       = 3.0",
-    "KILLSHOT_WEEKLY_CAP = 2": "KILLSHOT_WEEKLY_CAP     = 2",
     "T1 min_edge 0.07": '"min_edge": 0.07',
     "T2 min_edge 0.05": '"min_edge": 0.05',
     "STAT AST=T1B": '"AST": "T1B"',
     "STAT REB=T1": '"REB": "T1"',
     "STAT PTS=T2": '"PTS": "T2"',
     "STAT 3PM=T3": '"3PM": "T3"',
-    "PICK_SCORE_TIER_MULT absent": "PICK_SCORE_TIER_MULT",
-    "SGP_JOINT_EV_MARGIN not in run_picks": "SGP_JOINT_EV_MARGIN",
 }
 
 for label, pattern in EXPECTED_RP.items():
-    if label == "PICK_SCORE_TIER_MULT absent":
-        check(label, "PICK_SCORE_TIER_MULT = {" not in rp and "PICK_SCORE_TIER_MULT={" not in rp,
-              "PICK_SCORE_TIER_MULT still defined — should be retired")
-    elif label == "SGP_JOINT_EV_MARGIN not in run_picks":
-        # This lives in builders, not run_picks — just verify it's not wrong in run_picks
-        check(label, True, "Lives in sgp_builder.py (correct)")
-    else:
-        check(f"run_picks.py: {label}", pattern in rp, f"Pattern not found: '{pattern}'")
+    check(f"run_picks.py: {label}", pattern in rp, f"Pattern not found: '{pattern}'")
+for label, pattern in EXPECTED_THRESHOLDS.items():
+    check(f"thresholds.py: {label}", pattern in thresholds_src, f"Pattern not found: '{pattern}'")
+for label, pattern in EXPECTED_CALIBRATED.items():
+    check(f"calibrated.py: {label}", pattern in calibrated_src, f"Pattern not found: '{pattern}'")
+
+# Retired constant must stay gone from run_picks.py
+check("PICK_SCORE_TIER_MULT absent",
+      "PICK_SCORE_TIER_MULT = {" not in rp and "PICK_SCORE_TIER_MULT={" not in rp,
+      "PICK_SCORE_TIER_MULT still defined — should be retired")
+# SGP_JOINT_EV_MARGIN lives in the builders, not run_picks (verified in section 6)
+check("SGP_JOINT_EV_MARGIN not in run_picks", True, "Lives in sgp_builder.py (correct)")
 
 # ── 6. sgp_builder.py constants ──────────────────────────────────────────────
 print("Checking sgp_builder.py...")
@@ -172,7 +191,9 @@ check("sgp_builder NB_R AST=12.16", '"AST": 12.16' in sgp or "AST.*12.16" in sgp
       "NB_R AST not found")
 check("sgp_builder NB_R REB=14.7", '"REB": 14.7' in sgp or "REB.*14.7" in sgp,
       "NB_R REB not found")
-check("sgp_builder copula *0.87", "0.87" in sgp, "Copula deflation factor not found")
+# Copula math moved to quant/copula.py (Step 7); the *0.87 deflation lives there now.
+copula_src = read_file(ENGINE / "quant" / "copula.py")
+check("quant/copula.py copula *0.87", "0.87" in copula_src, "Copula deflation factor not found")
 check("sgp_builder SGP_JOINT_EV_MARGIN=0.025", "0.025" in sgp, "")
 
 # ── 7. capture_clv.py ─────────────────────────────────────────────────────────
