@@ -66,6 +66,7 @@ from paths import (  # noqa: E402
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
     PICK_LOG_WNBA_PATH as _PICK_LOG_WNBA_PATH_P,
     PICK_LOG_CUSTOM_PATH as _PICK_LOG_CUSTOM_PATH_P,
+    PICK_LOG_CALIBRATION_PATH as _PICK_LOG_CALIBRATION_PATH_P,
     PICK_LOG_SHADOW_STATS_PATH as _PICK_LOG_SHADOW_STATS_PATH_P,
     PICK_LOG_GAME_LINES_PATH as _PICK_LOG_GAME_LINES_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
@@ -76,6 +77,7 @@ PICK_LOG_MANUAL_PATH       = str(_PICK_LOG_MANUAL_PATH_P)
 PICK_LOG_MLB_PATH          = str(_PICK_LOG_MLB_PATH_P)
 PICK_LOG_WNBA_PATH         = str(_PICK_LOG_WNBA_PATH_P)
 PICK_LOG_CUSTOM_PATH       = str(_PICK_LOG_CUSTOM_PATH_P)
+PICK_LOG_CALIBRATION_PATH  = str(_PICK_LOG_CALIBRATION_PATH_P)
 PICK_LOG_SHADOW_STATS_PATH = str(_PICK_LOG_SHADOW_STATS_PATH_P)
 PICK_LOG_GAME_LINES_PATH   = Path(str(_PICK_LOG_GAME_LINES_PATH_P))
 DISCORD_GUARD_FILE         = str(_DISCORD_GUARD_FILE_P)
@@ -2651,7 +2653,7 @@ Examples:
     # ── Grade shadow sport logs silently (no Discord post) ────
     if not args.repost and use_default_paths:
         for shadow_path in (PICK_LOG_MLB_PATH, PICK_LOG_WNBA_PATH, PICK_LOG_CUSTOM_PATH,
-                            PICK_LOG_SHADOW_STATS_PATH):
+                            PICK_LOG_CALIBRATION_PATH, PICK_LOG_SHADOW_STATS_PATH):
             _grade_one_log(shadow_path, args, is_shadow=True)
 
     # ── Grade game-lines log (own Discord recap to #game-lines) ──

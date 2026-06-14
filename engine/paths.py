@@ -103,6 +103,7 @@ PICK_LOG_MANUAL_PATH: Path = DATA_DIR / "pick_log_manual.csv"
 PICK_LOG_MLB_PATH: Path = DATA_DIR / "pick_log_mlb.csv"
 PICK_LOG_WNBA_PATH: Path = DATA_DIR / "pick_log_wnba.csv"
 PICK_LOG_CUSTOM_PATH: Path = DATA_DIR / "pick_log_custom.csv"
+PICK_LOG_CALIBRATION_PATH: Path = DATA_DIR / "pick_log_calibration.csv"
 PICK_LOG_SHADOW_STATS_PATH: Path = DATA_DIR / "pick_log_shadow_stats.csv"
 PICK_LOG_BLOCKED_PATH: Path = DATA_DIR / "pick_log_blocked.csv"
 PICK_LOG_GAME_LINES_PATH: Path = DATA_DIR / "pick_log_game_lines.csv"
@@ -120,6 +121,7 @@ __all__ = [
     "PICK_LOG_MLB_PATH",
     "PICK_LOG_WNBA_PATH",
     "PICK_LOG_CUSTOM_PATH",
+    "PICK_LOG_CALIBRATION_PATH",
     "PICK_LOG_SHADOW_STATS_PATH",
     "PICK_LOG_BLOCKED_PATH",
     "PICK_LOG_GAME_LINES_PATH",

@@ -76,6 +76,7 @@ from paths import (  # noqa: E402
     PICK_LOG_PATH as _PICK_LOG_PATH_P,
     PICK_LOG_MANUAL_PATH as _PICK_LOG_MANUAL_PATH_P,
     PICK_LOG_MLB_PATH as _PICK_LOG_MLB_PATH_P,
+    PICK_LOG_CALIBRATION_PATH as _PICK_LOG_CALIBRATION_PATH_P,
     PICK_LOG_SHADOW_STATS_PATH as _PICK_LOG_SHADOW_STATS_PATH_P,
     PICK_LOG_BLOCKED_PATH as _PICK_LOG_BLOCKED_PATH_P,
     DISCORD_GUARD_FILE as _DISCORD_GUARD_FILE_P,
@@ -1065,6 +1066,26 @@ def main():
     # Split qualified vs failed
     qualified = [p for p in all_picks if p.get("gate_result") == "PASS" and p.get("pick_score") is not None]
     failed = [p for p in all_picks if p.get("gate_result") != "PASS" or p.get("pick_score") is None]
+
+    # Calibration shadow: log ALL evaluated prop picks with valid over_p_raw,
+    # regardless of gate result — removes selection bias and gives 10-50x more
+    # calibration signal/day than pick_log.csv. Never posted; graded daily by
+    # grade_picks.py. Respects --no-save like every other log writer.
+    if not args.no_save:
+        _calibration_picks = [
+            p for p in all_picks
+            if p.get("pick_type") == "prop"
+            and p.get("over_p_raw") not in (None, "", "0", 0)
+            and 0 < float(p.get("over_p_raw") or 0) < 1
+        ]
+        if _calibration_picks:
+            log_picks(
+                _calibration_picks, args.mode,
+                log_path_override=Path(str(_PICK_LOG_CALIBRATION_PATH_P)),
+                run_type="calibration",
+            )
+            print(f"  [Calibration] {len(_calibration_picks)} pick(s) "
+                  f"logged to pick_log_calibration.csv")
 
     # Persist structural gate failures to pick_log_blocked.csv for frequency auditing.
     # Suspension gates are excluded (see _BLOCKED_LOG_SKIP_GATES).

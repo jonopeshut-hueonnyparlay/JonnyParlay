@@ -19,6 +19,7 @@ DATA = ROOT / "data"
 
 PICK_LOG        = DATA / "pick_log.csv"
 PICK_LOG_CUSTOM = DATA / "pick_log_custom.csv"
+PICK_LOG_CALIBRATION = DATA / "pick_log_calibration.csv"
 
 COMBO_STATS = {"RA", "PRA", "PR", "PA"}
 
@@ -47,6 +48,16 @@ def count_h3_platt(rows: list[dict]) -> int:
     return sum(
         1 for r in rows
         if _nonempty(r.get("over_p_raw")) and _nonempty(r.get("result"))
+    )
+
+
+def count_calibration_platt(rows: list[dict]) -> int:
+    """Graded calibration rows with over_p_raw (all evaluated prop stats)."""
+    return sum(
+        1 for r in rows
+        if r.get("run_type") == "calibration"
+        and _nonempty(r.get("over_p_raw"))
+        and r.get("result") in ("W", "L")
     )
 
 
@@ -105,6 +116,7 @@ GATES = [
     # WNBA go-live gate CLOSED 2026-06-09 — went live at 98/100 (user-approved).
     ("SGP Platt calib",    count_sgp_platt,      100, "scored SGP slips"),
     ("Combo Platt calib",  count_combo_platt,    100, "scored RA/PRA/PR/PA picks"),
+    ("Calibration Platt",  count_calibration_platt, 100, "graded calibration rows (all evaluated props)"),
 ]
 
 
@@ -123,6 +135,7 @@ def _status(count: int, target: int) -> str:
 def main() -> None:
     main_rows   = _read_csv(PICK_LOG)
     custom_rows = _read_csv(PICK_LOG_CUSTOM)
+    calibration_rows = _read_csv(PICK_LOG_CALIBRATION)
 
     # Route the right row-set to each gate counter
     row_map = {
@@ -131,6 +144,7 @@ def main() -> None:
         count_sgp_platt:    main_rows,
         count_combo_platt:  main_rows,
         count_edgemodel_clv: custom_rows,
+        count_calibration_platt: calibration_rows,
     }
 
     results = []

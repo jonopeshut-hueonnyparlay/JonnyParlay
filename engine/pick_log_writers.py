@@ -266,7 +266,7 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None, run_t
                     writer.writerow([
                         run_date,
                         run_time,
-                        "primary",          # run_type — primary picks
+                        run_type,           # schema run_type (default "primary"; shadow callers override)
                         p.get("sport", ""),
                         p.get("player", ""),
                         p.get("team_abbrev", ""),
