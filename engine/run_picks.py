@@ -1088,6 +1088,16 @@ def main():
     # Drop prop ↔ game-line anti-correlations (pitcher HA/ER under + opp TT over)
     qualified = filter_cross_type_correlations(qualified)
 
+    # Game lines are produced solely by analyze_game_lines.py. evaluate_game_lines
+    # still runs above so props are filtered against game-line correlations (GLC + X1),
+    # but game-line PICKS are dropped from the live card here — never sized into the
+    # premium card, logged to pick_log.csv, posted to Discord, or used as parlay legs.
+    # Exception: shadow-only game-line stats (NRFI/YRFI ∈ SHADOW_STATS) stay in the pool
+    # so they reach the SHADOW_STATS split below and keep accumulating to
+    # pick_log_shadow_stats.csv (analyze_game_lines.py does not generate them).
+    qualified = [p for p in qualified
+                 if p.get("pick_type") != "game_line" or p.get("stat") in SHADOW_STATS]
+
     # CHANGE 3: Thesis block — show pre vs post GLC per game (multi-pick games only)
     print_thesis_block(qualified_pre_glc, qualified)
 

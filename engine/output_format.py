@@ -103,16 +103,12 @@ def format_output(premium, safest5, all_qualified, all_picks, mode, today,
         out.append("")
 
     # === F. GAME LINES ===
-    gl_picks = [p for p in all_qualified if p["pick_type"] == "game_line"]
-    gl_picks.sort(key=lambda p: p["adj_edge"], reverse=True)
+    # Game lines are produced solely by analyze_game_lines.py — run_picks no longer cards
+    # or logs them. evaluate_game_lines still runs upstream for prop correlation only.
     out.append(f"{'='*50}")
     out.append("F. GAME LINES")
     out.append(f"{'='*50}")
-    if not gl_picks:
-        out.append("No qualifying picks.")
-    else:
-        for p in gl_picks:
-            out.append(f"  {p.get('size',0):.2f}u | {p['player']} {fmt_dir(p['direction'])}{p['line']} @ {fmt_odds(p['odds'])} ({display_book(p['book'])}) | {fmt_pct(p['win_prob'])} | {fmt_pct(p['adj_edge'])} | {p['game']}")
+    out.append("No game lines — use analyze_game_lines.py")
     out.append("")
 
     # === G. SANITY CHECK TABLE (PASS picks only) ===
