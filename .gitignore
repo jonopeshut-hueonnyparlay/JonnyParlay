@@ -74,3 +74,10 @@ engine/_write_test.py
 
 marketing/
 .pytest_tmp/
+
+# Non-engine / personal directories (untracked 2026-06-13 housecleaning)
+Jono HQ/
+KairosEdge/
+memory/
+docs for pbj/
+*.js
