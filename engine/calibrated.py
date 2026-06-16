@@ -177,12 +177,17 @@ _TEAM_SIGMAS_MEANSQ: dict = {}
 
 def _load_team_sigmas():
     import json as _json
+    from market_config import wnba_sigmas_by_abbrev
     _data_dir = Path(__file__).parent.parent / "data"
     for sport, fname in [("NHL", "team_sigmas_nhl.json"), ("MLB", "team_sigmas_mlb.json"),
                          ("NBA", "team_sigmas_nba.json"), ("WNBA", "team_sigmas_wnba.json")]:
         p = _data_dir / fname
         if p.exists():
             data = _json.loads(p.read_text())
+            # P0.2: WNBA JSON is keyed by numeric team_id; re-key to abbrev so
+            # get_game_sigma (abbrev-keyed) hits instead of falling back to league σ.
+            if sport == "WNBA":
+                data = wnba_sigmas_by_abbrev(data)
             _TEAM_SIGMAS[sport] = data
             sq = [t["score_sigma"] ** 2 for t in data.values()
                   if isinstance(t, dict) and t.get("score_sigma") and t.get("n_games", 0) >= 20]

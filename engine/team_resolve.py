@@ -7,8 +7,28 @@ or the other extracted modules.
 """
 import math
 
-from market_config import TEAM_ABBREV
+from market_config import TEAM_ABBREV, WNBA_TEAM_ABBREV
 from calibrated import GAME_SIGMA, _TEAM_SIGMAS, _TEAM_SIGMAS_MEANSQ, MLB_TEAM_RUN_R
+
+_WNBA_ABBREVS = frozenset(WNBA_TEAM_ABBREV.values())
+
+
+def _resolve_sigma_key(sport: str, team: str) -> str:
+    """Resolve a team name/abbrev to the key used in _TEAM_SIGMAS[sport].
+
+    WNBA names aren't in TEAM_ABBREV (only WNBA_TEAM_ABBREV), so resolve_team_abbrev
+    misses them (P0.2). Route WNBA through WNBA_TEAM_ABBREV; everything else keeps
+    the existing resolve_team_abbrev path.
+    """
+    if sport == "WNBA":
+        low = (team or "").strip().lower()
+        if low in WNBA_TEAM_ABBREV:
+            return WNBA_TEAM_ABBREV[low]
+        up = (team or "").strip().upper()
+        if up in _WNBA_ABBREVS:  # already an abbrev
+            return up
+        return team
+    return resolve_team_abbrev(team) or team
 
 
 def get_game_sigma(sport: str, home_team: str, away_team: str, market: str) -> float:
@@ -27,8 +47,8 @@ def get_game_sigma(sport: str, home_team: str, away_team: str, market: str) -> f
     mean_sq = _TEAM_SIGMAS_MEANSQ.get(sport, 0.0)
     if not team_data or mean_sq <= 0:
         return league_sigma
-    h_abbr = resolve_team_abbrev(home_team) or home_team
-    a_abbr = resolve_team_abbrev(away_team) or away_team
+    h_abbr = _resolve_sigma_key(sport, home_team)
+    a_abbr = _resolve_sigma_key(sport, away_team)
     h = team_data.get(h_abbr)
     a = team_data.get(a_abbr)
     if (not h or not a
@@ -43,7 +63,7 @@ def get_game_sigma_team(sport: str, team_abbr: str) -> float:
     """Return sigma for one team's scoring — used for team total picks."""
     league = GAME_SIGMA.get(sport, GAME_SIGMA["NBA"])
     league_sigma = league.get("team", 10.0)
-    t_abbr = resolve_team_abbrev(team_abbr) or team_abbr
+    t_abbr = _resolve_sigma_key(sport, team_abbr)
     t = _TEAM_SIGMAS.get(sport, {}).get(t_abbr)
     return t["score_sigma"] if t and t.get("n_games", 0) >= 20 else league_sigma
 

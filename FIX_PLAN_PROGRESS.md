@@ -9,7 +9,7 @@ Plan file: `C:\Users\jono4\.claude\plans\you-are-executing-dreamy-brooks.md`
 
 ## Phase 0 (P0.1–P0.6; P0.7 deferred)
 - [x] P0.1 — Prune CO_LEGAL_BOOKS (18→12; removed 6 exited books; betparx kept — it's 26% of WNBA props in-feed; betmonarch not added — dead Odds API key). Replay byte-identical. — 2026-06-16
-- [ ] P0.2 — Fix WNBA team_sigmas key mismatch — —
+- [x] P0.2 — Fix WNBA team_sigmas key mismatch (id→abbrev re-key via WNBA_ID_MAP; WNBA-aware resolution; health_check §16). Was 2 bugs: id-keyed data + TEAM_ABBREV lacks WNBA. — 2026-06-16
 - [ ] P0.3 — Add MAX_PROP_EDGE=0.10 prop ceiling — —
 - [ ] P0.4 — PLATT_SPACE assertion + startup log — —
 - [ ] P0.5 — Bootstrap minimal CI (pytest + ruff) — —

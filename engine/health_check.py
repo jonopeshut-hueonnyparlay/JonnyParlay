@@ -337,6 +337,25 @@ for f in py_files:
 check("Python syntax: all engine files", not syntax_errors,
       "\n  ".join(syntax_errors) if syntax_errors else "")
 
+# ── 16. WNBA team_sigmas keyed by abbrev, not team_id (P0.2) ──────────────────
+print("Checking WNBA team_sigmas keying...")
+try:
+    sys.path.insert(0, str(ENGINE))
+    from calibrated import _TEAM_SIGMAS, GAME_SIGMA  # noqa: E402
+    from team_resolve import get_game_sigma           # noqa: E402
+    _wnba = _TEAM_SIGMAS.get("WNBA", {})
+    _numeric = [k for k in _wnba if str(k).isdigit()]
+    check("WNBA team_sigmas keyed by abbrev (not team_id)",
+          bool(_wnba) and not _numeric,
+          f"{len(_numeric)} numeric-id keys remain — re-key via WNBA_ID_MAP"
+          if _numeric else f"{len(_wnba)} abbrev-keyed teams")
+    _lg = GAME_SIGMA["WNBA"]["total"]
+    _sg = get_game_sigma("WNBA", "Las Vegas Aces", "Los Angeles Sparks", "total")
+    check("WNBA get_game_sigma resolves team-specific (≠ league σ)",
+          abs(_sg - _lg) > 1e-9, f"matchup σ={_sg:.3f} vs league={_lg:.3f}")
+except Exception as e:
+    check("WNBA team_sigmas health check", False, f"{type(e).__name__}: {e}")
+
 # ── Report ────────────────────────────────────────────────────────────────────
 print("\n" + "="*70)
 print("HEALTH CHECK REPORT")

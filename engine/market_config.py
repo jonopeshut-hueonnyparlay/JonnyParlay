@@ -149,6 +149,49 @@ WNBA_TEAM_ABBREV = {
     "seattle storm": "SEA", "toronto tempo": "TOR", "washington mystics": "WAS",
 }
 
+# WNBA team_id → engine abbrev (audit P0.2, 2026-06-16). Source: nba_api static
+# WNBA teams. data/team_sigmas_wnba.json is keyed by these numeric team_ids
+# (the producer _calibrate_team_sigmas_wnba groups by team_id without mapping);
+# consumers re-key to abbrev at load via wnba_sigmas_by_abbrev() so get_game_sigma
+# lookups (keyed by abbrev) hit instead of silently falling back to league σ.
+# NB: nba_api lists Phoenix as 'PHO' — we use the engine convention 'PHX' to match
+# WNBA_TEAM_ABBREV. 13 historical teams; PDX/TOR are 2026 expansion teams with no
+# sigma rows yet (correctly fall back to league σ until n_games>=20).
+WNBA_ID_MAP = {
+    1611661313: "NYL",  # New York Liberty
+    1611661317: "PHX",  # Phoenix Mercury (nba_api 'PHO' → engine 'PHX')
+    1611661319: "LVA",  # Las Vegas Aces
+    1611661320: "LAS",  # Los Angeles Sparks
+    1611661321: "DAL",  # Dallas Wings
+    1611661322: "WAS",  # Washington Mystics
+    1611661323: "CON",  # Connecticut Sun
+    1611661324: "MIN",  # Minnesota Lynx
+    1611661325: "IND",  # Indiana Fever
+    1611661328: "SEA",  # Seattle Storm
+    1611661329: "CHI",  # Chicago Sky
+    1611661330: "ATL",  # Atlanta Dream
+    1611661331: "GSV",  # Golden State Valkyries
+}
+
+
+def wnba_sigmas_by_abbrev(data: dict) -> dict:
+    """Re-key a WNBA team_sigmas dict from numeric team_id → engine abbrev.
+
+    Idempotent: numeric-id keys are mapped via WNBA_ID_MAP; non-numeric keys
+    (already abbrev, e.g. after a producer-side fix) pass through unchanged.
+    Unmapped numeric ids are dropped (none expected for the 13 historical teams).
+    """
+    out = {}
+    for k, v in data.items():
+        if str(k).isdigit():
+            abbr = WNBA_ID_MAP.get(int(k))
+            if abbr:
+                out[abbr] = v
+        else:
+            out[k] = v
+    return out
+
+
 # Suspended stats — single source of truth (Plan 6 §13, 2026-06-05).
 # check_prop_gates() blocks these via one lookup; _assert_killshot_invariants()
 # asserts KILLSHOT_STAT_ALLOW never contains a suspended stat (the v2 PTS/SOG

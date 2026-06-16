@@ -127,10 +127,31 @@ def test_zero_meansq_falls_back_to_league(monkeypatch, fake_teams):
     assert get_game_sigma("NBA", "AAA", "BBB", "total") == pytest.approx(18.5)
 
 
-def test_wnba_numeric_keys_fall_back_to_league():
-    """team_sigmas_wnba.json is keyed by numeric team_ids — name lookups miss
-    and must fall back to the calibrated WNBA league sigma."""
-    assert get_game_sigma("WNBA", "Las Vegas Aces", "New York Liberty", "total") == \
+def test_wnba_team_sigmas_rekeyed_to_abbrev():
+    """P0.2: team_sigmas_wnba.json is keyed by numeric team_id; the loader re-keys
+    to engine abbrev (WNBA_ID_MAP) so lookups hit instead of league-σ fallback.
+    (Previously this test asserted the BUG — that every WNBA matchup fell back to
+    league sigma. P0.2 fixes both the id-keying and the WNBA name resolution.)"""
+    wnba = run_picks._TEAM_SIGMAS.get("WNBA", {})
+    assert wnba, "WNBA team_sigmas not loaded"
+    assert not [k for k in wnba if str(k).isdigit()], "numeric team_id keys remain"
+    assert "PHX" in wnba  # Phoenix mapped to engine 'PHX' (nba_api 'PHO'), not raw id
+
+
+def test_wnba_get_game_sigma_resolves_team_specific():
+    """P0.2: a known WNBA matchup now uses team-specific sigma, not league; name
+    and abbrev inputs must agree."""
+    league = GAME_SIGMA["WNBA"]["total"]
+    by_name = get_game_sigma("WNBA", "Las Vegas Aces", "Los Angeles Sparks", "total")
+    by_abbr = get_game_sigma("WNBA", "LVA", "LAS", "total")
+    assert by_name != pytest.approx(league)
+    assert by_abbr == pytest.approx(by_name)
+
+
+def test_wnba_unknown_team_falls_back_to_league():
+    """An expansion team with no sigma rows (Toronto Tempo/TOR) still falls back
+    cleanly to the WNBA league sigma."""
+    assert get_game_sigma("WNBA", "Toronto Tempo", "Las Vegas Aces", "total") == \
         pytest.approx(GAME_SIGMA["WNBA"]["total"])
 
 
