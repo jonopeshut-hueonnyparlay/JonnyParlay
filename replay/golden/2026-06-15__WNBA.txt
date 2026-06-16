@@ -1,0 +1,196 @@
+
+    ╔═══════════════════════════════════════════╗
+    ║  JonnyParlay MBP Runner v2.0              ║
+    ║  Master Betting Prompt v9.4               ║
+    ║  Pure Python — Zero AI, Deterministic     ║
+    ╚═══════════════════════════════════════════╝
+    
+  Loaded WNBA.csv: 82 players, sport: WNBA
+
+  Sports: WNBA | Mode: Default
+  R12 Cooldown: auto: Brandon Young, Kamilla Cardoso, De'Aaron Fox, Dominique Malonga, A'ja Wilson, Maddy Siegrist, Jackie Young
+
+  ========================================
+  Fetching WNBA odds...
+
+  ========================================
+  Running MBP v9.4 engine...
+  ========================================
+
+  WNBA: 504 prop lines found, 504 matched to projections
+
+  Qualified picks (pre-context): 17
+  Failed gates: 896
+
+  Qualified picks: 17
+  Failed gates: 896
+
+  Gate failure breakdown:
+    G_WNBA_EDGE: 525
+    G7: 229
+    G_RA_DISABLED: 89
+    G7b: 24
+    G13: 24
+    G14: 5
+
+  Top filtered picks (edge > 3% but failed gates):
+  Player                    Stat    Line Dir        WP   Edge   Odds Gate     Game
+  -----------------------------------------------------------------------------------------------------------------------------
+  Janelle Salaun            RA       6.5 under   68.5%  19.8%   -110 G_RA_DISABLED Los Angeles Sparks @ Golden State Valkyries
+  Emily Engstler            RA       9.5 under   84.2%  18.0%   -265 G7       Portland Fire @ Minnesota Lynx
+  Emily Engstler            RA       8.5 under   75.0%  17.8%   -165 G7       Portland Fire @ Minnesota Lynx
+  Emily Engstler            RA      10.5 under   90.7%  16.5%   -420 G7       Portland Fire @ Minnesota Lynx
+  Emily Engstler            RA       7.5 under   63.6%  16.4%   -106 G_RA_DISABLED Portland Fire @ Minnesota Lynx
+  Kayla McBride             RA       8.5 under   84.8%  15.0%   -315 G7       Portland Fire @ Minnesota Lynx
+  Emily Engstler            RA      11.5 under   94.9%  14.8%   -670 G7       Portland Fire @ Minnesota Lynx
+  Kayla McBride             RA       9.5 under   91.8%  14.7%   -530 G7       Portland Fire @ Minnesota Lynx
+  Carla Leite               PR      18.5 over    46.4%  14.6%    190 G13      Portland Fire @ Minnesota Lynx
+  Kayla McBride             RA       7.5 under   74.4%  14.5%   -186 G7       Portland Fire @ Minnesota Lynx
+  Carla Leite               PR      19.5 over    41.5%  14.2%    235 G13      Portland Fire @ Minnesota Lynx
+  Carla Leite               PA      22.5 over    42.1%  13.9%    225 G13      Portland Fire @ Minnesota Lynx
+  Carla Leite               PA      21.5 over    46.6%  13.8%    180 G13      Portland Fire @ Minnesota Lynx
+  Carla Leite               PR      20.5 over    36.9%  13.3%    290 G13      Portland Fire @ Minnesota Lynx
+  Carla Leite               PA      23.5 over    37.8%  13.0%    270 G13      Portland Fire @ Minnesota Lynx
+
+  [Shadow] 42 pick(s) logged to pick_log_shadow_stats.csv (not posted): AST, REB
+
+  [CAP] Units already bet today: 5.00u — remaining 12u budget: 7.00u
+  [KILLSHOT] 4 disqualified (SCORE=1, STAT=3); near-misses logged to blocked log
+  [--no-discord] Card guard bypassed: log-only run, no Discord risk.
+
+============================================================
+==================================================
+⭐ PICK OF THE DAY
+==================================================
+  Jewell Loyd (LAV) Over 9.5 PR
+  -132 @ DraftKings — 1.00u
+  Win Prob: 68.2% | Edge: 15.3% | Pick Score: 89.1
+  Projection: 12.23 | Tier: T2 | Las Vegas Aces @ Dallas Wings
+
+🔒 PREMIUM PICKS — June 15, 2026 | Mode: Default
+
+1️⃣ 1.00u | Jewell Loyd (LAV) O9.5 PR @ -132 (DraftKings)
+   Win: 68.2% | Edge: 15.3% | Pick Score: 89.1 | Proj: 12.23 | T2 | Las Vegas Aces @ Dallas Wings
+
+2️⃣ 1.00u | Carla Leite (POR) O19.5 PRA @ -105 (DraftKings)
+   Win: 63.3% | Edge: 15.6% | Pick Score: 81.2 | Proj: 23.21 | T2 | Portland Fire @ Minnesota Lynx
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total: 2.00u | Bets: 2
+
+🛡️ SAFEST 5 — June 15, 2026
+
+  1. 1.00u | Jewell Loyd (LAV) O9.5 PR @ -132 (DraftKings) | Win: 68.2%
+  2. 1.25u | Carla Leite (POR) O14.5 PR @ -103 (DraftKings) | Win: 65.0%
+  3. 1.00u | Carla Leite (POR) O19.5 PRA @ -105 (DraftKings) | Win: 63.3%
+  4. 0.50u | Gabby Williams (GSV) U24.5 PRA @ -114 (DraftKings) | Win: 58.5%
+
+==================================================
+C. T1/T1B PROPS
+==================================================
+No qualifying picks.
+
+==================================================
+D. T2 PROPS
+==================================================
+
+T2 PR
+────────────────────────────────────────
+  1.00u | Jewell Loyd (LAV) O9.5 PR @ -132 (DraftKings) | 68.2% | 15.3% | Las Vegas Aces @ Dallas Wings
+  1.25u | Carla Leite (POR) O14.5 PR @ -103 (DraftKings) | 65.0% | 15.3% | Portland Fire @ Minnesota Lynx
+
+T2 PRA
+────────────────────────────────────────
+  1.00u | Carla Leite (POR) O19.5 PRA @ -105 (DraftKings) | 63.3% | 15.6% | Portland Fire @ Minnesota Lynx
+  0.50u | Gabby Williams (GSV) U24.5 PRA @ -114 (DraftKings) | 58.5% | 8.2% | Los Angeles Sparks @ Golden State Valkyries
+
+==================================================
+E. T3 PROPS
+==================================================
+No qualifying picks.
+
+==================================================
+F. GAME LINES
+==================================================
+No game lines — use analyze_game_lines.py
+
+==================================================
+G. SANITY CHECK TABLE
+==================================================
+Pick                                 Proj  Line  Fair%    NV%   Edge   AdjE  Size Tier
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Carla Leite O19.5 PRA                23.2  19.5  63.3%  47.6%  15.6%  15.6%  1.00   T2
+Jewell Loyd O9.5 PR                  12.2   9.5  68.2%  52.9%  15.3%  15.3%  1.00   T2
+Carla Leite O14.5 PR                 18.2  14.5  65.0%  49.6%  15.3%  15.3%  1.25   T2
+Gabby Williams U24.5 PRA             22.4  24.5  58.5%  50.2%   8.2%   8.2%  0.50   T2
+
+==================================================
+DISCORD COPY/PASTE BLOCK
+==================================================
+@everyone Today's Portfolio – June 15, 2026
+
+Unit Framework:
+1u = 1% bankroll
+Max Single Position = 1.25u
+Max 3 Positions (per sport)
+Target Daily Exposure = 4–6u
+
+Plays
+Jewell Loyd (LAV) Over 9.5 PR -132 (DraftKings) — 1.00u
+Carla Leite (POR) Over 19.5 PRA -105 (DraftKings) — 1.00u
+
+Total Risk Today: 2.00u
+Largest Single Position: 1.00u
+
+==================================================
+LONGSHOT PARLAY — Safest 6 Picks
+==================================================
+  Not enough qualifying picks for 6-leg parlay.
+
+==================================================
+ALT SPREAD PARLAY — ?-Leg
+==================================================
+  Not enough qualifying NBA game lines for 3-leg parlay.
+
+==================================================
+I. OUTPUT VERIFICATION CHECKLIST
+==================================================
+  [✗] Premium card: 2 picks generated
+  [✓] Safest picks generated
+  [✓] R9 directional balance: 2 overs on Premium
+  [✓] R10 same-stat cap: max 1 picks of same stat (any direction)
+  [✓] R11 enforced: No AST under 1.5 or 2.5
+  [✓] R4 enforced: No REB Overs, no U2.5 REB
+  [✓] G8/G8B/G8C/G8D enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5 (exc. NHL AST 0.5u); no AST over ≤ 4.5; no SOG under ≤ 3.5; no 3PM over ≤ 1.5
+  [✓] G13B enforced: TB killed (G_TB_DISABLED), HRR fully killed (G_HRR_DISABLED), RA killed (G_RA_DISABLED)
+  [✓] G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)
+  [✓] G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)
+  [✓] G7 enforced: No odds ≤ -150
+  [✓] R7 enforced: Max per game = 2 (cap: 2)
+  [✓] G11 enforced: Max pitcher props per pitcher = 0
+  [✓] G11b enforced: Max batter corr props per batter = 0
+  [✓] All sizes ≤ 1.25u (excl. KILLSHOT)
+  [✓] Daily cap (prev 5.00u + premium 2.00u + KILLSHOT 0.00u + parlays 0.00u = 7.00u) ≤ 12u
+
+==================================================
+J. NOTES
+==================================================
+  Directional mix: 3 overs, 1 unders (75%/25% split)
+  Total qualifying picks: 4
+  Mode: Default
+
+============================================================
+
+  [Discord] --no-discord flag set -- skipping all Discord posts.
+
+  [SGP] Running SGP builder...
+  [SGP] Loaded 58 players from WNBA.csv
+  [SGP] Fetched 0 NBA games
+
+  [SGP] No valid SGPs built for tonight's slate.
+
+  [MLB SGP] Running MLB SGP builder...
+  [MLB SGP] No MLB projections found — skipping MLB SGP builder.
+
+  Done. Let's eat.
+

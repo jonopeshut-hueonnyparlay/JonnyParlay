@@ -1,0 +1,196 @@
+
+    ╔═══════════════════════════════════════════╗
+    ║  JonnyParlay MBP Runner v2.0              ║
+    ║  Master Betting Prompt v9.4               ║
+    ║  Pure Python — Zero AI, Deterministic     ║
+    ╚═══════════════════════════════════════════╝
+    
+  Loaded MLB.csv: 738 players, sport: MLB
+  [MLB Starters] No probable starters announced yet (MLB Stats API)
+
+  Sports: MLB | Mode: Default
+  R12 Cooldown: auto: Brandon Young, Kamilla Cardoso, De'Aaron Fox, Dominique Malonga, A'ja Wilson, Maddy Siegrist, Jackie Young
+
+  ========================================
+  Fetching MLB odds...
+
+  ========================================
+  Running MBP v9.4 engine...
+  ========================================
+
+  MLB: 1350 prop lines found, 1320 matched to projections
+  MLB F5: 8 games, 44 F5 picks evaluated
+  MLB NRFI: 3 NRFI/YRFI evaluated
+
+  Qualified picks (pre-context): 4
+  Failed gates: 2228
+
+  Qualified picks: 4
+  Failed gates: 2228
+
+  Gate failure breakdown:
+    G9: 870
+    G7: 828
+    G8: 312
+    GG3: 60
+    G7b: 54
+    PASS: 29
+    G_HA_SUSPENDED: 25
+    GG6: 19
+    GG5: 10
+    G10: 7
+    G_HRR_OVER_LOW_LINE: 6
+    G13: 4
+    G14: 2
+    TIER_MIN(T1): 1
+    GG1: 1
+
+  Top filtered picks (edge > 3% but failed gates):
+  Player                    Stat    Line Dir        WP   Edge   Odds Gate     Game
+  -----------------------------------------------------------------------------------------------------------------------------
+  Wandy Peralta             HA       1.5 over    54.5%  15.8%    140 G8       San Diego Padres @ St. Louis Cardinals
+  YRFI                      YRFI     0.5 over    47.9%  12.5%    235 GG1      New York Mets @ Cincinnati Reds
+  Tobias Myers              HA       2.5 over    63.0%  11.5%   -125 G_HA_SUSPENDED New York Mets @ Cincinnati Reds
+  MJ Melendez               HRR      0.5 over    59.1%  10.8%    100 G_HRR_OVER_LOW_LINE New York Mets @ Cincinnati Reds
+  Esmerlyn Valdez           HRR      0.5 over    67.9%  10.7%   -155 G7       Pittsburgh Pirates @ Athletics
+  Elias Diaz                HRR      0.5 over    65.6%  10.2%   -136 G_HRR_OVER_LOW_LINE Minnesota Twins @ Texas Rangers
+  ARI -1.5                  SPREAD  -1.5 cover   47.0%   9.9%    164 GG5      Los Angeles Angels @ Arizona Diamondbacks
+  CIN -1.5                  SPREAD  -1.5 cover   47.4%   9.5%    158 GG5      New York Mets @ Cincinnati Reds
+  Tampa Bay Rays Team Total TEAM_TOTAL   3.5 under   54.1%   9.3%    115 GG6      Tampa Bay Rays @ Los Angeles Dodgers
+  Shota Imanaga             OUTS    17.5 under   49.1%   9.2%    148 G13      Colorado Rockies @ Chicago Cubs
+  Pittsburgh Pirates Team Total TEAM_TOTAL   4.5 under   55.9%   9.2%    104 GG6      Pittsburgh Pirates @ Athletics
+  Colorado Rockies Team Total TEAM_TOTAL   3.5 under   56.0%   9.0%    107 GG6      Colorado Rockies @ Chicago Cubs
+  Mike Paredes              HA       3.5 under   49.9%   8.8%    125 G_HA_SUSPENDED Minnesota Twins @ Texas Rangers
+  James Outman              HRR      0.5 over    62.6%   8.5%   -135 G_HRR_OVER_LOW_LINE Detroit Tigers @ Houston Astros
+  Ryan Kreidler             HRR      0.5 over    60.3%   8.1%   -120 G_HRR_OVER_LOW_LINE Minnesota Twins @ Texas Rangers
+
+  [Shadow] 1 pick(s) logged to pick_log_shadow_stats.csv (not posted): YRFI
+
+  [CAP] Units already bet today: 5.00u — remaining 12u budget: 7.00u
+  [KILLSHOT] 2 disqualified (SCORE=1, STAT=1); near-misses logged to blocked log
+  [--no-discord] Card guard bypassed: log-only run, no Discord risk.
+
+============================================================
+==================================================
+⭐ PICK OF THE DAY
+==================================================
+  Tobias Myers (NYM) Over 7.5 OUTS
+  -135 @ Hard Rock Bet — 1.25u
+  Win Prob: 78.0% | Edge: 25.1% | Pick Score: 104.7
+  Projection: 9.91 | Tier: T2 | New York Mets @ Cincinnati Reds
+
+🔒 PREMIUM PICKS — June 15, 2026 | Mode: Default
+
+1️⃣ 1.25u | Tobias Myers (NYM) O7.5 OUTS @ -135 (Hard Rock Bet)
+   Win: 78.0% | Edge: 25.1% | Pick Score: 104.7 | Proj: 9.91 | T2 | New York Mets @ Cincinnati Reds
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total: 1.25u | Bets: 1
+
+🛡️ SAFEST 5 — June 15, 2026
+
+  1. 1.25u | Tobias Myers (NYM) O7.5 OUTS @ -135 (Hard Rock Bet) | Win: 78.0%
+  2. 0.50u | JT Ginn (ATH) U16.5 OUTS @ -110 (Hard Rock Bet) | Win: 61.5%
+
+==================================================
+C. T1/T1B PROPS
+==================================================
+No qualifying picks.
+
+==================================================
+D. T2 PROPS
+==================================================
+
+T2 OUTS
+────────────────────────────────────────
+  1.25u | Tobias Myers (NYM) O7.5 OUTS @ -135 (Hard Rock Bet) | 78.0% | 25.1% | New York Mets @ Cincinnati Reds
+  0.50u | JT Ginn (ATH) U16.5 OUTS @ -110 (Hard Rock Bet) | 61.5% | 11.2% | Pittsburgh Pirates @ Athletics
+
+==================================================
+E. T3 PROPS
+==================================================
+No qualifying picks.
+
+==================================================
+F. GAME LINES
+==================================================
+No game lines — use analyze_game_lines.py
+
+==================================================
+G. SANITY CHECK TABLE
+==================================================
+Pick                                 Proj  Line  Fair%    NV%   Edge   AdjE  Size Tier
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Tobias Myers O7.5 OUTS                9.9   7.5  78.0%  52.9%  25.1%  25.1%  1.25   T2
+JT Ginn U16.5 OUTS                   15.1  16.5  61.5%  50.3%  11.2%  11.2%  0.50   T2
+
+==================================================
+DISCORD COPY/PASTE BLOCK
+==================================================
+@everyone Today's Portfolio – June 15, 2026
+
+Unit Framework:
+1u = 1% bankroll
+Max Single Position = 1.25u
+Max 3 Positions (per sport)
+Target Daily Exposure = 4–6u
+
+Plays
+Tobias Myers (NYM) Over 7.5 OUTS -135 (Hard Rock Bet) — 1.25u
+
+Total Risk Today: 1.25u
+Largest Single Position: 1.25u
+
+==================================================
+LONGSHOT PARLAY — Safest 6 Picks
+==================================================
+  Not enough qualifying picks for 6-leg parlay.
+
+==================================================
+ALT SPREAD PARLAY — ?-Leg
+==================================================
+  Not enough qualifying NBA game lines for 3-leg parlay.
+
+==================================================
+I. OUTPUT VERIFICATION CHECKLIST
+==================================================
+  [✗] Premium card: 1 picks generated
+  [✓] Safest picks generated
+  [✓] R9 directional balance: 1 overs on Premium
+  [✓] R10 same-stat cap: max 1 picks of same stat (any direction)
+  [✓] R11 enforced: No AST under 1.5 or 2.5
+  [✓] R4 enforced: No REB Overs, no U2.5 REB
+  [✓] G8/G8B/G8C/G8D enforced: No AST/REB/SOG/K/HA/HITS at line ≤ 1.5 (exc. NHL AST 0.5u); no AST over ≤ 4.5; no SOG under ≤ 3.5; no 3PM over ≤ 1.5
+  [✓] G13B enforced: TB killed (G_TB_DISABLED), HRR fully killed (G_HRR_DISABLED), RA killed (G_RA_DISABLED)
+  [✓] G14 enforced: Projection clearance (normal z≥0.10 for PTS/MLB stats)
+  [✓] G15 enforced: No 3PM bets for HIGH-VAR players (pts_cv>=0.60)
+  [✓] G7 enforced: No odds ≤ -150
+  [✓] R7 enforced: Max per game = 1 (cap: 2)
+  [✓] G11 enforced: Max pitcher props per pitcher = 1
+  [✓] G11b enforced: Max batter corr props per batter = 0
+  [✓] All sizes ≤ 1.25u (excl. KILLSHOT)
+  [✓] Daily cap (prev 5.00u + premium 1.25u + KILLSHOT 0.00u + parlays 0.00u = 6.25u) ≤ 12u
+
+==================================================
+J. NOTES
+==================================================
+  Directional mix: 1 overs, 1 unders (50%/50% split)
+  Total qualifying picks: 2
+  Mode: Default
+
+============================================================
+
+  [Discord] --no-discord flag set -- skipping all Discord posts.
+
+  [SGP] Running SGP builder...
+  [SGP] No NBA projections found -- skipping SGP builder.
+
+  [MLB SGP] Running MLB SGP builder...
+  [MLB SGP] Loaded 160 players from MLB.csv
+  [MLB SGP] Fetched 0 MLB games — building candidates...
+  [MLB SGP] WARNING: No confirmed starters returned — SP scratch check disabled
+
+  [MLB SGP] No valid MLB SGPs built for tonight's slate.
+
+  Done. Let's eat.
+

@@ -1,0 +1,15 @@
+{
+  "date": "2026-06-15",
+  "as_of": "2026-06-15 23:30:00",
+  "as_of_note": "UTC instant == 17:30 MDT == 19:30 ET, calendar day 2026-06-15",
+  "sports": ["MLB", "WNBA"],
+  "source": {
+    "MLB.csv": "Downloads/MLB_2026-06-15-510pm_DK_Main (2).csv",
+    "WNBA.csv": "Downloads/WNBA_2026-06-15-600pm_DK_WNBA (1).csv",
+    "odds_MLB.json": "data/picks/cache/odds_MLB_2026-06-15.json (live OddsFetcher cache)",
+    "odds_WNBA.json": "data/picks/cache/odds_WNBA_2026-06-15.json (live OddsFetcher cache)"
+  },
+  "counts": {"MLB": {"events": 8, "game_lines": 24, "props": 80},
+             "WNBA": {"events": 3, "game_lines": 6, "props": 27}},
+  "captured_by": "P-1 replay harness setup, 2026-06-16"
+}

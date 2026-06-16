@@ -42,3 +42,8 @@ nba_api
 # Daily NBA injury report PDF parser (used by engine/injury_parser.py).
 # Pin to 1.1.1 -- column shape is stable at that version.
 nbainjuries==1.1.1
+
+# ── Dev / test dependencies ─────────────────────────────────────────────────
+# Frozen-clock control for the deterministic replay harness (replay/run_replay.py,
+# audit fix-pass P-1). Not needed at runtime — only for replay + tests.
+freezegun
