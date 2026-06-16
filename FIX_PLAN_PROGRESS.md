@@ -30,3 +30,29 @@ Plan file: `C:\Users\jono4\.claude\plans\you-are-executing-dreamy-brooks.md`
 - [ ] P1.7 — Recalibrate VAKE multiplier stack
 
 _Legend: [ ] todo · [~] deferred/partial · [x] done (append commit SHA + date)_
+
+---
+
+## Carried-forward backlog (HANDOFF — next session entry point)
+
+**Execution protocol reminder:** one task = one commit = one review. STOP after each task; show diff + replay (before/after) + test result, wait for "proceed". Mandatory replay diff. No autonomous numeric-threshold changes — surface with evidence. Don't push without being asked. EdgeModel work commits in `C:\Dev\EdgeModel`. Rollback tag `pre-audit-fixes-2026-06` on both repos. Replay: `python replay/run_replay.py` (06-15 MLB+WNBA only — no NBA snapshot). Tests: `pytest --basetemp=C:/Dev/JonnyParlay/.pytest_tmp` (baseline 1330). ruff: `python -m ruff check .` (green baseline).
+
+**Remaining Phase 1:**
+- **P1.4 — Combo + MLB Platt fit: DATA-GATED, not runnable now.** Combo 27/100, MLB 28/100 graded rows (need 100). Below the floor — can't fit. Action: wire the fit (1-param intercept-only until n≥300 per research) to fire when the gate opens; until then it stays raw. Verify `evaluators.py:124` fallback.
+- **P1.5 — Stamp NBA SGP ρ provenance** (EdgeModel `data/sgp_correlations/nba_rho.json` — add version/fit_date/n_observations/source; JP asserts on load). Metadata only, code-only. Doable next.
+- **P1.6 — MLB SGP ρ awaiting-data + alerts** (n=100 sign / n=160 magnitude; empirical-Bayes shrink toward 0.30 prior). Code-only. Doable next.
+- **P1.7 — Recalibrate VAKE multiplier stack** (cap compound multiplier at 0.85× OR additive shrinkage; T3 effective stakes should leave the floor). Real sizing task — replay will show T3 stake changes.
+
+**Deferred Phase 0:**
+- **P0.3 — prop edge ceiling**: revisit combo-aware after P1.4 (0.10 card-wide cut a 25% POTD + 29 combos).
+- **P0.7 — lineup-freshness gate**: EdgeModel lineup_fetcher has no timestamp; CSV-mtime gate or EdgeModel-stamp approach — revisit when EdgeModel in scope.
+
+**Findings surfaced (own fixes, not yet scheduled):**
+- **capture_clv.py:1829** — F821 undefined `stat` in CLV single-side fallback (latent NameError). F821 in ruff ignore until fixed.
+- **WNBA SIGMA_WNBA['3PM']=0.48** — NBA proxy; empirical min≥20 CV ~0.91 (understates G14/combo σ; props use NB). Monitor.
+- **MLB NB_R (HA 13.41 / ER 2.62)** — producer values relief-contaminated; align after applying starts-only to discrete MLB_P stats (extends P1.1).
+- **NB_R duplicated** in calibrated.py + sgp_builder.py → the case for the deferred full JSON single-source (P1.3 architecture half).
+- **NBA replay snapshot** — capture one when NBA is in season so the harness covers NBA NB_R / props (P1.3 had no NBA coverage).
+- **CLAUDE.md is 40,459 chars** (>40k health-check limit) — trim when convenient.
+
+**Phase 2 / Phase 3:** per `JonnyParlay_Fix_Plan_v2.md` tables (not started).
