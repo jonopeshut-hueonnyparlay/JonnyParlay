@@ -1,0 +1,4 @@
+# Replay fixtures + goldens are a byte-stable baseline for the determinism gate.
+# Disable EOL conversion so they check out byte-for-byte on any platform.
+golden/** -text
+snapshots/** -text
