@@ -3,20 +3,40 @@
 Pure functions (no stdlib deps beyond arithmetic). Canonical home for the odds
 math that was previously duplicated across run_picks.py and the SGP builders.
 
-Note: capture_clv.py and clv_report.py intentionally keep their own implied_prob
-*variants* with extra None-handling for non-numeric inputs — different behavior,
-not consolidated here.
+The vig math lives ONLY here. capture_clv.py and clv_report.py consume the
+None-guarding wrapper implied_prob_or_none() (audit P0.6) instead of their own
+copies, so a change to the formula propagates to the CLV ledger automatically.
 """
+import math
 
 
 def implied_prob(odds):
-    """American odds → implied probability."""
+    """American odds → implied probability. Assumes a valid numeric `odds`
+    (returns 0.0 for 0). For untrusted input (CSV/API strings, NaN) use
+    implied_prob_or_none()."""
     if odds == 0:
         return 0.0
     if odds < 0:
         return abs(odds) / (abs(odds) + 100.0)
     else:
         return 100.0 / (odds + 100.0)
+
+
+def implied_prob_or_none(american_odds):
+    """American odds → implied probability, or None for unusable input.
+
+    The hardened variant used by the CLV path (capture_clv.py, clv_report.py):
+    coerces to float and returns None for 0, NaN, inf, or non-numeric values so
+    callers skip the row instead of writing corrupted CLV (audit C6). The actual
+    formula is delegated to implied_prob() — single source of truth (audit P0.6).
+    """
+    try:
+        o = float(american_odds)
+    except (TypeError, ValueError):
+        return None
+    if not o or not math.isfinite(o):
+        return None
+    return implied_prob(o)
 
 
 def no_vig(imp1, imp2):

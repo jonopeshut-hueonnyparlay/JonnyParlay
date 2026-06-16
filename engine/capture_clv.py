@@ -84,6 +84,11 @@ from paths import (  # noqa: E402
 # python-requests traffic.
 from http_utils import default_headers  # noqa: E402
 
+# Canonical vig math (audit P0.6) — single source of truth in quant.odds.
+# implied_prob_or_none keeps the C6 None-guard (skip corrupt rows) but delegates
+# the formula, so a vig-math change can't silently desync the CLV ledger.
+from quant.odds import implied_prob_or_none as implied_prob  # noqa: E402
+
 # Canonical player-name folding (audit H-3). Strips accents so "Dončić" (log)
 # matches "Doncic" (Odds API description). Must use the same helper as
 # grade_picks.py to guarantee name identity across the pipeline.
@@ -366,23 +371,7 @@ def save_checkpoint(run_date: str, captured_games: set[str]) -> None:
 
 
 # ── Odds API helpers ───────────────────────────────────────────────────────────
-
-def implied_prob(american_odds: int | float) -> float | None:
-    """Convert American odds to implied probability (raw, with vig).
-
-    C6: returns None for odds=0, NaN, inf, or any non-numeric value so
-    callers can skip the row instead of writing corrupted CLV strings.
-    """
-    try:
-        o = float(american_odds)
-    except (TypeError, ValueError):
-        return None
-    if not o or not math.isfinite(o):
-        return None
-    if o < 0:
-        return abs(o) / (abs(o) + 100)
-    else:
-        return 100 / (o + 100)
+# implied_prob is imported from quant.odds (implied_prob_or_none) — audit P0.6.
 
 
 def best_price(outcomes: list[dict], direction: str, line: float | None = None) -> tuple[float | None, str]:

@@ -52,23 +52,16 @@ SHADOW_LOGS = {
     "WNBA": PICK_LOG_WNBA_PATH,
 }
 
+# Canonical vig math (audit P0.6) — single source in quant.odds. Keeps the C6
+# None-guard via implied_prob_or_none but delegates the formula.
+from quant.odds import implied_prob_or_none as implied_prob  # noqa: E402
+
 # CLV methodology changed on this date: prior rows use vigged CLV,
 # post-reform rows use vig-free closing side (props + totals only).
 CLV_REFORM_DATE = "2026-05-31"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def implied_prob(american_odds):
-    try:
-        o = float(american_odds)
-    except (ValueError, TypeError):
-        return None
-    if not o or not math.isfinite(o):
-        return None
-    if o < 0:
-        return abs(o) / (abs(o) + 100)
-    else:
-        return 100 / (o + 100)
+# implied_prob is imported from quant.odds (implied_prob_or_none) — audit P0.6.
 
 
 def payout_mult(american_odds):

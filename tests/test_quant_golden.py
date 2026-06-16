@@ -138,3 +138,33 @@ def test_copula_module_matches_sgp_reexport():
     assert copula.cholesky([[1.0, 0.3], [0.3, 1.0]]) == sgp._cholesky([[1.0, 0.3], [0.3, 1.0]])
     assert copula.copula_joint_approx((0.68, 0.7), 0.35) == sgp._copula_joint_approx((0.68, 0.7), 0.35) == 0.476238
     assert copula.copula_joint_prob([0.68, 0.7], [[1.0, 0.35], [0.35, 1.0]], n_samples=200, seed=42) == 0.46
+
+
+def test_implied_prob_or_none_matches_canonical_for_valid_odds():
+    """P0.6: capture_clv/clv_report now consume implied_prob_or_none. For valid
+    odds it must equal the bare canonical (formula is single-sourced)."""
+    from quant.odds import implied_prob, implied_prob_or_none
+    for o in (-200, -110, 100, 150, -101, 250, "-110", "150"):
+        assert implied_prob_or_none(o) == implied_prob(float(o))
+
+
+def test_implied_prob_or_none_c6_guard():
+    """P0.6: preserves the C6 contract the deleted forks had — None for 0, NaN,
+    inf, and non-numeric, so the CLV path skips corrupt rows (canonical returns
+    0.0 for 0 and would crash on non-numeric)."""
+    from quant.odds import implied_prob_or_none
+    assert implied_prob_or_none(0) is None
+    assert implied_prob_or_none(float("nan")) is None
+    assert implied_prob_or_none(float("inf")) is None
+    assert implied_prob_or_none("not-a-number") is None
+    assert implied_prob_or_none(None) is None
+
+
+def test_clv_modules_use_canonical_implied_prob():
+    """P0.6: both CLV modules must reference the canonical hardened function,
+    not a local fork."""
+    import capture_clv
+    import clv_report
+    from quant.odds import implied_prob_or_none
+    assert capture_clv.implied_prob is implied_prob_or_none
+    assert clv_report.implied_prob is implied_prob_or_none
