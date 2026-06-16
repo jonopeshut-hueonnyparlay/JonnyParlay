@@ -19,7 +19,8 @@ Plan file: `C:\Users\jono4\.claude\plans\you-are-executing-dreamy-brooks.md`
 
 ## Phase 1 (data refits; σ → NB_R → Platt ordering)
 - [x] P1.1 — MLB pitcher σ starts-only filter — **EdgeModel** `dc1a4ee`. Added MLB_P `continuous_filter="is_starter=1"` scoped to continuous σ-fit stats; ip_outs mult now 0.221 starts-only (was relief-contaminated ~0.31). Deployed SIGMA['OUTS']=0.27 KEPT as buffer (user decision) → zero repricing, replay byte-identical. EdgeModel has no test suite (validation = running the calibration). _Incidental: ER raw NB r=1.46 vs deployed 2.62 — for P1.3._
-- [ ] P1.2 — WNBA SIGMA_WNBA on min≥20 priced (NB_R stays min≥8) — EdgeModel
+- [x] P1.2 — WNBA SIGMA_WNBA reproducible (min≥20). Added `wnba-sigma` mode to JonnyParlay calibrate_distributions.py (sensitivity ≥8/≥15/≥20). Table CONFIRMS deployed PTS/AST/REB ≈ min≥20 (0.471/0.644/0.530 vs 0.48/0.65/0.54) → kept, zero repricing. NB_R stays min≥8 (unchanged). — 2026-06-16
+  - FLAG (monitor): SIGMA_WNBA['3PM']=0.48 is an NBA z-score proxy; empirical WNBA min≥20 CV ~0.91 (props use NB path so prop pricing OK; understates only G14/combo σ for 3PM). Not deployed — revisit with WNBA 3PM combo/gate performance data.
 - [ ] P1.3 — Align NB_R producer↔consumer to single JSON source — EdgeModel + JonnyParlay
 - [ ] P1.4 — Fit Combo + MLB Platt (1-param intercept-only until n≥300)
 - [ ] P1.5 — Stamp NBA SGP ρ provenance — EdgeModel

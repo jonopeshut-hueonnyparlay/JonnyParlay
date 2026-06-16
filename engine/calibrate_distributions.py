@@ -11,6 +11,7 @@ Usage:
   python engine/calibrate_distributions.py --mode wnba-game-total
   python engine/calibrate_distributions.py --mode mlb-batter-zinb
   python engine/calibrate_distributions.py --mode wnba-3pm
+  python engine/calibrate_distributions.py --mode wnba-sigma
   python engine/calibrate_distributions.py --mode all
 
 Modes:
@@ -19,6 +20,7 @@ Modes:
   wnba-game-total Normal sigma for WNBA combined score and team score (-> GAME_SIGMA["WNBA"])
   mlb-batter-zinb NB/ZINB params for batter HITS/BB/RUNS (-> NB_R["HITS"], ZINB_PARAMS)
   wnba-3pm        NB dispersion r for WNBA 3PM (-> NB_R_WNBA["3PM"])
+  wnba-sigma      Within-player CV mults for SIGMA_WNBA, min>=20 (-> SIGMA_WNBA in calibrated.py)
   all             Run all modes in order
 """
 
@@ -105,6 +107,28 @@ def _percentile(sorted_list, p):
         return float("nan")
     idx = int(p * len(sorted_list))
     return sorted_list[min(idx, len(sorted_list) - 1)]
+
+
+def _within_player_cv(rows, min_games=8, min_mean=0.5):
+    """Games-weighted within-player CV (std/mean) — the SIGMA_WNBA 'mult'.
+
+    rows: list of (player_id, stat_value). Returns (cv, n_players).
+    """
+    by_player: dict[int, list[float]] = defaultdict(list)
+    for pid, val in rows:
+        by_player[pid].append(float(val))
+    num = den = 0.0
+    n_players = 0
+    for _pid, vals in by_player.items():
+        if len(vals) < min_games:
+            continue
+        mu = statistics.mean(vals)
+        if mu <= min_mean:
+            continue
+        num += len(vals) * (statistics.pstdev(vals) / mu)
+        den += len(vals)
+        n_players += 1
+    return (num / den if den else float("nan")), n_players
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +457,65 @@ def mode_wnba_3pm(conn: sqlite3.Connection):
 
 
 # ---------------------------------------------------------------------------
+# Mode: wnba-sigma  (SIGMA_WNBA Normal-CV mults — G14 z-score proxy + combo sigma)
+# ---------------------------------------------------------------------------
+def mode_wnba_sigma(conn: sqlite3.Connection):
+    """Reproducible SIGMA_WNBA calibration (audit P1.2).
+
+    SIGMA_WNBA had no committed producer — the deployed mults were set ad-hoc on
+    the priced (min>=20) population. This mode makes the fit reproducible: the
+    games-weighted within-player CV at min>=8 / >=15 / >=20, so the min>=20
+    "priced-rotation" choice (research item 3) can be re-verified each season.
+    """
+    print(f"\n{'='*68}")
+    print("MODE: wnba-sigma")
+    print("Calibrates SIGMA_WNBA Normal-CV 'mult' (G14 z-score proxy + combo sigma).")
+    print("Constant to update: SIGMA_WNBA[stat]['mult'] in engine/calibrated.py")
+    print(SEP)
+
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "wnba_player_game_stats" not in tables:
+        print("  SKIP: wnba_player_game_stats table not found in projections.db.")
+        print("  Set EDGEMODEL_DB_PATH (or --db) to the EdgeModel projections.db, or run")
+        print("  python engine/wnba_stats_fetcher.py to populate it, then re-run.")
+        return
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(wnba_player_game_stats)").fetchall()}
+    # (db_col, SIGMA_WNBA label, deployed mult)
+    targets = [("pts", "PTS", 0.48), ("ast", "AST", 0.65), ("reb", "REB", 0.54), ("fg3m", "3PM", 0.48)]
+
+    print(f"  {'stat':5} {'min>=8':>8} {'min>=15':>8} {'min>=20':>8}  {'deployed':>8}  n@20")
+    rows20 = {}
+    for col, label, deployed in targets:
+        if col not in cols:
+            print(f"  {label:5} (column '{col}' not found — skipped)")
+            continue
+        cvs = {}
+        npl20 = 0
+        for thr in (8, 15, 20):
+            rows = conn.execute(
+                f"SELECT player_id, {col} FROM wnba_player_game_stats WHERE min >= {thr} AND {col} IS NOT NULL"
+            ).fetchall()
+            cv, npl = _within_player_cv(rows, min_games=8)
+            cvs[thr] = cv
+            if thr == 20:
+                npl20 = npl
+        rows20[label] = cvs[20]
+        print(f"  {label:5} {cvs[8]:8.3f} {cvs[15]:8.3f} {cvs[20]:8.3f}  {deployed:8.2f}  {npl20}")
+
+    print()
+    print("  min>=20 = priced-rotation proxy (research item 3): tightens vs min>=8.")
+    print("  PTS/AST/REB deployed mults already match min>=20 — KEEP as-is.")
+    print("  3PM: SIGMA_WNBA['3PM']=0.48 is an intentional z-score PROXY (WNBA 3PM props")
+    print(f"       use the NB path, NB_R_WNBA=1.342). Empirical min>=20 CV ~{rows20.get('3PM', float('nan')):.2f}")
+    print("       understates 3PM dispersion in the G14/combo path only — FLAGGED for")
+    print("       monitor, NOT deployed (would reprice WNBA 3PM combos + G14).")
+    print()
+    print("  Deploy (PTS/AST/REB only, if updating): SIGMA_WNBA[stat]['mult'] = <min>=20>;")
+    print("  the 'min' floors (3.5 / 1.0 / 1.0 / 0.70) are separate z-score sigma floors.")
+
+
+# ---------------------------------------------------------------------------
 # Mode: team-sigmas  (writes JSON files to data/)
 # ---------------------------------------------------------------------------
 
@@ -606,6 +689,7 @@ MODES = {
     "wnba-game-total": mode_wnba_game_total,
     "mlb-batter-zinb": mode_mlb_batter_zinb,
     "wnba-3pm":        mode_wnba_3pm,
+    "wnba-sigma":      mode_wnba_sigma,
     "team-sigmas":     mode_team_sigmas,
 }
 
