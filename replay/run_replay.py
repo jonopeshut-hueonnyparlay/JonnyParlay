@@ -200,6 +200,10 @@ def _cmd_check(jobs):
 
 
 def main():
+    # Goldens contain emoji (⭐, ♻️ …); the parent prints diffs to a cp1252 console
+    # on Windows — force utf-8 so diff printing doesn't crash on non-ASCII.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="Deterministic replay harness (P-1).")
     ap.add_argument("--capture", action="store_true", help="Write goldens from current code.")
     ap.add_argument("--list", action="store_true", help="List discovered snapshot jobs.")
