@@ -47,3 +47,8 @@ nbainjuries==1.1.1
 # Frozen-clock control for the deterministic replay harness (replay/run_replay.py,
 # audit fix-pass P-1). Not needed at runtime — only for replay + tests.
 freezegun
+
+# Linter/formatter for CI (audit fix-pass P0.5). Pinned for reproducible CI runs;
+# bump deliberately. `ruff check` is enforced; `ruff format --check` is advisory
+# (the codebase is not yet ruff-formatted — see ruff.toml).
+ruff==0.15.17

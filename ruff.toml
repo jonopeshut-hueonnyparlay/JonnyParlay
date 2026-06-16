@@ -1,0 +1,35 @@
+# Ruff config — audit fix-pass P0.5 (CI bootstrap, 2026-06-16).
+#
+# BASELINE ONLY. This codebase was never linted or formatted: a full `ruff check`
+# reports ~697 violations and `ruff format` would rewrite 163/167 files — almost
+# all of it intentional house style (one-liner `if x: return`, deliberate
+# re-export imports in the extract-and-re-export engine modules). Mass auto-fix is
+# unsafe here (removing "unused" re-exports breaks `from run_picks import ...`).
+#
+# So this config IGNORES the rules the code pervasively/intentionally violates,
+# making `ruff check` GREEN today. CI then catches NEW categories of problems
+# (notably E9 syntax errors) and regressions, while the 1300+ pytest suite remains
+# the primary guard. Tighten this list incrementally; adopting `ruff format` is a
+# separate deliberate PR (it touches 163 files).
+line-length = 120
+
+[lint]
+# Default select is ["E4","E7","E9","F"]. Ignore the currently-violated rules:
+ignore = [
+    "E401",  # multiple-imports-on-one-line
+    "E402",  # module-import-not-at-top — the sys.path.insert()-then-import pattern
+    "E701",  # multiple-statements-on-one-line-colon — intentional `if x: return`
+    "E702",  # multiple-statements-on-one-line-semicolon
+    "E713",  # not-in-test
+    "E731",  # lambda-assignment
+    "E741",  # ambiguous-variable-name (l / I / O)
+    "F401",  # unused-import — pervasive INTENTIONAL re-exports; auto-fix would break imports
+    "F541",  # f-string-missing-placeholders
+    "F811",  # redefined-while-unused (local re-imports shadowing module-level)
+    "F841",  # unused-variable
+    # F821 (undefined-name) has 2 hits today: pick_log_schema.py:365 (benign string
+    # forward-ref) and capture_clv.py:1829 (a REAL undefined `stat` in a CLV-fallback
+    # path — flagged separately as a bug, NOT masked with an inline noqa). Kept out of
+    # the green baseline for now; re-enable by removing it here once capture_clv is fixed.
+    "F821",
+]

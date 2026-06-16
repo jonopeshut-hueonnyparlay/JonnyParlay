@@ -1,0 +1,39 @@
+name: CI
+
+# Audit fix-pass P0.5 (S4l-3 / Research item 10). Minimal solo-dev CI:
+# ruff lint (blocking) + ruff format check (advisory) + pytest. Runs on
+# windows-latest to match the dev environment (the suite's green baseline is
+# Windows). No matrix; single pinned Python. Uses the documented manual ruff
+# steps — NOT astral-sh/ruff-action.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ruff lint (blocking)
+        run: ruff check --output-format=github .
+
+      - name: Ruff format check (advisory — codebase not yet ruff-formatted)
+        continue-on-error: true
+        run: ruff format --check .
+
+      - name: Pytest (excluding network)
+        run: pytest -m "not network" --basetemp=.pytest_tmp
