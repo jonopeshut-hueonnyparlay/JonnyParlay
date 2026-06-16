@@ -29,11 +29,11 @@ jobs:
           pip install -r requirements.txt
 
       - name: Ruff lint (blocking)
-        run: ruff check --output-format=github .
+        run: python -m ruff check --output-format=github .
 
       - name: Ruff format check (advisory — codebase not yet ruff-formatted)
         continue-on-error: true
-        run: ruff format --check .
+        run: python -m ruff format --check .
 
       - name: Pytest (excluding network)
-        run: pytest -m "not network" --basetemp=.pytest_tmp
+        run: python -m pytest -m "not network" --basetemp=.pytest_tmp

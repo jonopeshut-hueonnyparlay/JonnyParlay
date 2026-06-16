@@ -44,6 +44,8 @@ nba_api
 nbainjuries==1.1.1
 
 # ── Dev / test dependencies ─────────────────────────────────────────────────
+# Test runner (needed by CI — `python -m pytest`). Not a runtime dep.
+pytest
 # Frozen-clock control for the deterministic replay harness (replay/run_replay.py,
 # audit fix-pass P-1). Not needed at runtime — only for replay + tests.
 freezegun
