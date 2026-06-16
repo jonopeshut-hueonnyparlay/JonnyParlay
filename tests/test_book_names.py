@@ -22,11 +22,28 @@ sys.path.insert(0, str(HERE / "engine"))
 # Canonical module invariants
 # ─────────────────────────────────────────────────────────────────
 
-def test_co_legal_books_has_18_entries():
+def test_co_legal_books_has_12_entries():
+    """Audit P0.1 (2026-06-16): pruned 18→12 (removed 6 exited books)."""
     from book_names import CO_LEGAL_BOOKS
-    assert len(CO_LEGAL_BOOKS) == 18, (
-        f"CO_LEGAL_BOOKS must stay at 18 books; got {len(CO_LEGAL_BOOKS)}"
+    assert len(CO_LEGAL_BOOKS) == 12, (
+        f"CO_LEGAL_BOOKS must stay at 12 books; got {len(CO_LEGAL_BOOKS)}"
     )
+
+
+def test_defunct_books_removed_from_co_legal():
+    """Audit P0.1: the six exited books are no longer line-shopped."""
+    from book_names import CO_LEGAL_BOOKS
+    removed = {"wynnbet", "pointsbetus", "tipico", "twinspires",
+               "superbook", "betway"}
+    leaked = removed & CO_LEGAL_BOOKS
+    assert not leaked, f"exited books still present in CO_LEGAL_BOOKS: {leaked}"
+
+
+def test_betparx_retained_betmonarch_absent():
+    """Audit P0.1: betparx kept (active in-feed); betmonarch not added (dead key)."""
+    from book_names import CO_LEGAL_BOOKS
+    assert "betparx" in CO_LEGAL_BOOKS
+    assert "betmonarch" not in CO_LEGAL_BOOKS
 
 
 def test_every_co_book_has_a_display_name():

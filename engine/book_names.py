@@ -1,7 +1,7 @@
 """book_names.py — canonical sportsbook key/display/normalization contract.
 
 Single source of truth for:
-  - CO_LEGAL_BOOKS: the 18 Colorado-approved sportsbook keys (line-shopping filter)
+  - CO_LEGAL_BOOKS: the 12 Colorado-approved sportsbook keys (line-shopping filter)
   - BOOK_DISPLAY:   API key → clean display name used in Discord/IG output
   - norm_book():    strip region suffix (e.g. hardrockbet_fl → hardrockbet)
   - display_book(): API key → display name with region-suffix fallback
@@ -17,16 +17,22 @@ from here. No other module should define BOOK_DISPLAY or display_book.
 """
 
 # ── CO-legal sportsbooks (line-shopping filter) ──────────────────────────────
-# Eighteen books approved for Colorado. API key "espnbet" maps to
-# "theScore Bet" (they rebranded under the API's old key).
+# Twelve books live in Colorado on The Odds API feed. Pruned 2026-06-16
+# (audit P0.1): removed six confirmed-exited books (wynnbet, pointsbetus,
+# tipico, twinspires, superbook, betway). betparx retained — it is actively
+# quoted (~26% of WNBA prop liquidity in-feed). betmonarch NOT added: although
+# CO-licensed, The Odds API returns no quotes for it in us/us2/us_ex (dead key),
+# so it would be a no-op. API key "espnbet" maps to "theScore Bet".
 CO_LEGAL_BOOKS = frozenset({
     "draftkings", "fanduel", "betmgm", "williamhill_us", "betrivers",
     "bet365", "fanatics", "hardrockbet", "ballybet", "betparx",
-    "espnbet", "pointsbetus", "twinspires", "circasports", "superbook",
-    "tipico", "wynnbet", "betway",
+    "espnbet", "circasports",
 })
 
 # ── Display names — CO books ─────────────────────────────────────────────────
+# Entries for the six exited books are retained so historical pick_log / CLV
+# rows still render friendly names. The invariant only requires
+# CO_LEGAL_BOOKS ⊆ BOOK_DISPLAY; extra (historical) entries are fine.
 _CO_DISPLAY = {
     "espnbet":        "theScore Bet",
     "hardrockbet":    "Hard Rock Bet",
@@ -36,12 +42,13 @@ _CO_DISPLAY = {
     "betmgm":         "BetMGM",
     "betrivers":      "BetRivers",
     "ballybet":       "Bally Bet",
-    "betparx":        "BetParx",
-    "pointsbetus":    "PointsBet",
     "bet365":         "bet365",
     "fanatics":       "Fanatics",
-    "twinspires":     "TwinSpires",
     "circasports":    "Circa",
+    "betparx":        "BetParx",
+    # Retained for historical display only (exited CO; no longer CO-legal 2026-06-16):
+    "pointsbetus":    "PointsBet",
+    "twinspires":     "TwinSpires",
     "superbook":      "SuperBook",
     "tipico":         "Tipico",
     "wynnbet":        "WynnBET",
