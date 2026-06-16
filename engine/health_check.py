@@ -356,6 +356,31 @@ try:
 except Exception as e:
     check("WNBA team_sigmas health check", False, f"{type(e).__name__}: {e}")
 
+# ── 17. Platt calibration space ↔ formula consistency (P0.4) ──────────────────
+# No Platt artifact JSON exists in this repo — the calibration is the three code
+# constants (formula in prob_core + PLATT_A/B in calibrated + PLATT_SPACE in
+# thresholds), which must stay mutually consistent (CLAUDE.md "atomic 3-way").
+# prob_core._platt_calibrate_prop asserts PLATT_SPACE matches its formula; calling
+# it here turns that call-time guard into a startup hard-fail and reports the
+# active config every run.
+print("Checking Platt calibration space...")
+try:
+    sys.path.insert(0, str(ENGINE))
+    from thresholds import PLATT_SPACE          # noqa: E402
+    from calibrated import PLATT_A, PLATT_B     # noqa: E402
+    from prob_core import _platt_calibrate_prop  # noqa: E402
+    check("PLATT_SPACE is a known value", PLATT_SPACE in ("raw", "logit"),
+          f"PLATT_SPACE={PLATT_SPACE!r}")
+    # If PLATT_SPACE was flipped without changing the formula, this raises
+    # AssertionError inside prob_core → caught below as a FAIL.
+    _p = _platt_calibrate_prop(0.6)
+    check("Platt space ↔ formula consistent (no mismatch)",
+          0.0 <= _p <= 1.0,
+          f"space={PLATT_SPACE} A={PLATT_A} B={PLATT_B} → p(0.6)={_p:.4f}")
+except Exception as e:
+    check("Platt space ↔ formula consistent (no mismatch)", False,
+          f"{type(e).__name__}: {e} — PLATT_SPACE flipped without matching formula?")
+
 # ── Report ────────────────────────────────────────────────────────────────────
 print("\n" + "="*70)
 print("HEALTH CHECK REPORT")
