@@ -15,7 +15,7 @@ SIGMA = {
     # NBA / NHL — Normal distribution sigma: σ = max(proj * mult, min)
     # NOTE: SOG/HITS removed — POISSON_STATS takes priority.
     # REB and AST kept here for combo path (_combo_mu_sigma) only:
-    #   single-stat REB → NB_STATS (r=14.7); single-stat AST → NB_STATS (r=12.16).
+    #   single-stat REB → NB_STATS (r=13.16); single-stat AST → NB_STATS (r=9.66).  # P1.3
     # Calibrated 2026-05-25 from 84k+ player-games (3 seasons), within-player CV at min>=20.
     "REB": {"mult": 0.48, "min": 2.0},  # was 0.58/2.5 — empirical median CV=0.483 (3-season stable)
     "AST": {"mult": 0.53, "min": 2.0},  # NEW — combo path only; 3-season median CV=0.507; fallback was 0.40/2.0
@@ -47,11 +47,15 @@ POISSON_STATS = {"SOG", "REC", "HITS", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA"
 # P16 — Negative binomial distribution for overdispersed count stats.
 # NB(mu, r): var = mu + mu²/r.  r calibrated from within-player conditional variance
 # (avg_var / avg_mu per player across 2024-25 DB), NOT population-level cross-player variance.
-# All values via: r = SUM(n*mu^2) / SUM(n*max(var-mu, 0.001)). Source: engine/calibrate_distributions.py.
-# Last deployed: 2026-05-30 from EdgeModel calibrate_distributions.py. To redeploy: python engine/calibrate_distributions.py --sport NBA --save and update values below.
-#   3PM: avg(var/mu)=1.1486 across n=1246 player-seasons -> r=9.15 (was 12.3 — too tight)
-#   AST: avg(var/mu)=1.3234 across n=69773 game-logs (582 players) -> r=12.16 (was 9.68 from 1395 player-seasons; game-level refit 2026-05-30)
-#   REB: avg(var/mu)=1.3873 across n=69773 game-logs (582 players) -> r=14.7 (was 10.18 from 1395 player-seasons; game-level refit 2026-05-30)
+# Bias-corrected estimator (P1.3, 2026-06-16): r = SUM(n*mu) / SUM(n*(var-mu)/mu)
+# (Jensen-corrected pooled MoM). The PRIOR formula SUM(n*mu^2)/SUM(n*(var-mu))
+# upweights high-mu players quadratically and INFLATES r for high-mean stats —
+# that is why deployed AST/REB sat above what their own var/mu implied.
+# Source: EdgeModel engine/calibrate_distributions.py (--sport NBA). Redeploy:
+# run it and copy the bias-corrected r values below.
+#   3PM: avg(var/mu)=1.1486 (n=1246 player-seasons) -> r=9.15 (near-Poisson; producer now classifies Poisson at var/mu=1.179 — NB kept as the wider/safer choice, flagged)
+#   AST: var/mu=1.323 (582 players/69875 logs) -> r=9.66 bias-corrected (was 12.16 from the inflating formula — that implied var/mu~1.24, inconsistent with the stated 1.323)
+#   REB: var/mu=1.387 (582 players/69875 logs) -> r=13.16 bias-corrected (was 14.7 from the inflating formula)
 #   HRR: r=1.5 calibrated from shadow log: NB(r=1.5, mu=2.0) gives P(X>=2)=47.8% matching empirical 48% WR.
 #        Normal was giving 63% for same projection — structural zero-inflation (batter 0-H/R/RBI ~37% of games).
 #   HA:  r=13.41 — calibrated 2026-05-26 from 69k pitcher game-logs (2023-2026); within-player var/mu=1.204.
@@ -64,8 +68,8 @@ POISSON_STATS = {"SOG", "REC", "HITS", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA"
 NB_STATS = {"3PM", "HRR", "AST", "REB", "HA", "RBI", "ER", "TB"}
 NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 12.3 — too tight)
-    "AST": 12.16,  # recalibrated 2026-05-30: 582 players/69773 game-logs, avg(var/mu)=1.3234 (was 9.68 from player-seasons)
-    "REB": 14.7,   # recalibrated 2026-05-30: 582 players/69773 game-logs, avg(var/mu)=1.3873 (was 10.18 from player-seasons)
+    "AST": 9.66,   # P1.3 2026-06-16: bias-corrected (Jensen MoM) from EdgeModel producer, var/mu=1.323. Was 12.16 (inflating formula).
+    "REB": 13.16,  # P1.3 2026-06-16: bias-corrected (Jensen MoM) from EdgeModel producer, var/mu=1.387. Was 14.7 (inflating formula).
     "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) -> P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
     "HA":  13.41,  # calibrated 2026-05-26: 69k pitcher game-logs; var/mu=1.204. Confirmed 2026-05-30 EdgeModel (56280 games, var/mu=1.2037); no change.
     "RBI": 0.87,   # calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535. r<1 is valid NB; reflects heavy zero-inflation (~74% of games are 0 RBI).

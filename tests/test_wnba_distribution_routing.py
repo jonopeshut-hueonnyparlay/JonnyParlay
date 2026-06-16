@@ -7,7 +7,7 @@ Recalibrated 2026-06-05 (Plan 6 §1C) on the priced population (min>=20, 153 pla
 """
 
 import pytest
-from run_picks import calc_prop_prob, normal_cdf, negbinom_cdf, check_prop_gates, _combo_mu_sigma
+from run_picks import calc_prop_prob, normal_cdf, negbinom_cdf, check_prop_gates, _combo_mu_sigma, NB_R
 
 
 # ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ from run_picks import calc_prop_prob, normal_cdf, negbinom_cdf, check_prop_gates
 # ---------------------------------------------------------------------------
 
 def test_wnba_ast_routes_to_nb():
-    """WNBA AST uses NB with WNBA-specific r=11.37, not NBA r=12.16 and not Normal."""
+    """WNBA AST uses NB with WNBA-specific r=11.37, not NBA r=9.66 and not Normal."""
     proj, line = 5.0, 4.5
     expected_over = 1.0 - negbinom_cdf(int(line), proj, 11.37)  # NB_R_WNBA["AST"]
     normal_sigma = max(proj * 0.65, 1.0)
@@ -28,7 +28,7 @@ def test_wnba_ast_routes_to_nb():
 
 
 def test_wnba_reb_routes_to_nb():
-    """WNBA REB uses NB with WNBA-specific r=10.74, not NBA r=14.7 and not Normal."""
+    """WNBA REB uses NB with WNBA-specific r=10.74, not NBA r=13.16 and not Normal."""
     proj, line = 6.0, 5.5
     expected_over = 1.0 - negbinom_cdf(int(line), proj, 10.74)  # NB_R_WNBA["REB"]
     normal_sigma = max(proj * 0.54, 1.0)
@@ -63,7 +63,7 @@ def test_nba_ast_still_uses_nb():
     """NBA AST must remain on NB path — no regression."""
     proj, line = 5.0, 4.5
     k = int(line)
-    nb_over = 1.0 - negbinom_cdf(k, proj, 12.16)
+    nb_over = 1.0 - negbinom_cdf(k, proj, NB_R["AST"])  # live constant (P1.3: 9.66)
     normal_sigma = max(proj * 0.55, 1.1)
     normal_over = 1.0 - normal_cdf(line, proj, normal_sigma)
 
@@ -77,7 +77,7 @@ def test_nba_reb_still_uses_nb():
     """NBA REB must remain on NB path — no regression."""
     proj, line = 6.0, 5.5
     k = int(line)
-    nb_over = 1.0 - negbinom_cdf(k, proj, 14.7)
+    nb_over = 1.0 - negbinom_cdf(k, proj, NB_R["REB"])  # live constant (P1.3: 13.16)
     normal_sigma = max(proj * 0.45, 2.0)
     normal_over = 1.0 - normal_cdf(line, proj, normal_sigma)
 

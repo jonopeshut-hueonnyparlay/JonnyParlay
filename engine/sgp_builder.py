@@ -68,8 +68,8 @@ STAT_COLS = {"PTS": "PTS", "AST": "AST", "REB": "RB", "3PM": "3PT"}
 
 SIGMA = {
     "PTS": {"mult": 0.35, "min": 5.0},  # synced with run_picks.py (raised 4.5→5.0, 2026-05-25)
-    # AST moved to NB_STATS (r=12.16) — no longer Normal path.
-    # REB moved to NB_STATS (r=14.7) — no longer Normal path.
+    # AST moved to NB_STATS (r=9.66) — no longer Normal path.
+    # REB moved to NB_STATS (r=13.16) — no longer Normal path.
     # "3PM" intentionally absent — NB_STATS/NB_R. Do NOT add to SIGMA.
 }
 POISSON_STATS: set = set()  # AST and REB moved to NB_STATS; nothing left Poisson in SGP
@@ -81,8 +81,8 @@ POISSON_CUTOFF = 8.5
 NB_STATS = {"3PM", "AST", "REB", "BLK", "STL"}
 NB_R = {
     "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 2.1/12.3)
-    "AST": 12.16,   # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.2539; Poisson was wrong
-    "REB": 14.7 ,  # calibrated 2026-05-25: 1395 player-seasons, avg(var/mu)=1.4073; Poisson was wrong
+    "AST": 9.66,   # P1.3 2026-06-16: bias-corrected (Jensen MoM), EdgeModel producer. Was 12.16. Keep in sync with calibrated.py NB_R.
+    "REB": 13.16,  # P1.3 2026-06-16: bias-corrected (Jensen MoM), EdgeModel producer. Was 14.7. Keep in sync with calibrated.py NB_R.
     "BLK": 2.8,    # empirical per-game r; Research Brief 5, 2026-05-02
     "STL": 3.6,    # empirical per-game r; Research Brief 5, 2026-05-02
 }

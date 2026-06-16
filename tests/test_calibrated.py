@@ -72,8 +72,10 @@ def test_nb_r_has_refitted_keys():
 
 
 def test_nb_r_locked_values():
-    assert NB_R["AST"] == pytest.approx(12.16)
-    assert NB_R["REB"] == pytest.approx(14.7)
+    # P1.3 2026-06-16: bias-corrected (Jensen MoM) from EdgeModel producer
+    # (was 12.16/14.7 from the inflating pooled formula).
+    assert NB_R["AST"] == pytest.approx(9.66)
+    assert NB_R["REB"] == pytest.approx(13.16)
 
 
 def test_nb_r_wnba_values_positive():

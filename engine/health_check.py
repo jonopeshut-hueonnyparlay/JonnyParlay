@@ -160,8 +160,8 @@ EXPECTED_CALIBRATED = {
     "BM_SHRINKAGE T1=0.75": '"T1": 0.75',
     "BM_SHRINKAGE T1B=0.80": '"T1B": 0.80',
     "BM_SHRINKAGE T3=0.70": '"T3": 0.70',
-    "NB_R AST=12.16": '"AST": 12.16',
-    "NB_R REB=14.7": '"REB": 14.7',
+    "NB_R AST=9.66": '"AST": 9.66',
+    "NB_R REB=13.16": '"REB": 13.16',
     "T1 min_edge 0.07": '"min_edge": 0.07',
     "T2 min_edge 0.05": '"min_edge": 0.05',
     "STAT AST=T1B": '"AST": "T1B"',
@@ -187,10 +187,10 @@ check("SGP_JOINT_EV_MARGIN not in run_picks", True, "Lives in sgp_builder.py (co
 # ── 6. sgp_builder.py constants ──────────────────────────────────────────────
 print("Checking sgp_builder.py...")
 sgp = read_file(ENGINE / "sgp_builder.py")
-check("sgp_builder NB_R AST=12.16", '"AST": 12.16' in sgp or "AST.*12.16" in sgp,
-      "NB_R AST not found")
-check("sgp_builder NB_R REB=14.7", '"REB": 14.7' in sgp or "REB.*14.7" in sgp,
-      "NB_R REB not found")
+check("sgp_builder NB_R AST=9.66 (sync w/ calibrated)", '"AST": 9.66' in sgp,
+      "NB_R AST out of sync with calibrated.py")
+check("sgp_builder NB_R REB=13.16 (sync w/ calibrated)", '"REB": 13.16' in sgp,
+      "NB_R REB out of sync with calibrated.py")
 # Copula math moved to quant/copula.py (Step 7); the *0.87 deflation lives there now.
 copula_src = read_file(ENGINE / "quant" / "copula.py")
 check("quant/copula.py copula *0.87", "0.87" in copula_src, "Copula deflation factor not found")
