@@ -244,10 +244,29 @@ from quant.copula import (
 )
 
 
+# Provenance for the NBA SGP ρ values below (audit P1.5 / S4g-4/5). There is no
+# JSON ρ matrix — the values are hardcoded in _pairwise_rho(); this is the audit
+# trail. health_check asserts this meta is present and that _pairwise_rho still
+# returns the canonical values (regression guard against silent ρ edits).
+# When the ρ values change, bump `version` and `fit_date` in the SAME commit.
+_NBA_SGP_RHO_META = {
+    "version": "1.0",
+    "fit_date": "2026-05 (L8)",          # best signal available; see notes
+    "source": "empirical NBA game-log correlation analysis (L8, May 2026)",
+    "n_observations": "unrecorded",      # P1.5: not captured at fit time — audit gap
+    "model": "Gaussian copula pairwise rho",
+    "frozen": True,
+    "notes": "Hardcoded in _pairwise_rho() (no JSON artifact). Conservative "
+             "(rho<0.40) so the copula joint estimate is a floor, not a ceiling. "
+             "n_observations was never recorded at fit time.",
+}
+
+
 def _pairwise_rho(leg_a, leg_b):
     """Pairwise Gaussian copula correlation ρ for two SGP legs.
 
-    Calibrated from empirical NBA game-log correlation analysis.  Values are
+    Provenance: see _NBA_SGP_RHO_META (audit P1.5). Calibrated from empirical NBA
+    game-log correlation analysis (L8, ~May 2026; n unrecorded). Values are
     conservative (ρ < 0.40) because we want the copula estimate to be a floor,
     not an optimistic ceiling.
 

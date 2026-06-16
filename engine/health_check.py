@@ -381,6 +381,40 @@ except Exception as e:
     check("Platt space ↔ formula consistent (no mismatch)", False,
           f"{type(e).__name__}: {e} — PLATT_SPACE flipped without matching formula?")
 
+# ── 18. NBA SGP ρ provenance + regression guard (P1.5) ────────────────────────
+# No JSON ρ matrix — values are hardcoded in sgp_builder._pairwise_rho(). Assert
+# the provenance stamp is present and that canonical leg-pairs still return the
+# frozen ρ values (catches silent ρ edits; reports version/fit_date every run).
+print("Checking NBA SGP rho provenance...")
+try:
+    sys.path.insert(0, str(ENGINE))
+    import sgp_builder  # noqa: E402
+    _meta = getattr(sgp_builder, "_NBA_SGP_RHO_META", None)
+    _meta_ok = isinstance(_meta, dict) and {"version", "fit_date", "source"} <= set(_meta)
+    check("NBA SGP rho provenance stamped",
+          _meta_ok,
+          f"version={_meta.get('version')} fit_date={_meta.get('fit_date')}"
+          if _meta_ok else "_NBA_SGP_RHO_META missing/malformed")
+
+    def _leg(player, team, stat, direction, game="G1"):
+        return {"player": player, "team": team, "stat": stat, "direction": direction, "game": game}
+    # (leg_a, leg_b, expected_rho) — one per hierarchy branch.
+    _canon = [
+        (_leg("A", "X", "PTS", "over"), _leg("B", "X", "AST", "over"), 0.35),   # same-team off overs
+        (_leg("A", "X", "PTS", "over"), _leg("A", "X", "REB", "over"), 0.28),   # same player same dir
+        (_leg("A", "X", "PTS", "over"), _leg("A", "X", "REB", "under"), -0.20), # same player opp dir
+        (_leg("A", "X", "REB", "over"), _leg("B", "X", "REB", "over"), 0.20),   # same-team REB overs
+        (_leg("A", "X", "STL", "over"), _leg("B", "X", "BLK", "over"), 0.15),   # same-team same dir other
+        (_leg("A", "X", "PTS", "over"), _leg("B", "Y", "PTS", "over"), 0.10),   # cross-team overs
+        (_leg("A", "X", "PTS", "over"), _leg("B", "Y", "PTS", "over", game="G2"), 0.0),  # different games
+    ]
+    _bad = [(a["stat"], b["stat"], exp, sgp_builder._pairwise_rho(a, b))
+            for a, b, exp in _canon if abs(sgp_builder._pairwise_rho(a, b) - exp) > 1e-9]
+    check("NBA SGP rho values match frozen canonical set",
+          not _bad, f"{len(_bad)} drifted: {_bad}" if _bad else f"{len(_canon)} pairs OK")
+except Exception as e:
+    check("NBA SGP rho provenance + regression guard", False, f"{type(e).__name__}: {e}")
+
 # ── Report ────────────────────────────────────────────────────────────────────
 print("\n" + "="*70)
 print("HEALTH CHECK REPORT")

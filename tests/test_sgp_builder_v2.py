@@ -242,3 +242,37 @@ class TestDisallowedBook:
         # _sgp_book should only count fanduel
         book = sgp._sgp_book(legs)
         assert book == "fanduel"
+
+
+class TestNbaSgpRhoProvenance:
+    """P1.5: provenance stamp + frozen canonical rho values for _pairwise_rho."""
+
+    def test_provenance_meta_present(self):
+        import sgp_builder as sgp
+        m = sgp._NBA_SGP_RHO_META
+        assert isinstance(m, dict)
+        assert {"version", "fit_date", "source", "n_observations"} <= set(m)
+        assert m["version"]  # non-empty
+
+    def test_pairwise_rho_frozen_values(self):
+        """Lock the canonical rho hierarchy; bump _NBA_SGP_RHO_META['version']
+        in the same commit if any of these intentionally change."""
+        import sgp_builder as sgp
+
+        def leg(player, team, stat, direction, game="G1"):
+            return {"player": player, "team": team, "stat": stat,
+                    "direction": direction, "game": game}
+
+        cases = [
+            (leg("A", "X", "PTS", "over"),  leg("B", "X", "AST", "over"),   0.35),
+            (leg("A", "X", "PTS", "over"),  leg("A", "X", "REB", "over"),   0.28),
+            (leg("A", "X", "PTS", "over"),  leg("A", "X", "REB", "under"), -0.20),
+            (leg("A", "X", "REB", "over"),  leg("B", "X", "REB", "over"),   0.20),
+            (leg("A", "X", "STL", "over"),  leg("B", "X", "BLK", "over"),   0.15),
+            (leg("A", "X", "PTS", "over"),  leg("B", "X", "AST", "under"), -0.10),
+            (leg("A", "X", "PTS", "over"),  leg("B", "Y", "PTS", "over"),   0.10),
+            (leg("A", "X", "PTS", "under"), leg("B", "Y", "REB", "under"),  0.08),
+            (leg("A", "X", "PTS", "over"),  leg("B", "Y", "PTS", "over", game="G2"), 0.0),
+        ]
+        for a, b, expected in cases:
+            assert sgp._pairwise_rho(a, b) == pytest.approx(expected)
