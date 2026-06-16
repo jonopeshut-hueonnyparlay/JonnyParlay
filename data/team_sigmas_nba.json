@@ -1,0 +1,152 @@
+{
+  "ATL": {
+    "score_mu": 117.8968,
+    "score_sigma": 12.6522,
+    "n_games": 252
+  },
+  "BKN": {
+    "score_mu": 107.1341,
+    "score_sigma": 12.5397,
+    "n_games": 246
+  },
+  "BOS": {
+    "score_mu": 115.9541,
+    "score_sigma": 13.048,
+    "n_games": 283
+  },
+  "CHA": {
+    "score_mu": 109.2317,
+    "score_sigma": 12.8682,
+    "n_games": 246
+  },
+  "CHI": {
+    "score_mu": 115.4593,
+    "score_sigma": 12.1062,
+    "n_games": 246
+  },
+  "CLE": {
+    "score_mu": 116.6831,
+    "score_sigma": 12.5759,
+    "n_games": 284
+  },
+  "DAL": {
+    "score_mu": 114.6157,
+    "score_sigma": 13.3132,
+    "n_games": 268
+  },
+  "DEN": {
+    "score_mu": 117.6223,
+    "score_sigma": 13.7307,
+    "n_games": 278
+  },
+  "DET": {
+    "score_mu": 113.7105,
+    "score_sigma": 11.5322,
+    "n_games": 266
+  },
+  "GSW": {
+    "score_mu": 114.8178,
+    "score_sigma": 12.7896,
+    "n_games": 258
+  },
+  "HOU": {
+    "score_mu": 113.9614,
+    "score_sigma": 12.8976,
+    "n_games": 259
+  },
+  "IND": {
+    "score_mu": 117.1783,
+    "score_sigma": 13.185,
+    "n_games": 286
+  },
+  "LAC": {
+    "score_mu": 113.6139,
+    "score_sigma": 12.5401,
+    "n_games": 259
+  },
+  "LAL": {
+    "score_mu": 114.9361,
+    "score_sigma": 12.9679,
+    "n_games": 266
+  },
+  "MEM": {
+    "score_mu": 113.848,
+    "score_sigma": 12.6793,
+    "n_games": 250
+  },
+  "MIA": {
+    "score_mu": 113.1569,
+    "score_sigma": 13.8731,
+    "n_games": 255
+  },
+  "MIL": {
+    "score_mu": 114.8327,
+    "score_sigma": 12.8716,
+    "n_games": 257
+  },
+  "MIN": {
+    "score_mu": 114.0727,
+    "score_sigma": 11.757,
+    "n_games": 289
+  },
+  "NOP": {
+    "score_mu": 113.092,
+    "score_sigma": 13.4632,
+    "n_games": 250
+  },
+  "NYK": {
+    "score_mu": 114.6276,
+    "score_sigma": 13.1048,
+    "n_games": 290
+  },
+  "OKC": {
+    "score_mu": 118.8832,
+    "score_sigma": 12.4166,
+    "n_games": 291
+  },
+  "ORL": {
+    "score_mu": 109.6151,
+    "score_sigma": 12.9095,
+    "n_games": 265
+  },
+  "PHI": {
+    "score_mu": 112.8137,
+    "score_sigma": 12.9101,
+    "n_games": 263
+  },
+  "PHX": {
+    "score_mu": 113.8425,
+    "score_sigma": 11.8238,
+    "n_games": 254
+  },
+  "POR": {
+    "score_mu": 110.6932,
+    "score_sigma": 12.8809,
+    "n_games": 251
+  },
+  "SAC": {
+    "score_mu": 114.4309,
+    "score_sigma": 12.1713,
+    "n_games": 246
+  },
+  "SAS": {
+    "score_mu": 115.295,
+    "score_sigma": 12.1244,
+    "n_games": 261
+  },
+  "TOR": {
+    "score_mu": 112.5494,
+    "score_sigma": 12.8657,
+    "n_games": 253
+  },
+  "UTA": {
+    "score_mu": 115.0447,
+    "score_sigma": 12.5022,
+    "n_games": 246
+  },
+  "WSH": {
+    "score_mu": 111.5488,
+    "score_sigma": 11.6505,
+    "n_games": 246
+  }
+}

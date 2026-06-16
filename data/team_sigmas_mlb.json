@@ -1,0 +1,182 @@
+{
+  "ARI": {
+    "score_mu": 4.9499,
+    "score_sigma": 3.2268,
+    "nb_r": 4.4858,
+    "n_games": 539
+  },
+  "ATL": {
+    "score_mu": 4.9204,
+    "score_sigma": 3.2099,
+    "nb_r": 4.4974,
+    "n_games": 540
+  },
+  "BAL": {
+    "score_mu": 4.6426,
+    "score_sigma": 3.2227,
+    "nb_r": 3.7528,
+    "n_games": 540
+  },
+  "BOS": {
+    "score_mu": 4.6524,
+    "score_sigma": 3.361,
+    "nb_r": 3.258,
+    "n_games": 538
+  },
+  "CHC": {
+    "score_mu": 4.8185,
+    "score_sigma": 3.5184,
+    "nb_r": 3.071,
+    "n_games": 540
+  },
+  "CIN": {
+    "score_mu": 4.5158,
+    "score_sigma": 3.2529,
+    "nb_r": 3.3621,
+    "n_games": 539
+  },
+  "CLE": {
+    "score_mu": 4.1534,
+    "score_sigma": 2.8637,
+    "nb_r": 4.2626,
+    "n_games": 541
+  },
+  "COL": {
+    "score_mu": 4.1072,
+    "score_sigma": 3.0857,
+    "nb_r": 3.1155,
+    "n_games": 541
+  },
+  "CWS": {
+    "score_mu": 3.7718,
+    "score_sigma": 2.8287,
+    "nb_r": 3.3633,
+    "n_games": 539
+  },
+  "DET": {
+    "score_mu": 4.2741,
+    "score_sigma": 3.0026,
+    "nb_r": 3.8527,
+    "n_games": 540
+  },
+  "HOU": {
+    "score_mu": 4.6204,
+    "score_sigma": 3.2835,
+    "nb_r": 3.465,
+    "n_games": 540
+  },
+  "KC": {
+    "score_mu": 4.2074,
+    "score_sigma": 3.0702,
+    "nb_r": 3.392,
+    "n_games": 540
+  },
+  "LAA": {
+    "score_mu": 4.1926,
+    "score_sigma": 2.8714,
+    "nb_r": 4.3378,
+    "n_games": 540
+  },
+  "LAD": {
+    "score_mu": 5.2815,
+    "score_sigma": 3.3848,
+    "nb_r": 4.517,
+    "n_games": 540
+  },
+  "MIA": {
+    "score_mu": 4.1608,
+    "score_sigma": 2.9518,
+    "nb_r": 3.8031,
+    "n_games": 541
+  },
+  "MIL": {
+    "score_mu": 4.7709,
+    "score_sigma": 3.3152,
+    "nb_r": 3.6598,
+    "n_games": 537
+  },
+  "MIN": {
+    "score_mu": 4.5315,
+    "score_sigma": 3.232,
+    "nb_r": 3.4718,
+    "n_games": 540
+  },
+  "NYM": {
+    "score_mu": 4.5537,
+    "score_sigma": 3.3313,
+    "nb_r": 3.1689,
+    "n_games": 540
+  },
+  "NYY": {
+    "score_mu": 4.8056,
+    "score_sigma": 3.2595,
+    "nb_r": 3.9687,
+    "n_games": 540
+  },
+  "OAK": {
+    "score_mu": 4.0648,
+    "score_sigma": 3.1841,
+    "nb_r": 2.7203,
+    "n_games": 540
+  },
+  "PHI": {
+    "score_mu": 4.7667,
+    "score_sigma": 3.2612,
+    "nb_r": 3.8714,
+    "n_games": 540
+  },
+  "PIT": {
+    "score_mu": 4.0704,
+    "score_sigma": 3.1064,
+    "nb_r": 2.9694,
+    "n_games": 540
+  },
+  "SD": {
+    "score_mu": 4.4991,
+    "score_sigma": 3.159,
+    "nb_r": 3.6937,
+    "n_games": 539
+  },
+  "SEA": {
+    "score_mu": 4.4861,
+    "score_sigma": 3.0602,
+    "nb_r": 4.125,
+    "n_games": 541
+  },
+  "SF": {
+    "score_mu": 4.2019,
+    "score_sigma": 3.032,
+    "nb_r": 3.5374,
+    "n_games": 540
+  },
+  "STL": {
+    "score_mu": 4.3011,
+    "score_sigma": 2.9601,
+    "nb_r": 4.147,
+    "n_games": 538
+  },
+  "TB": {
+    "score_mu": 4.5084,
+    "score_sigma": 3.1671,
+    "nb_r": 3.6809,
+    "n_games": 537
+  },
+  "TEX": {
+    "score_mu": 4.5436,
+    "score_sigma": 3.4333,
+    "nb_r": 2.8498,
+    "n_games": 539
+  },
+  "TOR": {
+    "score_mu": 4.5019,
+    "score_sigma": 3.1367,
+    "nb_r": 3.7976,
+    "n_games": 540
+  },
+  "WSH": {
+    "score_mu": 4.3346,
+    "score_sigma": 3.1045,
+    "nb_r": 3.5428,
+    "n_games": 541
+  }
+}

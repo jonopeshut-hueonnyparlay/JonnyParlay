@@ -6,6 +6,14 @@ data/*.txt
 data/picks/
 data/projections/
 
+# Exception: team_sigmas_*.json are STATIC calibration fixtures (team scoring
+# distributions), not live ledger — committed so a fresh checkout / CI has them
+# (audit P0.5 CI fix; the test suite loads them at import via calibrated.py).
+!data/team_sigmas_nba.json
+!data/team_sigmas_nhl.json
+!data/team_sigmas_mlb.json
+!data/team_sigmas_wnba.json
+
 # Generated artefacts
 results_graphics/
 projections/*.csv

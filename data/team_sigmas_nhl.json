@@ -1,0 +1,167 @@
+{
+  "ANA": {
+    "score_mu": 2.8374,
+    "score_sigma": 1.6921,
+    "n_games": 246
+  },
+  "ARI": {
+    "score_mu": 3.122,
+    "score_sigma": 1.8012,
+    "n_games": 82
+  },
+  "BOS": {
+    "score_mu": 3.0935,
+    "score_sigma": 1.6865,
+    "n_games": 246
+  },
+  "BUF": {
+    "score_mu": 3.2642,
+    "score_sigma": 1.8315,
+    "n_games": 246
+  },
+  "CAR": {
+    "score_mu": 3.4187,
+    "score_sigma": 1.7495,
+    "n_games": 246
+  },
+  "CBJ": {
+    "score_mu": 3.1016,
+    "score_sigma": 1.9,
+    "n_games": 246
+  },
+  "CGY": {
+    "score_mu": 2.8049,
+    "score_sigma": 1.6095,
+    "n_games": 246
+  },
+  "CHI": {
+    "score_mu": 2.5122,
+    "score_sigma": 1.6105,
+    "n_games": 246
+  },
+  "COL": {
+    "score_mu": 3.5894,
+    "score_sigma": 1.8709,
+    "n_games": 246
+  },
+  "DAL": {
+    "score_mu": 3.4715,
+    "score_sigma": 1.7697,
+    "n_games": 246
+  },
+  "DET": {
+    "score_mu": 3.0772,
+    "score_sigma": 1.663,
+    "n_games": 246
+  },
+  "EDM": {
+    "score_mu": 3.3943,
+    "score_sigma": 1.8101,
+    "n_games": 246
+  },
+  "FLA": {
+    "score_mu": 3.1341,
+    "score_sigma": 1.8054,
+    "n_games": 246
+  },
+  "LAK": {
+    "score_mu": 2.9715,
+    "score_sigma": 1.7057,
+    "n_games": 246
+  },
+  "MIN": {
+    "score_mu": 3.0528,
+    "score_sigma": 1.6516,
+    "n_games": 246
+  },
+  "MTL": {
+    "score_mu": 3.1057,
+    "score_sigma": 1.535,
+    "n_games": 246
+  },
+  "NJD": {
+    "score_mu": 2.9919,
+    "score_sigma": 1.7309,
+    "n_games": 246
+  },
+  "NSH": {
+    "score_mu": 2.9675,
+    "score_sigma": 1.6972,
+    "n_games": 246
+  },
+  "NYI": {
+    "score_mu": 2.8577,
+    "score_sigma": 1.6438,
+    "n_games": 246
+  },
+  "NYR": {
+    "score_mu": 3.1545,
+    "score_sigma": 1.8139,
+    "n_games": 246
+  },
+  "OTT": {
+    "score_mu": 3.1545,
+    "score_sigma": 1.7216,
+    "n_games": 246
+  },
+  "PHI": {
+    "score_mu": 2.939,
+    "score_sigma": 1.6464,
+    "n_games": 246
+  },
+  "PIT": {
+    "score_mu": 3.2154,
+    "score_sigma": 1.884,
+    "n_games": 246
+  },
+  "SEA": {
+    "score_mu": 2.8049,
+    "score_sigma": 1.7269,
+    "n_games": 246
+  },
+  "SJS": {
+    "score_mu": 2.6098,
+    "score_sigma": 1.6593,
+    "n_games": 246
+  },
+  "STL": {
+    "score_mu": 2.9431,
+    "score_sigma": 1.6552,
+    "n_games": 246
+  },
+  "TBL": {
+    "score_mu": 3.5569,
+    "score_sigma": 1.8612,
+    "n_games": 246
+  },
+  "TOR": {
+    "score_mu": 3.3496,
+    "score_sigma": 1.719,
+    "n_games": 246
+  },
+  "UTA": {
+    "score_mu": 3.1037,
+    "score_sigma": 1.8356,
+    "n_games": 164
+  },
+  "VAN": {
+    "score_mu": 2.9715,
+    "score_sigma": 1.6864,
+    "n_games": 246
+  },
+  "VGK": {
+    "score_mu": 3.2805,
+    "score_sigma": 1.721,
+    "n_games": 246
+  },
+  "WPG": {
+    "score_mu": 3.1179,
+    "score_sigma": 1.7304,
+    "n_games": 246
+  },
+  "WSH": {
+    "score_mu": 3.1341,
+    "score_sigma": 1.8122,
+    "n_games": 246
+  }
+}
