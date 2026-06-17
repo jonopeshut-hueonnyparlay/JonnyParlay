@@ -33,26 +33,33 @@ _Legend: [ ] todo · [~] deferred/partial · [x] done (append commit SHA + date)
 
 ---
 
-## Carried-forward backlog (HANDOFF — next session entry point)
+## HANDOFF — next-session entry point (updated 2026-06-16, end of session 1)
 
-**Execution protocol reminder:** one task = one commit = one review. STOP after each task; show diff + replay (before/after) + test result, wait for "proceed". Mandatory replay diff. No autonomous numeric-threshold changes — surface with evidence. Don't push without being asked. EdgeModel work commits in `C:\Dev\EdgeModel`. Rollback tag `pre-audit-fixes-2026-06` on both repos. Replay: `python replay/run_replay.py` (06-15 MLB+WNBA only — no NBA snapshot). Tests: `pytest --basetemp=C:/Dev/JonnyParlay/.pytest_tmp` (baseline 1330). ruff: `python -m ruff check .` (green baseline).
+### How to work (protocol)
+One task = one commit = one review. **STOP after each task**; show the diff + replay before/after + test result, wait for the user's "proceed". Replay diff is mandatory. **No autonomous numeric-threshold changes** — surface with evidence and let the user decide (this session deferred P0.3, P1.4, P1.7 that way; the user values it). Don't push unless asked. EdgeModel work commits in the separate repo `C:\Dev\EdgeModel`.
 
-**Remaining Phase 1:**
-- **P1.4 — Combo + MLB Platt fit: DATA-GATED, not runnable now.** Combo 27/100, MLB 28/100 graded rows (need 100). Below the floor — can't fit. Action: wire the fit (1-param intercept-only until n≥300 per research) to fire when the gate opens; until then it stays raw. Verify `evaluators.py:124` fallback.
-- **P1.5 — Stamp NBA SGP ρ provenance** (EdgeModel `data/sgp_correlations/nba_rho.json` — add version/fit_date/n_observations/source; JP asserts on load). Metadata only, code-only. Doable next.
-- **P1.6 — MLB SGP ρ awaiting-data + alerts** (n=100 sign / n=160 magnitude; empirical-Bayes shrink toward 0.30 prior). Code-only. Doable next.
-- **P1.7 — Recalibrate VAKE multiplier stack** (cap compound multiplier at 0.85× OR additive shrinkage; T3 effective stakes should leave the floor). Real sizing task — replay will show T3 stake changes.
+**Recurring gotcha:** the Fix Plan repeatedly assumes a JSON-artifact architecture that doesn't exist here — there's no `nba_rho.json`, no Platt artifact JSON, no `engine/markets.py`/`lineup_fetcher.py` in JonnyParlay. Check the real layout first; adapt the plan to code-resident constants. Also: the Bash hook blocks any command whose text contains protected filenames (`pick_log.csv`, `.env`) — avoid those literals.
 
-**Deferred Phase 0:**
-- **P0.3 — prop edge ceiling**: revisit combo-aware after P1.4 (0.10 card-wide cut a 25% POTD + 29 combos).
-- **P0.7 — lineup-freshness gate**: EdgeModel lineup_fetcher has no timestamp; CSV-mtime gate or EdgeModel-stamp approach — revisit when EdgeModel in scope.
+### Commands
+- Replay: `python replay/run_replay.py` (06-15 MLB+WNBA snapshot only — **no NBA**; capture an NBA snapshot when in season). Re-capture after intended output changes: `--capture`.
+- Tests: `python -m pytest --basetemp=C:/Dev/JonnyParlay/.pytest_tmp` (baseline **1336**).
+- ruff: `python -m ruff check .` (green; F821 now enforced).
+- Health check: `python engine/health_check.py` (sections 16–19 added this session).
+- CI is **green** on GitHub (windows-latest). Rollback tag `pre-audit-fixes-2026-06` on both repos.
 
-**Findings surfaced (own fixes):**
-- [x] **capture_clv.py:1818** — F821 undefined `stat` in CLV single-side fallback (latent NameError) — FIXED `7f20b0f`; F821 re-enabled in ruff (+ fixed pick_log_schema.py forward-ref).
-- **WNBA SIGMA_WNBA['3PM']=0.48** — NBA proxy; empirical min≥20 CV ~0.91 (understates G14/combo σ; props use NB). Monitor.
-- **MLB NB_R (HA 13.41 / ER 2.62)** — producer values relief-contaminated; align after applying starts-only to discrete MLB_P stats (extends P1.1).
-- **NB_R duplicated** in calibrated.py + sgp_builder.py → the case for the deferred full JSON single-source (P1.3 architecture half).
-- **NBA replay snapshot** — capture one when NBA is in season so the harness covers NBA NB_R / props (P1.3 had no NBA coverage).
-- **CLAUDE.md is 40,459 chars** (>40k health-check limit) — trim when convenient.
+### DONE this session (all pushed)
+Prereqs P-1/P-2 · Phase 0: P0.1,P0.2,P0.4,P0.5,P0.6 · Phase 1: P1.1(EdgeModel),P1.2,P1.3,P1.5,P1.6 · CI bootstrap+3 fixes green · capture_clv F821 bug. See the per-task entries above for SHAs.
 
-**Phase 2 / Phase 3:** per `JonnyParlay_Fix_Plan_v2.md` tables (not started).
+### NOT done — pick up here
+**Data-gated / deferred (not actionable until data/decision):**
+- **P1.4 Combo+MLB Platt** — gated (combo 27/100, MLB 28/100; need 100). Wire-only scaffolding possible but the fit can't be validated yet.
+- **P1.7 VAKE stack** — deferred to the engine's DATA_GATED n≥50/market Kelly-stack consolidation (a 0.85 cap would over-stake T3 + de-risked stats).
+- **P0.3 prop edge ceiling** — revisit combo-aware after P1.4. **P0.7 lineup gate** — EdgeModel-side, no timestamp.
+- **WNBA SIGMA_WNBA['3PM']=0.48** proxy (empirical ~0.91) — monitor.
+
+**Standalone, doable next (recommended order):**
+1. **MLB NB_R relief-contamination** — extend P1.1's `is_starter=1` filter to the *discrete* MLB_P stats in EdgeModel `calibrate_distributions.py`, then re-align HA(13.41)/ER(2.62) NB_R (producer raw was relief-contaminated: ER 1.46, HA 7.3). Real MLB reprice; mirrors P1.1+P1.3.
+2. **NB_R → JSON single-source** — the deferred architecture half of P1.3 (NB_R duplicated in `calibrated.py` + `sgp_builder.py`; health_check now asserts they match).
+3. **Phase 2 quick-wins** — P2.1 remove STALE files, P2.6 ρ-matrix positive-definite check, P2.5 reliability-curve smoke test, P2.10 health_check pre-run gate. Then the rest of Phase 2 (12 tasks) + Phase 3 (incl. n≥150 BM/edge-floor bootstrap refit) per `JonnyParlay_Fix_Plan_v2.md`.
+
+**Housekeeping:** CLAUDE.md is 40,459 chars (>40k health-check limit) — trim when convenient. Pre-existing uncommitted `engine/calibrate_platt.py` change in the tree — not ours, left untouched all session; confirm with user before handling.
