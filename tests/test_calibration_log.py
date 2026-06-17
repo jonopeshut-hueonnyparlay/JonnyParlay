@@ -45,6 +45,42 @@ def test_count_calibration_platt_filters():
     assert count_calibration_platt(rows) == 2
 
 
+# ── count_calibration_days (cross-day CV gate) ────────────────────────────
+def test_count_calibration_days_empty():
+    from gate_check import count_calibration_days
+    assert count_calibration_days([]) == 0
+
+
+def test_count_calibration_days_distinct():
+    """Counts distinct dates among graded calibration rows only."""
+    from gate_check import count_calibration_days
+    rows = [
+        {"run_type": "calibration", "over_p_raw": "0.51", "result": "W", "date": "2026-06-15"},
+        {"run_type": "calibration", "over_p_raw": "0.48", "result": "L", "date": "2026-06-15"},
+        {"run_type": "calibration", "over_p_raw": "0.52", "result": "W", "date": "2026-06-16"},
+        # excluded from the day set — ungraded / wrong run_type / no over_p_raw / blank date
+        {"run_type": "calibration", "over_p_raw": "0.50", "result": "", "date": "2026-06-17"},
+        {"run_type": "primary", "over_p_raw": "0.55", "result": "W", "date": "2026-06-18"},
+        {"run_type": "calibration", "over_p_raw": "", "result": "W", "date": "2026-06-19"},
+        {"run_type": "calibration", "over_p_raw": "0.50", "result": "W", "date": ""},
+    ]
+    assert count_calibration_days(rows) == 2  # only 06-15 and 06-16
+
+
+def test_calibration_gate_blocked_until_min_days():
+    """A single big slate satisfies the row count but not the distinct-day req."""
+    from gate_check import (
+        count_calibration_platt, count_calibration_days, CALIBRATION_MIN_DAYS,
+    )
+    one_slate = [
+        {"run_type": "calibration", "over_p_raw": "0.51", "result": "W", "date": "2026-06-15"}
+        for _ in range(150)
+    ]
+    assert count_calibration_platt(one_slate) >= 100      # primary met
+    assert count_calibration_days(one_slate) == 1
+    assert count_calibration_days(one_slate) < CALIBRATION_MIN_DAYS  # still blocked
+
+
 # ── path constant ────────────────────────────────────────────────────────
 def test_calibration_path_importable():
     from paths import PICK_LOG_CALIBRATION_PATH

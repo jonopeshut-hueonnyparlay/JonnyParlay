@@ -70,3 +70,24 @@ Prereqs P-1/P-2 · Phase 0: P0.1,P0.2,P0.4,P0.5,P0.6 · Phase 1: P1.1(EdgeModel)
    - **HIGH-PRIORITY (surfaced by P2.5):** model is ~18pp overconfident in live data (H3 Platt gate at 98/100). When it hits 100, run `python engine/calibrate_platt.py --intercept-only --force` (per CLAUDE.md H3) — highest-leverage fix available.
 
 **Housekeeping:** CLAUDE.md is 40,459 chars (>40k health-check limit) — trim when convenient. Pre-existing uncommitted `engine/calibrate_platt.py` change in the tree — not ours, left untouched all session; confirm with user before handling.
+
+---
+
+## HANDOFF — session 3 (2026-06-16)
+
+### H3 Platt refit — INVESTIGATED, deploy HELD (not a values change)
+`gate_check` showed H3 "reached" (102/100), but the refit is **not safe to deploy**:
+- The fittable carded sample (`calibrate_platt`: primary/bonus, non-combo prop stats, native `over_p_raw`) is **72 rows, 65 under / 7 over** — ~90% one-directional. You can't fit a both-sided `over_p->P(win)` curve from it; the free fit collapses to a=0.10 (overfit).
+- The "intercept-only a=1/b=0 no-op" was a **bound bug**: `_fit_nll_exact` clipped the intercept at `[-3,0]`, but an under-heavy sample's optimum is **positive** (real b=+0.3335, OOS +1.9%).
+- The correct basis is `pick_log_calibration.csv` (unbiased, both directions) — but it's **1 day old** (all 06-15; created 2026-06-14), so cross-day CV is invalid. Its free fit (a=0.7882, b=-0.2705) would *raise* top-end win_probs — opposite of the carded-overconfidence signal (that's selection/regression-to-mean, not a function miscalibration).
+- **Decision: HOLD** the reprice until the calibration log spans ≥10 distinct graded days. `PLATT_A/B`/`PLATT_SPACE` UNCHANGED. Plan: `~/.claude/plans/you-are-resuming-execution-elegant-charm.md`.
+
+### DONE this session (NOT pushed)
+- [x] **Task A** — `calibrate_platt.py` tooling fix `1b12b3e`. Widened both intercept bounds `[-3,0]`→`[-3,3]` (fixes the under-heavy false no-op) + added `"calibration"` to the run_type filter (user-approved; enables fitting on the calibration log). Offline script only — `calibrated.py` untouched, replay byte-identical, 1353 tests.
+- [x] **Task B** — gate hardening (this commit). `gate_check.py`: Calibration Platt now requires **≥10 distinct graded days** (`CALIBRATION_MIN_DAYS`) in addition to 100 rows — a single big slate (2272 rows / 1 day) no longer "opens" it. H3 row in the table annotated **SUPERSEDED** (carded sample ~90% one-directional → use Calibration Platt). +3 tests in `tests/test_calibration_log.py`. Replay byte-identical, 1356 tests.
+
+### NEXT (recommended)
+1. When the calibration log reaches ~10 distinct graded days: run `python engine/calibrate_platt.py --log <calibration log>` (free 2-param), deploy only if cross-day OOS Brier improves — change formula + A/B (`calibrated.py`) + PLATT_SPACE (`thresholds.py`) **together**, with replay + reprice review + sign-off.
+2. **P2.2** — no-vig daily-lay baseline (`engine/parlays.py`), behavioral/pricing — needs reprice review.
+3. Health check is now **145/145** (was 146 in the session-2 brief; environmental/data-conditional, still PASSED + healthy).
+4. Flag (separate from Platt): the carded sample is 65/7 under-heavy at 40.3% WR — an under-bet strategy/selection underperformance to watch, not fixable by calibration.
