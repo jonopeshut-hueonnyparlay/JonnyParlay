@@ -36,4 +36,9 @@ jobs:
         run: python -m ruff format --check .
 
       - name: Pytest (excluding network)
+        # Dummy ODDS_API_KEY satisfies the config gate for the odds-API retry
+        # tests (they monkeypatch requests.get — no real network call). .env is
+        # gitignored, so without this they fail with "ODDS_API_KEY not configured".
+        env:
+          ODDS_API_KEY: ci-dummy-key-not-used-tests-mock-http
         run: python -m pytest -m "not network" --basetemp=.pytest_tmp
