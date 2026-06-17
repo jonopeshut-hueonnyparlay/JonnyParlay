@@ -532,6 +532,27 @@ try:
 except Exception as e:
     warn("Reliability curve smoke test", f"{type(e).__name__}: {e}")
 
+# ── 21. Platt calibration freshness (P2.7) ────────────────────────────────────
+# No Platt artifact JSON exists — the deployed fit is the PLATT_A/B constants in
+# calibrated.py, dated by PLATT_FIT_DATE. ADVISORY ONLY (warn, never block): a
+# stale calibration is a nudge to refit (via the H3 / calibration-log path), not
+# a reason to halt. Threshold is advisory; no pricing/decision constant changes.
+print("Checking Platt calibration freshness...")
+PLATT_MAX_AGE_DAYS = 60
+try:
+    from calibrated import PLATT_FIT_DATE  # noqa: E402
+    _fit_dt = datetime.strptime(PLATT_FIT_DATE, "%Y-%m-%d").date()
+    _age_days = (datetime.now().date() - _fit_dt).days
+    if _age_days > PLATT_MAX_AGE_DAYS:
+        warn("Platt calibration stale",
+             f"PLATT_A/B fit {PLATT_FIT_DATE} ({_age_days}d ago, >{PLATT_MAX_AGE_DAYS}d) "
+             "— refit via the H3 / calibration-log path (see gate_check.py)")
+    else:
+        check(f"Platt calibration fresh (≤{PLATT_MAX_AGE_DAYS}d)", True,
+              f"fit {PLATT_FIT_DATE} ({_age_days}d ago)")
+except Exception as e:
+    warn("Platt calibration freshness", f"{type(e).__name__}: {e}")
+
 # ── Report ────────────────────────────────────────────────────────────────────
 print("\n" + "="*70)
 print("HEALTH CHECK REPORT")

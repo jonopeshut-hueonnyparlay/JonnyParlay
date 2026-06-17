@@ -154,6 +154,11 @@ MLB_CORR_GROUPS = [PITCHER_STATS, BATTER_CORR_STATS]
 # PLATT_SPACE (the structural raw/logit flag) lives in thresholds.py.
 PLATT_A = 1.4988   # slope  — raw-probability space (not logit-space)
 PLATT_B = -0.8102  # intercept — raw-probability space (not logit-space)
+# Machine-readable fit date for the deployed PLATT_A/B above (P2.7 freshness
+# check). No Platt artifact JSON exists in this repo, so health_check reads this
+# constant to warn when the calibration ages past PLATT_MAX_AGE_DAYS. Bump this
+# whenever PLATT_A/B are refit (the H3 / calibration-log deploy).
+PLATT_FIT_DATE = "2026-05-01"  # ISO; see fit notes above
 
 GAME_SIGMA = {
     # NHL sigmas calibrated 2026-06-05 from 3936 games (2023-24 + 2024-25).
