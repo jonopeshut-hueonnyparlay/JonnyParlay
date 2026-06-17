@@ -28,11 +28,19 @@ from datetime import datetime, timezone, timedelta
 
 sys.stdout.reconfigure(errors="replace")
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-JP_ROOT   = Path(r"C:\Dev\JonnyParlay")
-EM_ROOT   = Path(r"C:\Dev\EdgeModel")
-RUN_PICKS = JP_ROOT / "engine" / "run_picks.py"
-ENGINE    = JP_ROOT / "engine"
+# ── Paths (portable — P2.8) ───────────────────────────────────────────────────
+# Resolve from paths.py ($JONNYPARLAY_ROOT / this script's location / ~/Documents
+# fallback) instead of hardcoded C:\Dev. EdgeModel root: $EDGEMODEL_ROOT, else the
+# sibling checkout next to JonnyParlay (the standard C:\Dev\{JonnyParlay,EdgeModel}).
+ENGINE = Path(__file__).resolve().parent           # this file lives in engine/
+if str(ENGINE) not in sys.path:
+    sys.path.insert(0, str(ENGINE))
+from paths import PROJECT_ROOT  # noqa: E402  (engine/ added to sys.path above)
+
+JP_ROOT   = PROJECT_ROOT
+_em_env   = os.environ.get("EDGEMODEL_ROOT", "").strip()
+EM_ROOT   = Path(_em_env).expanduser() if _em_env else JP_ROOT.parent / "EdgeModel"
+RUN_PICKS = ENGINE / "run_picks.py"
 EM_ENGINE = EM_ROOT / "engine"
 CLAUDE_MD = JP_ROOT / "CLAUDE.md"
 PICK_LOG  = JP_ROOT / "data" / "pick_log.csv"
