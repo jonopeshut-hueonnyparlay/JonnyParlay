@@ -36,7 +36,7 @@ Bumping the schema:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 # ─────────────────────────────────────────────────────────────────
 # Canonical schema (v4)
@@ -149,6 +149,51 @@ def migrate_row(row: Mapping[str, object], source_header: Iterable[str] | None =
         val = row.get(col, _DEFAULTS[col]) if row else _DEFAULTS[col]
         out[col] = "" if val is None else str(val)
     return out
+
+
+# ─────────────────────────────────────────────────────────────────
+# Migration framework (P2.12) — registry + chain + file runner
+# ─────────────────────────────────────────────────────────────────
+# v1→v4 bumps were all APPEND-ONLY, so migrate_row() (blank-fill) upgrades them
+# losslessly with no registered transforms. This framework exists for v5+ bumps
+# that need a real TRANSFORM (rename a column, split one into two, compute a
+# non-blank default from sibling columns) — register a per-version upgrade fn
+# and the chain runner applies it. With no registered migrations (today's state)
+# everything below is a pure pass-through: NO data change.
+
+# Maps from_version -> a fn(row_dict) -> row_dict that upgrades a single row by
+# exactly one schema version. Append-only versions need no entry.
+_MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+
+
+def register_migration(from_version: int, fn: Callable[[dict], dict]) -> None:
+    """Register a per-version upgrade transform: from_version -> from_version+1.
+
+    Call at import time (e.g. when bumping to v5, register_migration(4, fn) that
+    maps a v4 row to a v5 row). Only needed when the bump is NOT append-only;
+    append-only bumps are handled by migrate_row()'s blank-fill. Re-registering
+    the same from_version overwrites the prior fn (last write wins).
+    """
+    _MIGRATIONS[from_version] = fn
+
+
+def migrate_row_chain(row: Mapping[str, object], from_version: int,
+                      source_header: Iterable[str] | None = None) -> dict[str, str]:
+    """Upgrade a single row from `from_version` to the current SCHEMA_VERSION.
+
+    Applies each registered per-version transform in order (from_version,
+    from_version+1, …), then canonicalizes via migrate_row() (which fills any
+    still-missing columns with "" and drops unknowns). For append-only history
+    (no registered transforms) this is exactly migrate_row().
+    """
+    cur: dict = dict(row) if row else {}
+    v = from_version
+    while v < SCHEMA_VERSION:
+        fn = _MIGRATIONS.get(v)
+        if fn is not None:
+            cur = fn(cur)
+        v += 1
+    return migrate_row(cur, source_header=source_header)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -431,6 +476,83 @@ def read_schema_sidecar(csv_path) -> dict | None:
         return None
 
 
+def migrate_file(csv_path, *, dry_run: bool = True, make_backup: bool = True) -> dict:
+    """Migrate an on-disk pick_log CSV to the current SCHEMA_VERSION (P2.12).
+
+    Lightweight file-level runner around migrate_row_chain(). Detects the
+    on-disk version (sidecar first, header sniff as fallback), and:
+      - returns ``status="absent"`` if the file doesn't exist;
+      - returns ``status="current"`` (no write) if the header already matches
+        CANONICAL_HEADER at SCHEMA_VERSION — so it's a safe no-op today (v4);
+      - otherwise migrates every row and either reports (``dry_run=True``,
+        ``status="would_migrate"``) or rewrites the file atomically
+        (``status="migrated"``).
+
+    DEFAULTS to dry_run=True — it never touches a file unless asked. On a real
+    migration it writes a one-time backup (``<name>.v<old>.bak.csv``), rewrites
+    via tmp+fsync+os.replace, and refreshes the schema sidecar.
+
+    Returns a summary dict (path, status, from/to version, row count, the
+    added/dropped columns) for logging / health surfacing.
+    """
+    import csv
+    import os
+    import shutil
+
+    p = Path(csv_path)
+    if not p.exists():
+        return {"path": str(p), "status": "absent"}
+
+    with open(p, newline="", encoding="utf-8-sig", errors="replace") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        rows = list(reader)
+
+    sidecar = read_schema_sidecar(p)
+    on_disk_version = (sidecar or {}).get("schema_version") or detect_schema_version(header)
+
+    if on_disk_version == SCHEMA_VERSION and header == CANONICAL_HEADER:
+        return {"path": str(p), "status": "current",
+                "schema_version": SCHEMA_VERSION, "rows": len(rows)}
+
+    missing, unknown = validate_header(header)
+    summary = {
+        "path": str(p),
+        "status": "would_migrate" if dry_run else "migrated",
+        "from_version": on_disk_version,
+        "to_version": SCHEMA_VERSION,
+        "rows": len(rows),
+        "added_columns": missing,
+        "dropped_columns": unknown,
+    }
+    if dry_run:
+        return summary
+
+    migrated = [migrate_row_chain(r, on_disk_version, source_header=header) for r in rows]
+
+    if make_backup:
+        shutil.copy2(p, p.with_name(f"{p.stem}.v{on_disk_version}.bak{p.suffix}"))
+
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    try:
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(migrated)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+    write_schema_sidecar(p)
+    return summary
+
+
 def validate_manual_row(row: Mapping[str, object]) -> list[str]:
     """Return a list of required fields that are missing/blank on a manual row.
 
@@ -516,6 +638,9 @@ __all__ = [
     "ManualRowValidationError",
     "detect_schema_version",
     "migrate_row",
+    "register_migration",
+    "migrate_row_chain",
+    "migrate_file",
     "normalize_american_odds",
     "normalize_is_home",
     "normalize_size",
