@@ -35,6 +35,7 @@ Bumping the schema:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Iterable, Mapping
 
 # ─────────────────────────────────────────────────────────────────
@@ -362,14 +363,13 @@ def normalize_edge(edge) -> str:
 # Sidecar filename convention: pick_log.csv → pick_log.schema.json, etc.
 # Keeps the version metadata out of the CSV body so pandas/csv.DictReader
 # don't need a special leading-comment skip.
-def schema_sidecar_path(csv_path) -> "Path":
+def schema_sidecar_path(csv_path) -> Path:
     """Return the sidecar JSON path for a given pick_log CSV.
 
     ``data/pick_log.csv``         -> ``data/pick_log.schema.json``
     ``data/pick_log_manual.csv``  -> ``data/pick_log_manual.schema.json``
     ``data/pick_log_mlb.csv``     -> ``data/pick_log_mlb.schema.json``
     """
-    from pathlib import Path
     p = Path(csv_path)
     # Swap ``.csv`` for ``.schema.json`` — use with_name to avoid double suffix.
     return p.with_name(p.stem + ".schema.json")

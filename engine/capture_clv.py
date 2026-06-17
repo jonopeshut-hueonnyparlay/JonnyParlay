@@ -1815,7 +1815,7 @@ def run(run_date: str):
                         if closing_odds_opposite is None:
                             logger.debug(
                                 "CLV: single-side fallback for %s %s (no opposite closing odds)",
-                                pick.get("player", ""), stat,
+                                pick.get("player", ""), pick.get("stat", ""),
                             )
 
                     clv = calc_clv(your_odds, closing_odds, closing_odds_opposite) if (your_odds is not None and your_odds != 0) else None

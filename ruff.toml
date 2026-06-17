@@ -27,9 +27,7 @@ ignore = [
     "F541",  # f-string-missing-placeholders
     "F811",  # redefined-while-unused (local re-imports shadowing module-level)
     "F841",  # unused-variable
-    # F821 (undefined-name) has 2 hits today: pick_log_schema.py:365 (benign string
-    # forward-ref) and capture_clv.py:1829 (a REAL undefined `stat` in a CLV-fallback
-    # path — flagged separately as a bug, NOT masked with an inline noqa). Kept out of
-    # the green baseline for now; re-enable by removing it here once capture_clv is fixed.
-    "F821",
+    # F821 (undefined-name) is ENFORCED again as of P-followup 2026-06-16 — the two
+    # prior hits were fixed (capture_clv.py:1818 real undefined `stat`;
+    # pick_log_schema.py:365 dangling forward-ref to an unimported Path).
 ]
