@@ -76,6 +76,10 @@ def test_nb_r_locked_values():
     # (was 12.16/14.7 from the inflating pooled formula).
     assert NB_R["AST"] == pytest.approx(9.66)
     assert NB_R["REB"] == pytest.approx(13.16)
+    # Task#1 2026-06-16: ER re-aligned to the starts-only fit (was 2.62,
+    # relief-contaminated). HA held at 13.41 (suspended; starts-only is Poisson).
+    assert NB_R["ER"] == pytest.approx(4.75)
+    assert NB_R["HA"] == pytest.approx(13.41)
 
 
 def test_nb_r_wnba_values_positive():

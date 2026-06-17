@@ -162,6 +162,8 @@ EXPECTED_CALIBRATED = {
     "BM_SHRINKAGE T3=0.70": '"T3": 0.70',
     "NB_R AST=9.66": '"AST": 9.66',
     "NB_R REB=13.16": '"REB": 13.16',
+    "NB_R ER=4.75 (Task#1 starts-only)": '"ER":  4.75',
+    "NB_R HA=13.41 (held; starts-only=Poisson)": '"HA":  13.41',
     "T1 min_edge 0.07": '"min_edge": 0.07',
     "T2 min_edge 0.05": '"min_edge": 0.05',
     "STAT AST=T1B": '"AST": "T1B"',

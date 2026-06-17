@@ -71,9 +71,9 @@ NB_R = {
     "AST": 9.66,   # P1.3 2026-06-16: bias-corrected (Jensen MoM) from EdgeModel producer, var/mu=1.323. Was 12.16 (inflating formula).
     "REB": 13.16,  # P1.3 2026-06-16: bias-corrected (Jensen MoM) from EdgeModel producer, var/mu=1.387. Was 14.7 (inflating formula).
     "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) -> P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
-    "HA":  13.41,  # calibrated 2026-05-26: 69k pitcher game-logs; var/mu=1.204. Confirmed 2026-05-30 EdgeModel (56280 games, var/mu=1.2037); no change.
+    "HA":  13.41,  # HELD 2026-06-16 (Task#1): suspended (G_HA_SUSPENDED) + near-Poisson, so no reprice. FLAG: starts-only fit (n=370/15,297) gives var/mu=0.890 -> Poisson (NOT NB) — relief contamination (raw r~7.3) was the prior NB signal. NB can't represent var/mu<1; reclassify HA->Poisson as part of the G_HA_SUSPENDED investigation, not here. Prior fit: 2026-05-26 relief-inclusive var/mu=1.204.
     "RBI": 0.87,   # calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535. r<1 is valid NB; reflects heavy zero-inflation (~74% of games are 0 RBI).
-    "ER":  2.62,   # calibrated 2026-05-26: 69k pitcher game-logs (2023-2026), within-player var/mu=1.700. Bullpen + run-support variance creates heavy tails vs Poisson.
+    "ER":  4.75,   # Task#1 2026-06-16: starts-only re-align (is_starter=1, n=370 pitchers / 15,297 starts), var/mu=1.509. Was 2.62 from the relief-inclusive 69k-log fit (var/mu=1.700), which over-disperses starter ER by ~30% (implied var/mu~1.94 at starter mu=2.466). Higher r = thinner tails for the priced (starter) population.
     "TB":  1.3,    # calibrated 2026-05-26: 169k batter game-logs, within-player var/mu=2.117. Fallback only — calc_tb_prob() uses component Poisson convolution (1B/2B/3B/HR) when TB_1B available, which is more accurate.
 }
 

@@ -40,9 +40,9 @@
     GG5: 10
     G10: 7
     G_HRR_OVER_LOW_LINE: 6
-    G13: 4
+    G13: 3
+    TIER_MIN(T1): 2
     G14: 2
-    TIER_MIN(T1): 1
     GG1: 1
 
   Top filtered picks (edge > 3% but failed gates):
