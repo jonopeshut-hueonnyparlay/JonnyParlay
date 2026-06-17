@@ -47,8 +47,8 @@ _Legend: [ ] todo · [~] deferred/partial · [x] done (append commit SHA + date)
 - **P0.3 — prop edge ceiling**: revisit combo-aware after P1.4 (0.10 card-wide cut a 25% POTD + 29 combos).
 - **P0.7 — lineup-freshness gate**: EdgeModel lineup_fetcher has no timestamp; CSV-mtime gate or EdgeModel-stamp approach — revisit when EdgeModel in scope.
 
-**Findings surfaced (own fixes, not yet scheduled):**
-- **capture_clv.py:1829** — F821 undefined `stat` in CLV single-side fallback (latent NameError). F821 in ruff ignore until fixed.
+**Findings surfaced (own fixes):**
+- [x] **capture_clv.py:1818** — F821 undefined `stat` in CLV single-side fallback (latent NameError) — FIXED `7f20b0f`; F821 re-enabled in ruff (+ fixed pick_log_schema.py forward-ref).
 - **WNBA SIGMA_WNBA['3PM']=0.48** — NBA proxy; empirical min≥20 CV ~0.91 (understates G14/combo σ; props use NB). Monitor.
 - **MLB NB_R (HA 13.41 / ER 2.62)** — producer values relief-contaminated; align after applying starts-only to discrete MLB_P stats (extends P1.1).
 - **NB_R duplicated** in calibrated.py + sgp_builder.py → the case for the deferred full JSON single-source (P1.3 architecture half).
