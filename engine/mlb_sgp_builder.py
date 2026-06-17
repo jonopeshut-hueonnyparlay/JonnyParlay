@@ -56,6 +56,7 @@ from sgp_builder import (
     _pick_best_book,
     SGP_ALLOWED_BOOKS,
 )
+from quant.copula import validate_corr_matrix as _validate_corr_matrix
 
 # -- Constants -----------------------------------------------------------------
 
@@ -240,6 +241,37 @@ def _build_corr_matrix_mlb(legs):
     n = len(legs)
     return [[1.0 if i == j else _pairwise_rho_mlb(legs[i], legs[j])
              for j in range(n)] for i in range(n)]
+
+
+def _assert_rho_matrices_mlb_wellformed():
+    """Fail fast at import if ``_build_corr_matrix_mlb`` can emit a malformed copula
+    correlation matrix (out of [-1, 1], asymmetric, or non-PSD) for the MLB ρ
+    scenarios. Same rationale as the NBA guard: a non-PSD ρ table silently degrades
+    ``copula_joint_prob`` to the independence product. n ≤ 4 (P2.6)."""
+    def _leg(team, stat, direction, game="AWAY@HOME"):
+        return {"player": f"{team}-{stat}", "team": team, "stat": stat,
+                "direction": direction, "game": game}
+
+    scenarios = {
+        "4 pitchers same-direction over (ρ=0.10)": [
+            _leg("AAA", "OUTS", "over"), _leg("BBB", "OUTS", "over"),
+            _leg("CCC", "OUTS", "over"), _leg("DDD", "OUTS", "over")],
+        "OUTS over + opposing HITS under (ρ=0.30)": [
+            _leg("AAA", "OUTS", "over"), _leg("BBB", "HITS", "under"),
+            _leg("CCC", "HITS", "under"), _leg("DDD", "OUTS", "over")],
+        "same-team HITS stack (ρ=0.15)": [
+            _leg("AAA", "HITS", "over"), _leg("AAA", "HITS", "over"),
+            _leg("AAA", "HITS", "over")],
+        "mixed pitcher/batter same game": [
+            _leg("AAA", "OUTS", "over"), _leg("BBB", "HITS", "under"),
+            _leg("AAA", "HITS", "over"), _leg("BBB", "OUTS", "over")],
+    }
+    for name, legs in scenarios.items():
+        ok, reason = _validate_corr_matrix(_build_corr_matrix_mlb(legs))
+        assert ok, f"_pairwise_rho_mlb yields an invalid copula matrix for [{name}]: {reason}"
+
+
+_assert_rho_matrices_mlb_wellformed()   # fail fast at module load (P2.6: ρ PSD/in-range)
 
 
 def _count_scored_mlb_sgps() -> int:

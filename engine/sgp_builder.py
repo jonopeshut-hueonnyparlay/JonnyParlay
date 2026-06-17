@@ -271,6 +271,7 @@ from quant.copula import (
     cholesky as _cholesky,
     copula_joint_prob as _copula_joint_prob,
     copula_joint_approx as _copula_joint_approx,
+    validate_corr_matrix as _validate_corr_matrix,
 )
 
 
@@ -343,6 +344,42 @@ def _build_corr_matrix(legs):
     n = len(legs)
     return [[1.0 if i == j else _pairwise_rho(legs[i], legs[j])
              for j in range(n)] for i in range(n)]
+
+
+def _assert_rho_matrices_wellformed():
+    """Fail fast at import if ``_build_corr_matrix`` can emit a malformed copula
+    correlation matrix (out of [-1, 1], asymmetric, or non-PSD) for the ρ-hierarchy
+    scenarios. Hand-assigned pairwise ρ can combine into a non-PSD matrix even when
+    every entry is individually valid — and ``copula_joint_prob`` then silently
+    falls back to the independence product, mispricing the slip with no error.
+    n ≤ 4, so this is a few µs at import (P2.6)."""
+    def _leg(player, team, stat, direction, game="AWAY@HOME"):
+        return {"player": player, "team": team, "stat": stat,
+                "direction": direction, "game": game}
+
+    scenarios = {
+        "4 same-team offensive overs (ρ=0.35)": [
+            _leg("P1", "LAL", "PTS", "over"), _leg("P2", "LAL", "AST", "over"),
+            _leg("P3", "LAL", "3PM", "over"), _leg("P4", "LAL", "PTS", "over")],
+        "same-team REB overs + offensive overs": [
+            _leg("P1", "LAL", "REB", "over"), _leg("P2", "LAL", "REB", "over"),
+            _leg("P3", "LAL", "PTS", "over"), _leg("P4", "LAL", "AST", "over")],
+        "mixed-direction same-team (ρ=-0.10) + cross-team unders": [
+            _leg("P1", "LAL", "PTS", "over"), _leg("P2", "LAL", "REB", "under"),
+            _leg("P3", "BOS", "PTS", "under"), _leg("P4", "BOS", "AST", "under")],
+        "same-player multi-stat (ρ=0.28) + cross-team": [
+            _leg("P1", "LAL", "PTS", "over"), _leg("P1", "LAL", "AST", "over"),
+            _leg("P2", "BOS", "PTS", "over")],
+        "cross-team over/under mix (ρ=0.10/0.08/0.02)": [
+            _leg("P1", "LAL", "PTS", "over"), _leg("P2", "BOS", "PTS", "over"),
+            _leg("P3", "LAL", "REB", "under"), _leg("P4", "BOS", "AST", "under")],
+    }
+    for name, legs in scenarios.items():
+        ok, reason = _validate_corr_matrix(_build_corr_matrix(legs))
+        assert ok, f"_pairwise_rho yields an invalid copula matrix for [{name}]: {reason}"
+
+
+_assert_rho_matrices_wellformed()   # fail fast at module load (P2.6: ρ PSD/in-range)
 
 
 # Odds<->decimal converters consolidated in quant/odds.py; aliased to the historical

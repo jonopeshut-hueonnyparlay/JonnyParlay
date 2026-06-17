@@ -208,6 +208,16 @@ check("sgp_builder BLK/STL stay SGP-only", '"BLK": 2.8' in sgp and '"STL": 3.6' 
 copula_src = read_file(ENGINE / "quant" / "copula.py")
 check("quant/copula.py copula *0.87", "0.87" in copula_src, "Copula deflation factor not found")
 check("sgp_builder SGP_JOINT_EV_MARGIN=0.025", "0.025" in sgp, "")
+# P2.6: ρ-matrix PSD/in-range validation. The load-time invariants are the real
+# enforcement (they raise on import of a malformed ρ table); verify the wiring.
+check("quant/copula.py validate_corr_matrix present", "def validate_corr_matrix" in copula_src,
+      "ρ-matrix validator missing from quant/copula.py")
+check("sgp_builder ρ-matrix invariant runs at import", "_assert_rho_matrices_wellformed()" in sgp,
+      "NBA SGP ρ-matrix PSD invariant missing")
+mlb_sgp = read_file(ENGINE / "mlb_sgp_builder.py")
+check("mlb_sgp_builder ρ-matrix invariant runs at import",
+      "_assert_rho_matrices_mlb_wellformed()" in mlb_sgp,
+      "MLB SGP ρ-matrix PSD invariant missing")
 
 # ── 7. capture_clv.py ─────────────────────────────────────────────────────────
 print("Checking capture_clv.py...")

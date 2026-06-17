@@ -22,6 +22,7 @@ from quant.odds import (
     american_to_decimal, decimal_to_american,
 )
 from quant.derived import calc_tb_prob, mlb_ml_from_nb, calc_edge
+from quant.copula import validate_corr_matrix
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +187,61 @@ def test_calc_edge_sign_behavior():
     assert over_neg < 0
     over_zero, *_ = calc_edge(0.50, -110, -110)
     assert over_zero == pytest.approx(0.0, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# quant.copula — correlation-matrix validation (P2.6)
+# ---------------------------------------------------------------------------
+
+def test_validate_corr_matrix_accepts_valid():
+    assert validate_corr_matrix([[1.0]]) == (True, "ok")
+    assert validate_corr_matrix([[1.0, 0.35], [0.35, 1.0]])[0]
+    # 4-leg equicorrelation at the max NBA ρ — PSD since ρ > -1/(n-1)
+    eq = [[1.0 if i == j else 0.35 for j in range(4)] for i in range(4)]
+    assert validate_corr_matrix(eq)[0]
+    # identity is always valid
+    ident = [[1.0 if i == j else 0.0 for j in range(3)] for i in range(3)]
+    assert validate_corr_matrix(ident)[0]
+
+
+def test_validate_corr_matrix_rejects_out_of_range():
+    ok, reason = validate_corr_matrix([[1.0, 1.5], [1.5, 1.0]])
+    assert not ok and "outside" in reason
+
+
+def test_validate_corr_matrix_rejects_non_unit_diagonal():
+    ok, reason = validate_corr_matrix([[0.9, 0.1], [0.1, 1.0]])
+    assert not ok and "correlation matrix" in reason
+
+
+def test_validate_corr_matrix_rejects_asymmetric():
+    ok, reason = validate_corr_matrix([[1.0, 0.3], [0.2, 1.0]])
+    assert not ok and "asymmetric" in reason
+
+
+def test_validate_corr_matrix_rejects_non_psd():
+    # Classic non-PSD: every off-diagonal large but signs inconsistent.
+    bad = [[1.0, 0.9, -0.9], [0.9, 1.0, 0.9], [-0.9, 0.9, 1.0]]
+    ok, reason = validate_corr_matrix(bad)
+    assert not ok and "positive semi-definite" in reason
+
+
+def test_validate_corr_matrix_rejects_empty_and_ragged():
+    assert validate_corr_matrix([])[0] is False
+    ok, reason = validate_corr_matrix([[1.0, 0.0], [0.0]])
+    assert not ok and "square" in reason
+
+
+def test_sgp_builders_rho_matrices_are_psd_at_import():
+    # The builders run _assert_rho_matrices_*wellformed() at import; importing
+    # them here is the regression guard (an invalid ρ table would raise on import).
+    import sgp_builder  # noqa: F401
+    import mlb_sgp_builder  # noqa: F401
+    assert hasattr(sgp_builder, "_assert_rho_matrices_wellformed")
+    assert hasattr(mlb_sgp_builder, "_assert_rho_matrices_mlb_wellformed")
+    # And they pass when re-invoked explicitly.
+    sgp_builder._assert_rho_matrices_wellformed()
+    mlb_sgp_builder._assert_rho_matrices_mlb_wellformed()
 
 
 if __name__ == "__main__":

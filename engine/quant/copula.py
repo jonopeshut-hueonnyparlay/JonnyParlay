@@ -41,6 +41,49 @@ def probit(p):
         return -x if y < 0 else x
 
 
+def validate_corr_matrix(mat, tol=1e-9):
+    """Validate a Gaussian-copula correlation matrix; return ``(ok, reason)``.
+
+    Checks, in order: non-empty and square, symmetric (within ``tol``), unit
+    diagonal, every entry in ``[-1, 1]``, and positive semi-definite (no Cholesky
+    pivot below ``-tol``).
+
+    Hand-assigned pairwise ρ (``_pairwise_rho`` in the SGP builders) can combine
+    into a non-PSD matrix even when every individual entry is in range. A non-PSD
+    matrix makes the copula sampler produce nonsense — and ``copula_joint_prob``
+    silently falls back to the independence product on a Cholesky failure — so a
+    malformed ρ table degrades pricing with no error. This is the explicit,
+    testable guard used by the SGP builders' load-time invariants.
+    """
+    n = len(mat)
+    if n == 0:
+        return False, "empty matrix"
+    for i, row in enumerate(mat):
+        if len(row) != n:
+            return False, f"row {i} length {len(row)} != {n} (not square)"
+    for i in range(n):
+        if abs(mat[i][i] - 1.0) > tol:
+            return False, f"diagonal[{i}]={mat[i][i]} != 1.0 (not a correlation matrix)"
+        for j in range(n):
+            if not (-1.0 - tol <= mat[i][j] <= 1.0 + tol):
+                return False, f"entry[{i}][{j}]={mat[i][j]} outside [-1, 1]"
+            if abs(mat[i][j] - mat[j][i]) > tol:
+                return False, f"asymmetric: [{i}][{j}]={mat[i][j]} vs [{j}][{i}]={mat[j][i]}"
+    # Positive semi-definite via strict Cholesky: any pivot < -tol → not PSD.
+    L = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1):
+            s = sum(L[i][k] * L[j][k] for k in range(j))
+            if i == j:
+                d = mat[i][i] - s
+                if d < -tol:
+                    return False, f"not positive semi-definite (pivot {d:.3e} at index {i})"
+                L[i][j] = math.sqrt(max(d, 0.0))
+            else:
+                L[i][j] = (mat[i][j] - s) / L[j][j] if L[j][j] > tol else 0.0
+    return True, "ok"
+
+
 def cholesky(mat):
     """Lower triangular Cholesky L such that mat = L @ L^T (n ≤ 4).
 
