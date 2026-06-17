@@ -16,9 +16,29 @@ def apply_bm_shrinkage(win_prob, odds, tier):
     shrunk_p = w·model_p + (1−w)·implied_p, with w = BM_SHRINKAGE_WEIGHT[tier].
     Replaces PICK_SCORE_TIER_MULT + VAKE_MULT["tier"] — one mechanism that moves
     win_prob, edge, pick_score and Kelly stake coherently (Plan 9 §9F).
-    Shrinks toward the VIGGED implied prob (the actual market quote); edge is
-    still measured against the no-vig prob downstream, so a model at exactly
-    market-implied retains the vig margin as residual edge.
+
+    DECISION — shrinkage anchor is the VIGGED single-side implied prob
+    (`implied_prob(odds)`), the actual market quote. Aligned everywhere: this is
+    the only shrinkage path (props only); game-line edges are computed directly
+    and never shrunk. EDGE is measured against the NO-VIG prob in every path
+    (props: calc_edge -> no_vig; game lines: explicit no_vig()), so the two
+    bases are deliberately different.
+
+    Structural reason the anchor is vigged (not no-vig): this fn only receives
+    the single-side `odds`, so it cannot devig internally — the no-vig prob
+    (`nv_prob`) is computed by the caller (evaluate_props). Switching the anchor
+    to no-vig would require threading `nv_prob` in (a signature change), not a
+    one-liner.
+
+    KNOWN CONSEQUENCE (DATA_GATED reconsideration — decide at CLV maturity /
+    per-family BM weight refit n≥150): because the anchor is vigged but edge is
+    measured vs no-vig, a model that exactly equals the FAIR (no-vig) price still
+    reports a small positive residual edge = (1−w)·(half-vig) — and it is LARGER
+    for lower-weight tiers (T3 w=0.70 -> ~0.71pp at −110; T2 w=0.85 -> ~0.36pp;
+    bigger on juicier two-way markets). Baker–McHale theory anchors on the
+    market's unbiased p_true estimate (= no-vig), so the theoretically-correct
+    anchor is no-vig; vigged is retained for now (small magnitude, immature CLV).
+    Revisit alongside the "BM direction inverted §B" item.
     """
     w = BM_SHRINKAGE_WEIGHT.get(tier, BM_SHRINKAGE_DEFAULT)
     return w * win_prob + (1.0 - w) * implied_prob(odds)
