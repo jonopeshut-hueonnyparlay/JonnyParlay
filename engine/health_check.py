@@ -460,6 +460,63 @@ try:
 except Exception as e:
     check("MLB SGP rho provenance + refit-trigger", False, f"{type(e).__name__}: {e}")
 
+# ── 20. Reliability-curve smoke test (P2.5) ───────────────────────────────────
+# Bin graded prop picks by predicted win_prob and compare to the observed win
+# rate. ADVISORY ONLY (warn, never block): calibration drift is a signal to
+# investigate, not a reason to halt a run. Flag a bin only when it is both well
+# populated (n≥RELIABILITY_MIN_N) AND its miss is statistically significant
+# (|obs−pred| > 2·binomial-SE) — a fixed |obs−pred|<0.05 bound false-alarms on
+# normal sampling noise (SE≈0.09 at n=30, p=0.6). No pricing/threshold change.
+print("Checking reliability curve (calibration drift)...")
+RELIABILITY_MIN_N = 30
+try:
+    import csv as _csv
+    _RELI_BUCKETS = [(0.0, 0.55, "50-55%"), (0.55, 0.60, "55-60%"),
+                     (0.60, 0.65, "60-65%"), (0.65, 0.70, "65-70%"),
+                     (0.70, 1.01, "70%+")]
+    _bins = {b[2]: {"n": 0, "wins": 0, "pred_sum": 0.0} for b in _RELI_BUCKETS}
+    _graded = 0
+    if PICK_LOG.exists():
+        with open(PICK_LOG, newline="", encoding="utf-8-sig", errors="replace") as _fh:
+            for _row in _csv.DictReader(_fh):
+                _res = (_row.get("result") or "").strip().upper()
+                if _res not in ("W", "L"):
+                    continue  # exclude P/VOID/pending
+                try:
+                    _wp = float(_row.get("win_prob") or 0)
+                except ValueError:
+                    continue
+                if not (0.0 < _wp < 1.0):
+                    continue  # props only — parlays/game lines log win_prob=0
+                for _lo, _hi, _lbl in _RELI_BUCKETS:
+                    if _lo <= _wp < _hi:
+                        _b = _bins[_lbl]
+                        _b["n"] += 1
+                        _b["wins"] += 1 if _res == "W" else 0
+                        _b["pred_sum"] += _wp
+                        _graded += 1
+                        break
+    _drifted = []
+    _checked = 0
+    for _lo, _hi, _lbl in _RELI_BUCKETS:
+        _b = _bins[_lbl]
+        if _b["n"] < RELIABILITY_MIN_N:
+            continue
+        _checked += 1
+        _obs = _b["wins"] / _b["n"]
+        _pred = _b["pred_sum"] / _b["n"]
+        _se = (_pred * (1 - _pred) / _b["n"]) ** 0.5
+        if abs(_obs - _pred) > 2 * _se:
+            _drifted.append(f"{_lbl}: pred {_pred:.1%} vs obs {_obs:.1%} (n={_b['n']}, >2σ)")
+    if _checked == 0:
+        warn("Reliability curve", f"insufficient graded props ({_graded} total; need ≥{RELIABILITY_MIN_N}/bin)")
+    elif _drifted:
+        warn("Reliability curve drift (>2σ)", "; ".join(_drifted))
+    else:
+        check(f"Reliability curve calibrated ({_checked} bin(s) ≥{RELIABILITY_MIN_N})", True)
+except Exception as e:
+    warn("Reliability curve smoke test", f"{type(e).__name__}: {e}")
+
 # ── Report ────────────────────────────────────────────────────────────────────
 print("\n" + "="*70)
 print("HEALTH CHECK REPORT")
