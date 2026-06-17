@@ -415,6 +415,28 @@ try:
 except Exception as e:
     check("NBA SGP rho provenance + regression guard", False, f"{type(e).__name__}: {e}")
 
+# ── 19. MLB SGP ρ provenance + refit-trigger status (P1.6) ────────────────────
+print("Checking MLB SGP rho provenance...")
+try:
+    sys.path.insert(0, str(ENGINE))
+    import mlb_sgp_builder as msb  # noqa: E402
+    _mmeta = getattr(msb, "_MLB_SGP_RHO_META", None)
+    _mok = isinstance(_mmeta, dict) and {"version", "source", "n_sign_check", "n_target"} <= set(_mmeta)
+    check("MLB SGP rho provenance stamped", _mok,
+          f"version={_mmeta.get('version')} targets {_mmeta.get('n_sign_check')}/{_mmeta.get('n_target')}"
+          if _mok else "_MLB_SGP_RHO_META missing/malformed")
+    # 0.30 OUTS-over x opposing-HITS-under must hold (the key value to tighten).
+    _outs = {"player": "P", "team": "X", "stat": "OUTS", "direction": "over"}
+    _hits = {"player": "B", "team": "Y", "stat": "HITS", "direction": "under"}
+    check("MLB SGP rho OUTS-over x opp-HITS-under = 0.30",
+          abs(msb._pairwise_rho_mlb(_outs, _hits) - 0.30) < 1e-9,
+          f"got {msb._pairwise_rho_mlb(_outs, _hits)}")
+    _nsgp = msb._count_scored_mlb_sgps()
+    check("MLB SGP rho refit-trigger readable", True,
+          f"n={_nsgp} scored MLB SGP slips (target {_mmeta.get('n_target') if _mok else '?'})")
+except Exception as e:
+    check("MLB SGP rho provenance + refit-trigger", False, f"{type(e).__name__}: {e}")
+
 # ── Report ────────────────────────────────────────────────────────────────────
 print("\n" + "="*70)
 print("HEALTH CHECK REPORT")

@@ -171,13 +171,34 @@ def _is_negatively_correlated_mlb(leg_a, leg_b):
     return False
 
 
+# Provenance + refit-trigger for the MLB SGP rho values (audit P1.6 / S4g-12).
+# No JSON matrix — values are hardcoded in _pairwise_rho_mlb() (structural priors,
+# NOT an empirical MLB SGP fit). _log_mlb_sgp_rho_status() counts scored slips at
+# build time and alerts at the sign (n>=100) and magnitude (n>=160) thresholds.
+# Per research item 5: n=100 is sign/coarse-magnitude only (Fisher-z 95% CI ~+-0.20
+# for rho=0.30); the point-of-stability for a +-0.10 corridor is ~161 (Schonbrodt
+# & Perugini 2013). Until n>=160, empirical-Bayes shrink any observed r toward the
+# 0.30 prior rather than replacing it.
+_MLB_SGP_RHO_META = {
+    "version": "1.0",
+    "fit_date": "structural-priors (2026-05-29)",
+    "source": "structural priors (WHIP / early-exit mechanism); NOT empirical MLB SGP fit",
+    "model": "Gaussian copula pairwise rho",
+    "n_sign_check": 100,    # Fisher-z sign / coarse-magnitude only below this
+    "n_target": 160,        # point-of-stability for +-0.10 (Schonbrodt & Perugini 2013)
+    "key_value_to_tighten": "OUTS-over x opposing-HITS-under = 0.30",
+    "shrink_plan": "empirical-Bayes: blend observed r toward the 0.30 prior until n>=160",
+    "frozen": True,
+}
+
+
 def _pairwise_rho_mlb(leg_a, leg_b):
     """Pairwise Gaussian copula correlation rho for two MLB SGP legs.
 
-    Conservative values — calibrated from structural priors, not empirical
-    MLB game-log correlations (insufficient SGP sample as of 2026-05-29).
-
-    Update these values when 100+ scored MLB SGP slips are available.
+    Provenance: see _MLB_SGP_RHO_META (audit P1.6). Conservative values from
+    structural priors, NOT empirical MLB game-log correlations (insufficient SGP
+    sample). The 0.30 OUTS-over x opposing-HITS-under value is the one most worth
+    tightening once enough scored slips exist; _log_mlb_sgp_rho_status() tracks it.
     """
     stat_a = leg_a["stat"]
     stat_b = leg_b["stat"]
@@ -219,6 +240,42 @@ def _build_corr_matrix_mlb(legs):
     n = len(legs)
     return [[1.0 if i == j else _pairwise_rho_mlb(legs[i], legs[j])
              for j in range(n)] for i in range(n)]
+
+
+def _count_scored_mlb_sgps() -> int:
+    """Count graded MLB SGP slips in the pick log (run_type=sgp, sport=MLB,
+    result in W/L). Returns 0 if the log is absent/unreadable — never raises, so
+    it is safe at build time and in CI where the gitignored log isn't present.
+    """
+    try:
+        from paths import PICK_LOG_PATH
+        from pick_log_io import read_rows_locked_if_exists
+        rows = read_rows_locked_if_exists(str(PICK_LOG_PATH)) or []
+        return sum(
+            1 for r in rows
+            if str(r.get("run_type", "")).lower() == "sgp"
+            and str(r.get("sport", "")).upper() == "MLB"
+            and str(r.get("result", "")).upper() in ("W", "L")
+        )
+    except Exception:
+        return 0
+
+
+def _log_mlb_sgp_rho_status(n: int | None = None) -> int:
+    """Log the MLB SGP rho refit-trigger status; alert at the sign/magnitude
+    thresholds. Returns the observed count (n injectable for tests)."""
+    if n is None:
+        n = _count_scored_mlb_sgps()
+    meta = _MLB_SGP_RHO_META
+    print(f"  [MLB SGP] rho: structural priors, n={n}/{meta['n_target']} scored slips "
+          f"({meta['key_value_to_tighten']} is the value most worth tightening).")
+    if n >= meta["n_target"]:
+        print(f"  [MLB SGP] ALERT: n={n} >= {meta['n_target']} — MAGNITUDE refit candidate: "
+              "re-estimate the matrix (empirical-Bayes shrink observed r toward 0.30).")
+    elif n >= meta["n_sign_check"]:
+        print(f"  [MLB SGP] ALERT: n={n} >= {meta['n_sign_check']} — SIGN check only "
+              "(coarse magnitude; below the ~160 point-of-stability — keep the priors).")
+    return n
 
 
 def _check_parlay_correlations_mlb(legs):
@@ -846,6 +903,8 @@ def run_mlb_sgp_builder(csv_paths, dry_run=False, confirm=False, test=False,
     if not projections:
         print("  [MLB SGP] No MLB projections found — skipping MLB SGP builder.")
         return []
+
+    _log_mlb_sgp_rho_status()  # P1.6: report rho refit-trigger status + alerts
 
     events = fetch_mlb_events()
     print(f"  [MLB SGP] Fetched {len(events)} MLB games — building candidates...")

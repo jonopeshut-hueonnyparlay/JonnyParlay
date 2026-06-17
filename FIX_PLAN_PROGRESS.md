@@ -26,7 +26,7 @@ Plan file: `C:\Users\jono4\.claude\plans\you-are-executing-dreamy-brooks.md`
   - DEFERRED: 3PM kept 9.15 (producer now classifies Poisson @ var/μ=1.179 — flagged). MLB NB_R (HA 13.41/ER 2.62) drift NOT aligned — producer values relief-contaminated; needs starts-only on discrete stats first. Full JSON single-source deferred (NB_R duplicated in 2 files — that's the case for it).
 - [ ] P1.4 — Fit Combo + MLB Platt (1-param intercept-only until n≥300)
 - [x] P1.5 — Stamp NBA SGP ρ provenance. No JSON matrix (ρ is hardcoded in sgp_builder._pairwise_rho) → stamped `_NBA_SGP_RHO_META` (version/fit_date/source/n_observations) + health_check §18 (assert meta + recompute canonical ρ pairs vs frozen values) + tests. n_observations="unrecorded" (never captured). Zero ρ change, replay byte-identical. — 2026-06-16
-- [ ] P1.6 — MLB SGP ρ awaiting-data + n=100/160 alerts
+- [x] P1.6 — MLB SGP ρ provenance + refit-trigger. `_MLB_SGP_RHO_META` + `_count_scored_mlb_sgps()` + `_log_mlb_sgp_rho_status()` (alerts n≥100 sign / n≥160 magnitude) wired into run_mlb_sgp_builder; health_check §19; 4 tests. Empirical-Bayes shrink→0.30 documented (activates at data). No ρ change; golden +1 log line (re-captured). — 2026-06-16
 - [ ] P1.7 — Recalibrate VAKE multiplier stack
 
 _Legend: [ ] todo · [~] deferred/partial · [x] done (append commit SHA + date)_

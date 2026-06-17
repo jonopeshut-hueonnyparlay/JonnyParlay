@@ -268,3 +268,36 @@ class TestCohesionScoring:
         """Verify the documented scoring weights sum to 1.0."""
         weights = [0.25, 0.30, 0.15, 0.25, 0.05]  # edge, copula, odds, cohesion, stat_div
         assert abs(sum(weights) - 1.0) < 1e-9
+
+
+class TestMlbSgpRhoProvenance:
+    """P1.6: provenance stamp + refit-trigger for MLB SGP rho (S4g-12)."""
+
+    def test_provenance_meta_present(self):
+        m = mlb._MLB_SGP_RHO_META
+        assert isinstance(m, dict)
+        assert {"version", "source", "n_sign_check", "n_target"} <= set(m)
+        assert m["n_sign_check"] == 100 and m["n_target"] == 160
+
+    def test_outs_over_opp_hits_under_rho_is_030(self):
+        outs = {"player": "P", "team": "X", "stat": "OUTS", "direction": "over"}
+        hits = {"player": "B", "team": "Y", "stat": "HITS", "direction": "under"}
+        assert abs(mlb._pairwise_rho_mlb(outs, hits) - 0.30) < 1e-9
+
+    def test_count_scored_safe_when_reader_raises(self, monkeypatch):
+        import pick_log_io
+
+        def _boom(*a, **k):
+            raise IOError("boom")
+        monkeypatch.setattr(pick_log_io, "read_rows_locked_if_exists", _boom)
+        assert mlb._count_scored_mlb_sgps() == 0
+
+    def test_status_alert_thresholds(self, capsys):
+        mlb._log_mlb_sgp_rho_status(50)
+        assert "ALERT" not in capsys.readouterr().out
+        mlb._log_mlb_sgp_rho_status(100)
+        out = capsys.readouterr().out
+        assert "ALERT" in out and "SIGN" in out
+        mlb._log_mlb_sgp_rho_status(160)
+        out = capsys.readouterr().out
+        assert "ALERT" in out and "MAGNITUDE" in out

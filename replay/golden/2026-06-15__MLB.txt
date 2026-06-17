@@ -187,6 +187,7 @@ J. NOTES
 
   [MLB SGP] Running MLB SGP builder...
   [MLB SGP] Loaded 160 players from MLB.csv
+  [MLB SGP] rho: structural priors, n=0/160 scored slips (OUTS-over x opposing-HITS-under = 0.30 is the value most worth tightening).
   [MLB SGP] Fetched 0 MLB games — building candidates...
   [MLB SGP] WARNING: No confirmed starters returned — SP scratch check disabled
 
