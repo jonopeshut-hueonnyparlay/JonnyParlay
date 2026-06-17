@@ -119,7 +119,11 @@ for bat in JP_ROOT.glob("*.bat"):
 print("Checking CLAUDE.md...")
 claude_content = read_file(CLAUDE_MD)
 claude_size = len(claude_content)
-check("CLAUDE.md under 40k chars", claude_size < 40000, f"{claude_size} chars")
+# Advisory (P2.10): CLAUDE.md size is a housekeeping nudge, never a run-blocker.
+if claude_size < 40000:
+    check("CLAUDE.md under 40k chars", True)
+else:
+    warn("CLAUDE.md size", f"{claude_size} chars (>40k) — trim when convenient")
 # API key not stored in CLAUDE.md by design — check .env instead (done above)
 
 # ── 5. Critical constants (post-refactor e2a4721) ─────────────────────────────
@@ -318,7 +322,10 @@ for repo_name, repo_path in [("JonnyParlay", JP_ROOT), ("EdgeModel", EM_ROOT)]:
         modified = [l for l in dirty.splitlines() if l.startswith("M ") or l.startswith(" M")]
         untracked = [l for l in dirty.splitlines() if l.startswith("??")]
         if modified:
-            check(f"Git clean: {repo_name}", False, "Uncommitted changes: " + ", ".join(modified)[:80])
+            # Advisory (P2.10): uncommitted local changes must not block a betting
+            # run — only config-integrity failures gate run_picks.
+            check(f"Git clean: {repo_name}", True)
+            warn(f"Git modified: {repo_name}", "Uncommitted changes: " + ", ".join(modified)[:80])
         elif untracked:
             check(f"Git clean: {repo_name}", True)
             warn(f"Git untracked: {repo_name}", ", ".join(untracked)[:80])

@@ -625,6 +625,10 @@ def _build_arg_parser():
                              "was already posted today. Useful for fixing a malformed card. "
                              "Dedup logic still prevents double-logging picks to pick_log.csv.")  # L11
     parser.add_argument("--force", action="store_true", help="Skip game start-time filter (test with already-started games)")
+    parser.add_argument("--skip-health-check", action="store_true",
+                        help="Bypass the pre-run config-integrity gate (P2.10). Used by replay/tests "
+                             "(which validate pricing, not environment health). Use in production only "
+                             "if you understand why a blocking check is failing.")
     parser.add_argument("--no-discord", action="store_true", help="Skip all Discord posts (dry run for Discord only)")
     parser.add_argument("--no-cap", action="store_true",
                         help="Log ALL qualified picks instead of top-5 premium only. "
@@ -946,6 +950,45 @@ def _stage_post_discord(args, premium, qualified, killshots, safest6_parlay, val
 
 
 
+def _run_health_gate(skip):
+    """Pre-run config-integrity gate (P2.10).
+
+    Subprocess-runs ``health_check.py`` and ABORTS the run if any *blocking* check
+    fails (advisory items — CLAUDE.md size, git cleanliness, calibration drift —
+    are ``warn()`` and never block; health_check exits non-zero only on integrity
+    failures). stdout-silent on pass, so it cannot perturb the card output captured
+    by replay. Bypass with ``--skip-health-check`` (replay/tests validate pricing,
+    not environment health). A health_check *crash* (non-zero with no FAIL lines)
+    warns but does not block — a broken checker must not halt the business.
+    """
+    if skip:
+        return
+    hc = os.path.join(os.path.dirname(os.path.abspath(__file__)), "health_check.py")
+    if not os.path.exists(hc):
+        return  # health_check is optional; never block a run on its absence
+    try:
+        import subprocess
+        res = subprocess.run([sys.executable, hc], capture_output=True,
+                             text=True, timeout=60)
+    except Exception as e:
+        print(f"  [health-check] skipped ({type(e).__name__}: {e})", file=sys.stderr)
+        return
+    if res.returncode == 0:
+        return
+    fails = [ln.strip() for ln in (res.stdout or "").splitlines() if "FAIL" in ln]
+    if not fails:
+        # Non-zero exit but no FAIL lines → health_check itself errored. Warn, don't block.
+        print("  [health-check] non-zero exit with no FAIL lines parsed — continuing "
+              "(run `python engine/health_check.py` to inspect).", file=sys.stderr)
+        return
+    print("  ABORT: health_check reported blocking config-integrity failures:", file=sys.stderr)
+    for ln in fails[:20]:
+        print(f"    {ln}", file=sys.stderr)
+    print("  Fix the above, or re-run with --skip-health-check if you understand the risk.",
+          file=sys.stderr)
+    sys.exit(1)
+
+
 def main():
     args = _build_arg_parser().parse_args()
 
@@ -959,6 +1002,10 @@ def main():
     # M12: prevent emoji → UnicodeEncodeError crashes on Windows cmd.exe (cp1252)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+    # P2.10: config-integrity gate — abort before any betting work if a blocking
+    # health_check fails. stdout-silent on pass; bypassed by --skip-health-check.
+    _run_health_gate(getattr(args, "skip_health_check", False))
 
     # M8: prevent concurrent runs (double-post guard at the process level)
     _run_lock_path = str(_data_path("run_picks.lock"))

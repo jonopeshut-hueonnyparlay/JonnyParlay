@@ -118,6 +118,7 @@ def _worker_entry(ns):
     sys.argv = [
         "run_picks.py", str(ns.csv),
         "--no-save", "--no-discord", "--force", "--test",
+        "--skip-health-check",  # replay validates pricing determinism, not env health (P2.10)
         "--mode", "Default",
     ]
 
