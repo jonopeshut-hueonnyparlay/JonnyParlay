@@ -38,6 +38,7 @@ if str(_ENGINE_DIR) not in sys.path:
 from brand import BRAND_TAGLINE
 from book_names import display_book
 from secrets_config import require_odds_api_key, DISCORD_BONUS_WEBHOOK
+from calibrated import NB_R as _PROP_NB_R  # single source for shared NBA dispersion (leaf module; circular-safe)
 
 # -- Constants -------------------------------------------------------------
 
@@ -76,16 +77,45 @@ POISSON_STATS: set = set()  # AST and REB moved to NB_STATS; nothing left Poisso
 POISSON_CUTOFF = 8.5
 
 # P16 (M1, May 1 2026): Negative Binomial for overdispersed count stats.
-# Mirrors NB_STATS / NB_R in run_picks.py — keep in sync.
-# r values from engine/nb_calibrate.py (within-player conditional variance method).
+# SINGLE SOURCE OF TRUTH: shared NBA dispersion (3PM/AST/REB) is DERIVED from
+# calibrated.NB_R (the prop-pricing table), so the two can never drift — the
+# prior hand-mirrored copies silently diverged until P1.3 had to re-pin them.
+# BLK/STL are SGP-only (never priced as straight props → absent from
+# calibrated.NB_R); they stay local. _assert_nb_r_single_source() (below) fails
+# fast at import if this contract is ever broken.
 NB_STATS = {"3PM", "AST", "REB", "BLK", "STL"}
-NB_R = {
-    "3PM": 9.15,   # recalibrated 2026-05-25: 1246 player-seasons, avg(var/mu)=1.1486 (was 2.1/12.3)
-    "AST": 9.66,   # P1.3 2026-06-16: bias-corrected (Jensen MoM), EdgeModel producer. Was 12.16. Keep in sync with calibrated.py NB_R.
-    "REB": 13.16,  # P1.3 2026-06-16: bias-corrected (Jensen MoM), EdgeModel producer. Was 14.7. Keep in sync with calibrated.py NB_R.
+_SGP_ONLY_NB_R = {
     "BLK": 2.8,    # empirical per-game r; Research Brief 5, 2026-05-02
     "STL": 3.6,    # empirical per-game r; Research Brief 5, 2026-05-02
 }
+# SGP-only stats from the local table; every other NB stat from calibrated.NB_R.
+NB_R = {
+    stat: (_SGP_ONLY_NB_R[stat] if stat in _SGP_ONLY_NB_R else _PROP_NB_R[stat])
+    for stat in NB_STATS
+}
+
+
+def _assert_nb_r_single_source():
+    """Fail fast at module load if the NB_R single-source contract is broken.
+
+    Shared NBA dispersion stats (3PM/AST/REB) MUST resolve from calibrated.NB_R,
+    never a divergent local copy; SGP-only stats (BLK/STL) MUST NOT shadow a
+    calibrated entry. Makes drift structurally impossible — the prior
+    hand-mirrored AST/REB copies diverged for weeks before being caught.
+    """
+    shadowed = set(_SGP_ONLY_NB_R) & set(_PROP_NB_R)
+    assert not shadowed, (
+        f"_SGP_ONLY_NB_R shadows calibrated.NB_R for {sorted(shadowed)} — these "
+        f"must be single-sourced from calibrated.py, not redefined locally."
+    )
+    missing = {s for s in NB_STATS if s not in _SGP_ONLY_NB_R and s not in _PROP_NB_R}
+    assert not missing, (
+        f"NB_STATS {sorted(missing)} have no dispersion source — add to "
+        f"calibrated.NB_R (shared) or _SGP_ONLY_NB_R (SGP-only)."
+    )
+
+
+_assert_nb_r_single_source()   # fail fast at module load (single-source contract)
 
 
 # -- Correlation rules -----------------------------------------------------

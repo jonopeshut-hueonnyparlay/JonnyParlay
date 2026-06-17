@@ -189,10 +189,21 @@ check("SGP_JOINT_EV_MARGIN not in run_picks", True, "Lives in sgp_builder.py (co
 # ── 6. sgp_builder.py constants ──────────────────────────────────────────────
 print("Checking sgp_builder.py...")
 sgp = read_file(ENGINE / "sgp_builder.py")
-check("sgp_builder NB_R AST=9.66 (sync w/ calibrated)", '"AST": 9.66' in sgp,
-      "NB_R AST out of sync with calibrated.py")
-check("sgp_builder NB_R REB=13.16 (sync w/ calibrated)", '"REB": 13.16' in sgp,
-      "NB_R REB out of sync with calibrated.py")
+# NB_R single-source: shared NBA dispersion (3PM/AST/REB) is DERIVED from
+# calibrated.NB_R (not hand-mirrored), so there are no literal values to grep —
+# verify the wiring + load-time invariant instead. The invariant itself fires on
+# every import (incl. the test suite), which is the real enforcement.
+check("sgp_builder NB_R imports from calibrated (single source)",
+      "from calibrated import NB_R" in sgp,
+      "sgp_builder no longer single-sources NB_R from calibrated.py")
+check("sgp_builder NB_R derived from NB_STATS (no hand-mirrored values)",
+      "for stat in NB_STATS" in sgp,
+      "NB_R derivation comprehension missing — risk of re-introduced drift")
+check("sgp_builder single-source invariant runs at import",
+      "_assert_nb_r_single_source()" in sgp,
+      "NB_R single-source load-time invariant missing")
+check("sgp_builder BLK/STL stay SGP-only", '"BLK": 2.8' in sgp and '"STL": 3.6' in sgp,
+      "SGP-only NB_R stats BLK/STL missing from _SGP_ONLY_NB_R")
 # Copula math moved to quant/copula.py (Step 7); the *0.87 deflation lives there now.
 copula_src = read_file(ENGINE / "quant" / "copula.py")
 check("quant/copula.py copula *0.87", "0.87" in copula_src, "Copula deflation factor not found")
