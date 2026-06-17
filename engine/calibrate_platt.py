@@ -65,7 +65,7 @@ DEFAULT_LOG = PICK_LOG_PATH
 def load_settled_props(log_path: Path, sport: str = "all") -> pd.DataFrame:
     df = pd.read_csv(log_path)
     mask = (
-        df["run_type"].isin(["primary", "bonus"])
+        df["run_type"].isin(["primary", "bonus", "calibration"])
         & df["result"].isin(["W", "L"])
         & df["win_prob"].notna()
     )
@@ -140,7 +140,12 @@ def _fit_nll_exact(over_p: np.ndarray, is_over: np.ndarray, y: np.ndarray,
 
         res = minimize(
             nll_b, x0=[0.0], method="L-BFGS-B",
-            bounds=[(-3.0, 0.0)],
+            # Symmetric bound: a one-sided [-3, 0] silently assumes over-bets
+            # dominate. For an under-heavy overconfident sample the optimal
+            # intercept is POSITIVE (b>0 raises cal_over -> lowers p_win on
+            # under bets); the old upper bound of 0 clipped it to a spurious
+            # "b=0 no-op". Allow both signs.
+            bounds=[(-3.0, 3.0)],
             options={"gtol": 1e-9, "maxiter": 100_000},
         )
         return 1.0, float(res.x[0])
@@ -154,7 +159,9 @@ def _fit_nll_exact(over_p: np.ndarray, is_over: np.ndarray, y: np.ndarray,
 
     res = minimize(
         nll, x0=[1.0, 0.0], method="L-BFGS-B",
-        bounds=[(0.5, 5.0), (-3.0, 0.0)],
+        # b bound symmetric (-3, 3) for the same reason as the intercept-only
+        # branch: a one-sided upper bound of 0 mis-fits under-heavy samples.
+        bounds=[(0.5, 5.0), (-3.0, 3.0)],
         options={"gtol": 1e-9, "maxiter": 100_000},
     )
     return float(res.x[0]), float(res.x[1])
