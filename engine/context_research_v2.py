@@ -206,7 +206,7 @@ _TEAM_TZ_OFFSET = {
     "New York Liberty": 0, "Washington Mystics": 0, "Chicago Sky": -1,
     "Dallas Wings": -1, "Minnesota Lynx": -1, "Golden State Valkyries": -3,
     "Las Vegas Aces": -3, "Los Angeles Sparks": -3, "Phoenix Mercury": -3,
-    "Seattle Storm": -3,
+    "Seattle Storm": -3, "Toronto Tempo": 0, "Portland Fire": -3,
 }
 
 # Team → division (MLB) / division (NBA) / conference (WNBA). Same group → "confirms".
@@ -256,7 +256,8 @@ _TEAM_DIVISION = {
     "Dallas Wings": "WNBA-West", "Golden State Valkyries": "WNBA-West",
     "Las Vegas Aces": "WNBA-West", "Los Angeles Sparks": "WNBA-West",
     "Minnesota Lynx": "WNBA-West", "Phoenix Mercury": "WNBA-West",
-    "Seattle Storm": "WNBA-West",
+    "Seattle Storm": "WNBA-West", "Toronto Tempo": "WNBA-East",
+    "Portland Fire": "WNBA-West",
 }
 
 # wttr.in / umpire cache HTTP UA (avoid bot blocks).
@@ -275,6 +276,7 @@ _TEAM_SCHED_CACHE: dict = {}
 _BOXSCORE_CACHE: dict = {}
 _MLB_INJURIES_CACHE: dict = {}
 _ESPN_SCOREBOARD_CACHE: dict = {}
+_ESPN_SCHED_CACHE: dict = {}
 
 
 # ── VERBATIM from context_research.py — aggregation, override, cache/merge ───────
@@ -811,12 +813,18 @@ def _standings_mlb() -> dict:
         params={"leagueId": "103,104", "season": _SEASON,
                 "standingsTypes": "regularSeason"}, timeout=12,
     )
+    # The standings team object carries the short club name ("Yankees"), not the
+    # Odds-API full name ("New York Yankees"). Key by team id → all full-name
+    # aliases from _MLB_NAME_TO_ID so _standings_lookup(full_name) hits.
+    id_to_names: dict = {}
+    for nm, tid in _MLB_NAME_TO_ID.items():
+        id_to_names.setdefault(tid, []).append(nm)
+
     out = {}
     for rec in (data or {}).get("records", []):
         for tr in rec.get("teamRecords", []):
-            name = tr.get("team", {}).get("name", "")
-            if not name:
-                continue
+            tid = tr.get("team", {}).get("id")
+            names = id_to_names.get(tid) or [tr.get("team", {}).get("name", "")]
             entry = {
                 "wins": tr.get("wins"), "losses": tr.get("losses"),
                 "rs": tr.get("runsScored"), "ra": tr.get("runsAllowed"),
@@ -833,7 +841,9 @@ def _standings_mlb() -> dict:
                     entry["home_w"], entry["home_l"] = sr.get("wins"), sr.get("losses")
                 elif typ == "away":
                     entry["away_w"], entry["away_l"] = sr.get("wins"), sr.get("losses")
-            out[name] = entry
+            for nm in names:
+                if nm:
+                    out[nm] = entry
     return out
 
 
@@ -1031,23 +1041,104 @@ def _espn_path(sport: str) -> str | None:
     return {"NBA": "nba", "WNBA": "wnba"}.get(sport.upper())
 
 
-def _espn_event_id(sport: str, home_name: str, away_name: str):
+def _espn_scoreboard(sport: str) -> dict:
+    """Today's ESPN scoreboard for the sport, cached per run. {} if unsupported."""
     path = _espn_path(sport)
     if not path:
-        return None
+        return {}
     if path not in _ESPN_SCOREBOARD_CACHE:
         _ESPN_SCOREBOARD_CACHE[path] = _get_json(
             f"https://site.api.espn.com/apis/site/v2/sports/basketball/{path}/scoreboard",
             timeout=12) or {}
-    sb = _ESPN_SCOREBOARD_CACHE[path]
-    hl, al = home_name.lower(), away_name.lower()
+    return _ESPN_SCOREBOARD_CACHE[path]
+
+
+def _name_match(a: str, b: str) -> bool:
+    """Loose two-way substring match (mirrors _espn_event_id matching)."""
+    a, b = (a or "").lower(), (b or "").lower()
+    return bool(a) and bool(b) and (a in b or b in a)
+
+
+def _espn_event_id(sport: str, home_name: str, away_name: str):
+    sb = _espn_scoreboard(sport)
+    if not sb:
+        return None
     for ev in sb.get("events", []):
         comp = (ev.get("competitions") or [{}])[0]
-        names = [c.get("team", {}).get("displayName", "").lower()
-                 for c in comp.get("competitors", [])]
-        if any(hl in n or n in hl for n in names) and any(al in n or n in al for n in names):
+        names = [c.get("team", {}).get("displayName", "") for c in comp.get("competitors", [])]
+        if any(_name_match(home_name, n) for n in names) and \
+           any(_name_match(away_name, n) for n in names):
             return ev.get("id")
     return None
+
+
+def _espn_team_id(sport: str, team_name: str):
+    """Numeric ESPN team id for a team playing today, from the cached scoreboard."""
+    sb = _espn_scoreboard(sport)
+    if not sb:
+        return None
+    for ev in sb.get("events", []):
+        comp = (ev.get("competitions") or [{}])[0]
+        for c in comp.get("competitors", []):
+            team = c.get("team", {})
+            if _name_match(team_name, team.get("displayName", "")):
+                tid = team.get("id")
+                return int(tid) if tid is not None else None
+    return None
+
+
+def _espn_team_recent_games(sport: str, team_id) -> list:
+    """Completed games for an ESPN team, newest-first, before today.
+    Each: {date, is_home, home_name, away_name}. [] on any failure."""
+    path = _espn_path(sport)
+    if not path or team_id is None:
+        return []
+    ck = (path, team_id)
+    if ck in _ESPN_SCHED_CACHE:
+        return _ESPN_SCHED_CACHE[ck]
+
+    data = _get_json(
+        f"https://site.api.espn.com/apis/site/v2/sports/basketball/{path}/teams/{team_id}/schedule",
+        timeout=12) or {}
+    today = _date.fromisoformat(_today_local())
+    games = []
+    for ev in data.get("events", []):
+        comp = (ev.get("competitions") or [{}])[0]
+        status = comp.get("status") or ev.get("status") or {}
+        if not status.get("type", {}).get("completed"):
+            continue
+        try:
+            ldate = datetime.fromisoformat(
+                comp.get("date", ev.get("date", "")).replace("Z", "+00:00")
+            ).astimezone(_LOCAL_TZ).date()
+        except Exception:
+            continue
+        if ldate >= today:
+            continue
+        home_name = away_name = ""
+        is_home = None
+        for c in comp.get("competitors", []):
+            nm = c.get("team", {}).get("displayName", "")
+            ha = c.get("homeAway")
+            if ha == "home":
+                home_name = nm
+            elif ha == "away":
+                away_name = nm
+            if _name_match_id(c, team_id):
+                is_home = (ha == "home")
+        games.append({"date": ldate, "is_home": is_home,
+                      "home_name": home_name, "away_name": away_name})
+    games.sort(key=lambda x: x["date"], reverse=True)
+    _ESPN_SCHED_CACHE[ck] = games
+    return games
+
+
+def _name_match_id(competitor: dict, team_id) -> bool:
+    tid = competitor.get("team", {}).get("id") or competitor.get("id")
+    try:
+        return tid is not None and int(tid) == int(team_id)
+    except (ValueError, TypeError):
+        return False
 
 
 def _espn_injuries(sport: str, event_id) -> dict:
@@ -1538,32 +1629,51 @@ def _factor_home_away(game: str, sport: str, standings: dict) -> dict:
 
 
 def _factor_rest(game: str, sport: str) -> dict:
-    """Back-to-back vs 2+ days rest. Home rested+away B2B → confirms (MLB only)."""
-    try:
-        if sport.upper() != "MLB":
-            return _factor("neutral", "stale", "Rest source not wired for this sport")
-        away, home = _split_game(game)
-        home_id, away_id = _MLB_NAME_TO_ID.get(home), _MLB_NAME_TO_ID.get(away)
-        if not home_id or not away_id:
-            return _factor("neutral", "stale", "Team id unmapped for rest")
-        today = _date.fromisoformat(_today_local())
-        start = (today - timedelta(days=7)).isoformat()
-        end = (today - timedelta(days=1)).isoformat()
+    """Back-to-back vs 2+ days rest. Home rested + away B2B → confirms.
 
-        def _rest_days(tid):
-            sched = _mlb_team_schedule(tid, start, end)
-            if not sched:
-                return None
-            return (today - sched[0]["date"]).days
-        h_rest, a_rest = _rest_days(home_id), _rest_days(away_id)
-        if h_rest is None or a_rest is None:
+    gap = calendar days since last completed game. B2B = gap==1 (played
+    yesterday); rested = gap>=2. (The prior MLB code tested gap==0 for B2B, which
+    is unreachable: the schedule window ends yesterday, so the minimum gap is 1.)
+    Wired for MLB (MLB Stats API) and NBA/WNBA (ESPN team schedule).
+    """
+    try:
+        away, home = _split_game(game)
+        sport = sport.upper()
+        today = _date.fromisoformat(_today_local())
+
+        if sport == "MLB":
+            home_id, away_id = _MLB_NAME_TO_ID.get(home), _MLB_NAME_TO_ID.get(away)
+            if not home_id or not away_id:
+                return _factor("neutral", "stale", "Team id unmapped for rest")
+            start = (today - timedelta(days=7)).isoformat()
+            end = (today - timedelta(days=1)).isoformat()
+
+            def _gap(tid):
+                sched = _mlb_team_schedule(tid, start, end)
+                return (today - sched[0]["date"]).days if sched else None
+            h_gap, a_gap = _gap(home_id), _gap(away_id)
+
+        elif sport in ("NBA", "WNBA"):
+            home_id, away_id = _espn_team_id(sport, home), _espn_team_id(sport, away)
+            if home_id is None or away_id is None:
+                return _factor("neutral", "stale", "ESPN team id not found for rest")
+
+            def _gap(tid):
+                sched = _espn_team_recent_games(sport, tid)
+                return (today - sched[0]["date"]).days if sched else None
+            h_gap, a_gap = _gap(home_id), _gap(away_id)
+
+        else:
+            return _factor("neutral", "stale", "Rest source not wired for this sport")
+
+        if h_gap is None or a_gap is None:
             return _factor("neutral", "stale", "Recent schedule unavailable")
 
-        ev = f"Home: {h_rest}d rest | Away: {a_rest}d rest"
-        if h_rest >= 2 and a_rest == 0:
-            return _factor("confirms", "fresh", ev + " (home rest edge)")
-        if a_rest >= 2 and h_rest == 0:
-            return _factor("fades", "fresh", ev + " (away rest edge)")
+        ev = f"Home: {h_gap}d since last | Away: {a_gap}d since last"
+        if h_gap >= 2 and a_gap == 1:
+            return _factor("confirms", "fresh", ev + " (home rest edge — away B2B)")
+        if a_gap >= 2 and h_gap == 1:
+            return _factor("fades", "fresh", ev + " (away rest edge — home B2B)")
         return _factor("neutral", "fresh", ev, "researched_neutral")
     except Exception:  # noqa: BLE001
         return _failed_factor()
@@ -1575,26 +1685,41 @@ def _factor_travel(game: str, sport: str) -> dict:
     NOTE: the original prompt's '<=-2' condition contradicts its own worked
     example (PT->ET = +3 eastward = fades). We follow the worked example and the
     circadian literature: eastward (positive) shift of 2+ hours fades the away team.
+    Wired for MLB (MLB Stats API) and NBA/WNBA (ESPN team schedule).
     """
     try:
-        if sport.upper() != "MLB":
-            return _factor("neutral", "stale", "Travel source not wired for this sport")
         away, home = _split_game(game)
-        away_id = _MLB_NAME_TO_ID.get(away)
+        sport = sport.upper()
         today_off = _TEAM_TZ_OFFSET.get(home)
-        if away_id is None or today_off is None:
-            return _factor("neutral", "stale", "Timezone/team mapping incomplete")
-
+        if today_off is None:
+            return _factor("neutral", "stale", "Tonight's venue timezone unknown")
         today = _date.fromisoformat(_today_local())
-        start = (today - timedelta(days=3)).isoformat()
-        end = (today - timedelta(days=1)).isoformat()
-        sched = _mlb_team_schedule(away_id, start, end)
-        if not sched:
-            return _factor("neutral", "stale", "Away team's last game not found")
-        last = sched[0]
-        # Venue tz of away team's previous game = tz of that game's home team.
-        venue_id = last["home_id"]
-        venue_name = next((n for n, i in _MLB_NAME_TO_ID.items() if i == venue_id), None)
+
+        if sport == "MLB":
+            away_id = _MLB_NAME_TO_ID.get(away)
+            if away_id is None:
+                return _factor("neutral", "stale", "Team id unmapped for travel")
+            start = (today - timedelta(days=3)).isoformat()
+            end = (today - timedelta(days=1)).isoformat()
+            sched = _mlb_team_schedule(away_id, start, end)
+            if not sched:
+                return _factor("neutral", "stale", "Away team's last game not found")
+            # Venue tz of away team's previous game = tz of that game's home team.
+            venue_id = sched[0]["home_id"]
+            venue_name = next((n for n, i in _MLB_NAME_TO_ID.items() if i == venue_id), None)
+
+        elif sport in ("NBA", "WNBA"):
+            away_id = _espn_team_id(sport, away)
+            if away_id is None:
+                return _factor("neutral", "stale", "ESPN team id not found for travel")
+            sched = _espn_team_recent_games(sport, away_id)
+            if not sched:
+                return _factor("neutral", "stale", "Away team's last game not found")
+            venue_name = sched[0]["home_name"]
+
+        else:
+            return _factor("neutral", "stale", "Travel source not wired for this sport")
+
         venue_off = _TEAM_TZ_OFFSET.get(venue_name)
         if venue_off is None:
             return _factor("neutral", "stale", "Previous venue timezone unknown")
