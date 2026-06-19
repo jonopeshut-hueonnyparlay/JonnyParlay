@@ -111,3 +111,7 @@ Prereqs P-1/P-2 · Phase 0: P0.1,P0.2,P0.4,P0.5,P0.6 · Phase 1: P1.1(EdgeModel)
 
 ### NEXT (queued, each its own commit/review)
 1. **Phase 3** in order: NB_R consumer regression tests → vig/no-vig property tests → versioned Platt artifact dir → pre-commit hook → remaining hygiene.
+
+### Phase 3 — hardening bucket (data-contract / determinism)
+- **Canonical snapshot writer** (replay): strip trailing whitespace, deterministic row sort, pinned line endings + `.gitattributes` `replay/snapshots/**/*.csv text eol=lf`. A replay baseline that churns on whitespace is a false-alarm generator in the one check we trust to prove pricing didn't move. Root cause is the external EdgeModel CSV writer (`C:\Dev\EdgeModel`) emitting trailing whitespace on empty-trailing-field rows; fix at ingest/capture so it's neutralized regardless of producer.
+- **Calibration date-format contract** (from P2.11a residual): `count_calibration_days()` normalizes whitespace (`.strip()`) but NOT date *format*, resting on a single-writer ISO `YYYY-MM-DD` guarantee that nothing tests — format drift (`2026-6-15`, `06/15/2026`) would silently miscount and mis-open the Platt gate. Close it via one or both: (a) **pin** — test asserting the calibration `date` column matches `^\d{4}-\d{2}-\d{2}$` so producer-side drift fails CI; (b) **normalize** — key on `date.fromisoformat(d).isoformat()`, skip+warn on unparseable. Pairs with the canonical-writer item above.
