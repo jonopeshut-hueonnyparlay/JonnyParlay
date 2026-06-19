@@ -81,6 +81,49 @@ def test_calibration_gate_blocked_until_min_days():
     assert count_calibration_days(one_slate) < CALIBRATION_MIN_DAYS  # still blocked
 
 
+def test_count_calibration_days_same_date_twice():
+    """Two graded rows on the SAME calendar date collapse to one day.
+
+    Explicit same-day-twice case (6bef685 day-boundary bug class). Also asserts
+    surrounding whitespace on the date string does not spawn a phantom day —
+    the counter strips before deduping.
+    """
+    from gate_check import count_calibration_days
+    rows = [
+        {"run_type": "calibration", "over_p_raw": "0.51", "result": "W", "date": "2026-06-15"},
+        {"run_type": "calibration", "over_p_raw": "0.49", "result": "L", "date": " 2026-06-15 "},
+    ]
+    assert count_calibration_days(rows) == 1
+
+
+def test_count_calibration_days_midnight_straddle():
+    """A row near midnight must not double- or under-count (6bef685 bug class).
+
+    The counter keys on the `date` calendar column, never on `run_time`. So:
+      * two rows on the SAME date with run_times straddling midnight -> 1 day
+        (run_time difference must NOT inflate the day count), and
+      * two rows on ADJACENT dates with run_times either side of midnight -> 2
+        (adjacent calendar days must NOT collapse into one).
+    """
+    from gate_check import count_calibration_days
+
+    same_day = [
+        {"run_type": "calibration", "over_p_raw": "0.51", "result": "W",
+         "date": "2026-06-15", "run_time": "23:59:59"},
+        {"run_type": "calibration", "over_p_raw": "0.48", "result": "L",
+         "date": "2026-06-15", "run_time": "00:00:01"},
+    ]
+    assert count_calibration_days(same_day) == 1  # no double-count across midnight
+
+    adjacent_days = [
+        {"run_type": "calibration", "over_p_raw": "0.51", "result": "W",
+         "date": "2026-06-15", "run_time": "23:59:59"},
+        {"run_type": "calibration", "over_p_raw": "0.48", "result": "L",
+         "date": "2026-06-16", "run_time": "00:00:01"},
+    ]
+    assert count_calibration_days(adjacent_days) == 2  # no under-count of distinct days
+
+
 # ── path constant ────────────────────────────────────────────────────────
 def test_calibration_path_importable():
     from paths import PICK_LOG_CALIBRATION_PATH
