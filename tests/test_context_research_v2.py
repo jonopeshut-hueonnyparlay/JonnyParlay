@@ -179,3 +179,37 @@ def test_unsupported_sport_stays_stale():
     for fn in (crv2._factor_rest, crv2._factor_travel):
         r = fn("A @ B", "NHL")
         assert r["verdict"] == "neutral" and r["data_quality"] == "stale"
+
+
+# ── NBA/WNBA short-name normalization (ESPN / nba_api vs Odds-API full names) ─────
+
+def test_canon_team_la_variants():
+    assert crv2._canon_team("LA Clippers") == "Los Angeles Clippers"
+    assert crv2._canon_team("LA Lakers") == "Los Angeles Lakers"
+    assert crv2._canon_team("LA Sparks") == "Los Angeles Sparks"
+
+
+def test_canon_team_passthrough_and_no_false_expansion():
+    # Already-canonical names are unchanged...
+    assert crv2._canon_team("Boston Celtics") == "Boston Celtics"
+    assert crv2._canon_team("Los Angeles Lakers") == "Los Angeles Lakers"
+    # ...and "Las Vegas"/other non-"LA " names are not mangled by the prefix rule.
+    assert crv2._canon_team("Las Vegas Aces") == "Las Vegas Aces"
+    assert crv2._canon_team("Golden State Warriors") == "Golden State Warriors"
+
+
+def test_name_match_resolves_clippers_variant():
+    # The substring matcher misses raw, but canonicalization makes it hit.
+    assert crv2._name_match("Los Angeles Clippers", "LA Clippers")
+    assert not crv2._name_match("Los Angeles Clippers", "Los Angeles Lakers")
+
+
+def test_espn_team_id_resolves_full_name_against_short_scoreboard(monkeypatch):
+    fake_sb = {"events": [{"competitions": [{"competitors": [
+        {"team": {"id": "12", "displayName": "LA Clippers"}},
+        {"team": {"id": "13", "displayName": "Los Angeles Lakers"}},
+    ]}]}]}
+    monkeypatch.setattr(crv2, "_espn_scoreboard", lambda sport: fake_sb)
+    # Odds-API full name resolves against ESPN's short "LA Clippers".
+    assert crv2._espn_team_id("NBA", "Los Angeles Clippers") == 12
+    assert crv2._espn_team_id("NBA", "Los Angeles Lakers") == 13

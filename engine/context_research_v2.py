@@ -260,6 +260,27 @@ _TEAM_DIVISION = {
     "Portland Fire": "WNBA-West",
 }
 
+# ESPN / nba_api abbreviate team names where Odds API spells them out; these
+# two-way-substring-miss against the full names. Canonicalize to the Odds-API
+# full name before any name match or standings keying. The "LA " prefix rule
+# generalizes Los Angeles teams (Clippers/Lakers/Sparks); the explicit map
+# covers any non-LA quirks discovered later.
+_TEAM_NAME_ALIASES = {
+    "LA Clippers": "Los Angeles Clippers",
+    "LA Lakers": "Los Angeles Lakers",
+    "LA Sparks": "Los Angeles Sparks",
+}
+
+
+def _canon_team(name: str) -> str:
+    """Map an ESPN/nba_api team name to its Odds-API full-name form."""
+    n = (name or "").strip()
+    if n in _TEAM_NAME_ALIASES:
+        return _TEAM_NAME_ALIASES[n]
+    if n.startswith("LA "):  # ESPN/nba_api use "LA" for "Los Angeles"
+        return "Los Angeles " + n[3:]
+    return n
+
 # wttr.in / umpire cache HTTP UA (avoid bot blocks).
 _HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -865,7 +886,7 @@ def _standings_nba() -> dict:
             return None, None
 
     for _, row in df.iterrows():
-        name = f"{row.get('TeamCity', '')} {row.get('TeamName', '')}".strip()
+        name = _canon_team(f"{row.get('TeamCity', '')} {row.get('TeamName', '')}".strip())
         if not name:
             continue
         h_w, h_l = _wl(row.get("HOME"))
@@ -906,7 +927,7 @@ def _standings_wnba() -> dict:
 
     def _parse_entry(e):
         team = e.get("team", {})
-        name = team.get("displayName") or team.get("name") or ""
+        name = _canon_team(team.get("displayName") or team.get("name") or "")
         if not name:
             return
         stats = {s.get("name") or s.get("type"): s.get("value") for s in e.get("stats", [])}
@@ -1054,8 +1075,9 @@ def _espn_scoreboard(sport: str) -> dict:
 
 
 def _name_match(a: str, b: str) -> bool:
-    """Loose two-way substring match (mirrors _espn_event_id matching)."""
-    a, b = (a or "").lower(), (b or "").lower()
+    """Loose two-way substring match, after canonicalizing short-name variants
+    (e.g. ESPN "LA Clippers" → "Los Angeles Clippers")."""
+    a, b = _canon_team(a).lower(), _canon_team(b).lower()
     return bool(a) and bool(b) and (a in b or b in a)
 
 
