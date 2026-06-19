@@ -109,8 +109,10 @@ Prereqs P-1/P-2 · Phase 0: P0.1,P0.2,P0.4,P0.5,P0.6 · Phase 1: P1.1(EdgeModel)
   - **Scheduling (ops, not code):** run Sundays via Task Scheduler *after* `weekly_recap.py`. No `.ps1` added (matches `weekly_recap`'s manual-schedule convention).
 - [x] **P2.11a** — verified `count_calibration_days()` counts distinct calendar days (`32d8337`, tests-only). Dedup key is `.strip()`'d (`gate_check.py:77`) so the whitespace-overcount path that opens the Platt gate early is already closed — function correct as-is, no production fix. +2 tests: same-day-twice/whitespace-phantom→1 (overcount guard) and midnight straddle (same-date→1 / adjacent→2, under+overcount guards). Suite 1390→1392, replay byte-identical.
 
+- [x] **Phase 3 — NB_R consumer regression tests** (`8bcb017`, tests-only). Locks `calibrated.NB_R` end-to-end through `calc_prop_prob`: golden (over_p, under_p) for 3PM/AST/REB (NBA) + ER/RBI (MLB) across both the half-integer no-push and integer push-adjusted branches; AST golden tied to `negbinom_cdf(NB_R['AST'])`; monkeypatch wiring test proving the consumer reads `NB_R[stat]` not a constant. **Finding:** CLAUDE.md NB_R memory is stale (says AST=12.16/REB=14.7/ER=2.62; live code is 9.66/13.16/4.75 from P1.3/Task#1 2026-06-16 — comments confirm). Suite 1392→1401 on main, replay byte-identical.
+
 ### NEXT (queued, each its own commit/review)
-1. **Phase 3** in order: NB_R consumer regression tests → vig/no-vig property tests → versioned Platt artifact dir → pre-commit hook → remaining hygiene.
+1. **Phase 3** in order: vig/no-vig property tests → versioned Platt artifact dir → pre-commit hook → remaining hygiene.
 
 ### Phase 3 — hardening bucket (data-contract / determinism)
 - **Canonical snapshot writer** (replay): strip trailing whitespace, deterministic row sort, pinned line endings + `.gitattributes` `replay/snapshots/**/*.csv text eol=lf`. A replay baseline that churns on whitespace is a false-alarm generator in the one check we trust to prove pricing didn't move. Root cause is the external EdgeModel CSV writer (`C:\Dev\EdgeModel`) emitting trailing whitespace on empty-trailing-field rows; fix at ingest/capture so it's neutralized regardless of producer.
