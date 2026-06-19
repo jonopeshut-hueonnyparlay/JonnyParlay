@@ -10,9 +10,11 @@ Design rationale (Apr 2026 redesign + L8 copula update May 2026):
     exceeds the +200-+300 implied probability — real edge is possible.
   - Search space: C(40,4) = 91k vs C(25,6) = 177k. Faster with better results.
   - BetMGM is preferred book (independently measured 2-3% better SGP pricing).
-  - L8 (May 2026): Gaussian copula joint probability replaces independence-based
+  - L8 (May 2026): copula joint probability replaces independence-based
     scoring and the raw avg_wp >= 0.70 sizing gate.  Fast equicorrelation approx
-    Full 300-sample MC used during the combo ranking pass; 4000-sample MC used once for final sizing/display.
+    used in the 91k-combo search; full 1000-sample MC used during the combo
+    ranking pass; 10,000-sample MC used once for final sizing/display.
+    t-copula (ν=6, June 2026) replaced the Gaussian copula for tail dependence.
     Embed now shows "Copula joint: X% | Implied: Y% (+Zpp)" for transparency.
 """
 from __future__ import annotations
@@ -255,11 +257,12 @@ def _fair_prob(proj, line, stat, direction):
     return over_p if direction == "over" else under_p
 
 
-# -- Gaussian copula joint probability (L8, May 2026) ----------------------
+# -- t-copula joint probability (L8 May 2026; t-copula June 2026) ----------
 # Rationale: multiplying independent leg probabilities underestimates the
 # true joint hit rate when legs share game-script correlation.  The copula
-# captures this uplift for the sizing gate and embed display.
-# Full MC (4000 samples, ~2 ms) is used only on the final chosen SGP;
+# captures this uplift for the sizing gate and embed display. The t-copula
+# (ν=6) adds tail dependence the Gaussian copula lacked (λ_U=λ_L=0).
+# Full MC (10,000 samples) is used only on the final chosen SGP;
 # the fast equicorrelation approx is used during the 91k-combo search.
 
 # Pure copula math consolidated in quant/copula.py; aliased to the historical
@@ -632,7 +635,7 @@ def _score_sgp(legs):
     Weight rationale (L8 update, May 2026):
       copula    0.30 — replaces avg_wp juice_score; accounts for inter-leg
                         correlation when estimating the true joint hit rate.
-                        Uses full 300-sample MC copula (ranking pass).
+                        Uses full 1000-sample MC copula (ranking pass).
       edge      0.25 — per-leg model edge; still the sharpest signal
       cohesion  0.25 — tag-sharing narrative coherence (kept for readability signal;
                         copula already captures the quantitative correlation benefit)
@@ -654,11 +657,11 @@ def _score_sgp(legs):
 
     cohesion = _correlation_cohesion(legs)
 
-    # Full MC copula for ranking — n_samples=300 gives SE≈2.5% at joint≈0.40,
+    # Full MC copula for ranking — n_samples=1000 gives SE≈1.2% at joint≈0.40,
     # tighter than the 15-20% relative error of the equicorrelation approx.
     probs = [l["fair_prob"] for l in legs]
     corr_mat = _build_corr_matrix(legs)
-    copula_joint = _copula_joint_prob(probs, corr_mat, n_samples=300)
+    copula_joint = _copula_joint_prob(probs, corr_mat, n_samples=1000)
     copula_ideal = 0.38 if n <= 3 else 0.25
     copula_score = min(copula_joint / copula_ideal, 1.0)
 
