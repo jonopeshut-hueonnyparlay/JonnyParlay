@@ -525,8 +525,8 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 if (_al and _al in _k) or (_hl and _hl in _k):
                     _vrd  = _v.get("verdict","neutral")
                     _conf = int(_v.get("confidence",0)*100)
-                    _ctx_tag = f"  [CTX+ {_vrd} {_conf}%]" if _vrd=="confirms" else                                f"  [CTX- {_vrd} {_conf}%]" if _vrd=="contradicts" else                                f"  [CTX? {_conf}%]"
-                    _ctx_token = "confirms" if _vrd=="confirms" else "fades" if _vrd=="contradicts" else "neutral"
+                    _ctx_tag = f"  [CTX+ {_vrd} {_conf}%]" if _vrd=="confirms" else                                f"  [CTX- {_vrd} {_conf}%]" if _vrd=="fades" else                                f"  [CTX? {_conf}%]"
+                    _ctx_token = "confirms" if _vrd=="confirms" else "fades" if _vrd=="fades" else "neutral"
                     break
         hdr = f"{away_abbr} ({away_proj}) @ {home_abbr} ({home_proj})  proj_total={total_proj:.1f}  margin={margin:+.1f}{_ctx_tag}"
         if edges:
@@ -665,8 +665,8 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
                 if (_al and _al in _k) or (_hl and _hl in _k):
                     _vrd  = _v.get("verdict","neutral")
                     _conf = int(_v.get("confidence",0)*100)
-                    _ctx_tag = f"  [CTX+ {_vrd} {_conf}%]" if _vrd=="confirms" else                                f"  [CTX- {_vrd} {_conf}%]" if _vrd=="contradicts" else                                f"  [CTX? {_conf}%]"
-                    _ctx_token = "confirms" if _vrd=="confirms" else "fades" if _vrd=="contradicts" else "neutral"
+                    _ctx_tag = f"  [CTX+ {_vrd} {_conf}%]" if _vrd=="confirms" else                                f"  [CTX- {_vrd} {_conf}%]" if _vrd=="fades" else                                f"  [CTX? {_conf}%]"
+                    _ctx_token = "confirms" if _vrd=="confirms" else "fades" if _vrd=="fades" else "neutral"
                     break
         hdr = f"{away_abbr} ({away_proj}) @ {home_abbr} ({home_proj})  proj_total={total_proj:.1f}  margin={margin:+.1f}{_ctx_tag}"
         if edges:
