@@ -162,7 +162,13 @@ def _status(count: int, target: int, reached: bool) -> str:
     return f"[{'#' * bar}{'.' * (20 - bar)}] {pct:5.1f}%"
 
 
-def main() -> None:
+def compute_gate_status() -> list[tuple]:
+    """Compute ``(label, count, target, note, reached)`` for every open gate.
+
+    Shared by ``main()`` (the CLI table) and ``gate_digest.py`` (the weekly
+    digest's data-gate snapshot) so both render from one source of truth. Reads
+    the three logs once and routes each row-set to its counter via ``GATES``.
+    """
     main_rows   = _read_csv(PICK_LOG)
     custom_rows = _read_csv(PICK_LOG_CUSTOM)
     calibration_rows = _read_csv(PICK_LOG_CALIBRATION)
@@ -189,6 +195,11 @@ def main() -> None:
         else:
             reached = count >= target
         results.append((label, count, target, note, reached))
+    return results
+
+
+def main() -> None:
+    results = compute_gate_status()
 
     # Column widths
     w_label  = max(len(r[0]) for r in results) + 2
