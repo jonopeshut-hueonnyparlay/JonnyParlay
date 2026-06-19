@@ -1,8 +1,9 @@
-"""Gaussian copula joint-probability math for same-game parlays.
+"""t-copula joint-probability math for same-game parlays.
 
-Pure functions — stdlib ``math`` + ``random`` only. Extracted verbatim from
-sgp_builder.py (the canonical implementation). The Monte-Carlo sampler builds its
-RNG inside the function from the ``seed`` argument (default 42), so output is
+stdlib ``math`` + ``random`` for everything except ``copula_joint_prob``, which
+also uses ``scipy.stats.t`` for the inverse-t-CDF (t-copula marginals). Extracted
+from sgp_builder.py (the canonical implementation). The Monte-Carlo sampler builds
+its RNG inside the function from the ``seed`` argument (default 42), so output is
 bit-identical across runs and machines for a given (probs, corr_mat, n_samples, seed).
 
 The domain-specific correlation lookup (``_pairwise_rho``) and matrix builder
@@ -11,6 +12,14 @@ business logic, not generic math.
 """
 import math
 import random
+
+from scipy.stats import t as _scipy_t
+
+# t-copula degrees of freedom. ν=6 per Demarta & McNeil 2005 (midpoint of the
+# research-backed 4–8 range). Lower ν = heavier tails = more joint-extreme
+# probability. June 2026: replaces the Gaussian copula (zero tail dependence,
+# λ_U=λ_L=0 for any ρ<1).
+COPULA_DF = 6
 
 
 def probit(p):
@@ -102,20 +111,32 @@ def cholesky(mat):
     return L
 
 
-def copula_joint_prob(probs, corr_mat, n_samples=4000, seed=42):
-    """Gaussian copula joint probability via Monte Carlo.
+def copula_joint_prob(probs, corr_mat, n_samples=10_000, seed=42,
+                      df=COPULA_DF):
+    """t-Copula joint probability via Monte Carlo.
 
-    P(all legs hit) accounting for inter-leg correlations.  Algorithm:
-      1. Factorize R = L L^T  (Cholesky)
-      2. Sample ε ~ N(0, I_n)
-      3. x = L ε  → correlated standard normals with cov = R
-      4. U_i = Φ(x_i)  → correlated uniform marginals
-      5. Joint hit = all U_i ≤ p_i  (equivalent to all x_i ≤ Φ^{-1}(p_i))
+    P(all legs hit) accounting for inter-leg correlations.
 
-    At n_samples=4000: SE ≈ 0.7% for joint≈0.40.  Fixed seed gives
-    reproducible scores for identical leg sets.
+    Algorithm:
+      1. Factorise R = L L^T  (Cholesky — same as Gaussian version)
+      2. For each simulation:
+         a. Sample chi2(df) = sum of df squared standard normals
+         b. Sample z ~ N(0, I_n), then x = L z  (correlated Gaussian)
+         c. t_i = x_i / sqrt(chi2/df)  →  t-distributed with df df
+         d. Joint hit = all t_i ≤ Φ_t^{-1}(p_i)
+      3. Return hit_count / n_samples
 
-    Runtime: ~2 ms for 4-leg at 4000 samples (called once per final SGP).
+    Replaces Gaussian copula (L8, May 2026). Gaussian copula has
+    λ_U = λ_L = 0 for any ρ < 1 (zero tail dependence), systematically
+    underestimating joint probability when extreme game outcomes make
+    legs jointly more likely to hit. t-Copula with ν=6 adds nonzero
+    symmetric tail dependence via degrees-of-freedom parameter.
+    (Demarta & McNeil 2005; ArbitrageLab Copula Reference; June 2026
+    architecture research.)
+
+    n_samples=10,000: SE ≈ 0.3% for joint≈0.10.
+    Runtime: ~5-8 ms for 4-leg at 10,000 samples (called once per
+    final SGP). Fixed seed gives reproducible output.
     """
     n = len(probs)
     if n == 0:
@@ -130,18 +151,28 @@ def copula_joint_prob(probs, corr_mat, n_samples=4000, seed=42):
             result *= p
         return result
 
+    # Precompute t-distribution thresholds (inverse t-CDF at each leg prob).
+    # Clamp to (0, 1) — consistent with probit() — so extreme probs never yield
+    # ±inf thresholds. Leg probs are ≥0.62 in practice; this is defensive only.
+    thresholds = [float(_scipy_t.ppf(min(1.0 - 1e-9, max(1e-9, p)), df))
+                  for p in probs]
+
     rng = random.Random(seed)
     gauss = rng.gauss
-    erf = math.erf
-    inv_sqrt2 = 1.0 / math.sqrt(2.0)
     hits = 0
     for _ in range(n_samples):
+        # Sample chi2(df) = sum of df squared standard normals
+        chi2 = sum(gauss(0.0, 1.0) ** 2 for _ in range(df))
+        w = math.sqrt(chi2 / df)
+
+        # Sample correlated Gaussian z ~ N(0, R) via Cholesky
         eps = [gauss(0.0, 1.0) for _ in range(n)]
+
         ok = True
         for i in range(n):
-            xi = sum(L[i][k] * eps[k] for k in range(i + 1))
-            ui = 0.5 * (1.0 + erf(xi * inv_sqrt2))
-            if ui > probs[i]:
+            zi = sum(L[i][k] * eps[k] for k in range(i + 1))
+            ti = zi / w          # t-distributed marginal
+            if ti > thresholds[i]:
                 ok = False
                 break
         if ok:

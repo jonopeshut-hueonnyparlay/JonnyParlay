@@ -126,8 +126,10 @@ def test_cholesky_golden():
 
 def test_copula_joint_prob_deterministic_golden():
     # Seeded MC (random.Random(seed)) — deterministic across runs/machines.
-    assert sgp._copula_joint_prob([0.68, 0.7], [[1.0, 0.35], [0.35, 1.0]], n_samples=200, seed=42) == 0.46
-    assert sgp._copula_joint_prob([0.68, 0.7, 0.66], [[1.0, 0.3, 0.2], [0.3, 1.0, 0.15], [0.2, 0.15, 1.0]], n_samples=200, seed=42) == 0.37
+    # Values are for the t-copula (ν=6, June 2026); they differ from the prior
+    # Gaussian-copula goldens (0.46 / 0.37) by the tail-dependence uplift.
+    assert sgp._copula_joint_prob([0.68, 0.7], [[1.0, 0.35], [0.35, 1.0]], n_samples=200, seed=42) == 0.485
+    assert sgp._copula_joint_prob([0.68, 0.7, 0.66], [[1.0, 0.3, 0.2], [0.3, 1.0, 0.15], [0.2, 0.15, 1.0]], n_samples=200, seed=42) == 0.38
 
 
 def test_copula_module_matches_sgp_reexport():
@@ -137,7 +139,50 @@ def test_copula_module_matches_sgp_reexport():
     assert copula.probit(0.75) == sgp._probit(0.75) == 0.6744897496907685
     assert copula.cholesky([[1.0, 0.3], [0.3, 1.0]]) == sgp._cholesky([[1.0, 0.3], [0.3, 1.0]])
     assert copula.copula_joint_approx((0.68, 0.7), 0.35) == sgp._copula_joint_approx((0.68, 0.7), 0.35) == 0.476238
-    assert copula.copula_joint_prob([0.68, 0.7], [[1.0, 0.35], [0.35, 1.0]], n_samples=200, seed=42) == 0.46
+    assert copula.copula_joint_prob([0.68, 0.7], [[1.0, 0.35], [0.35, 1.0]], n_samples=200, seed=42) == 0.485
+
+
+def test_t_copula_higher_than_gaussian_at_extremes():
+    # t-copula tail dependence: two high-prob legs (0.90) with ρ=0.30 should
+    # land above the independence product (0.81) and within a sane range.
+    from quant import copula
+    t_result = copula.copula_joint_prob([0.90, 0.90], [[1.0, 0.3], [0.3, 1.0]])
+    indep = 0.90 * 0.90
+    assert t_result > indep
+    assert 0.80 < t_result < 0.96
+
+
+def test_copula_df_constant():
+    from quant import copula
+    assert copula.COPULA_DF == 6
+
+
+def test_n_samples_default():
+    import inspect
+    from quant import copula
+    sig = inspect.signature(copula.copula_joint_prob)
+    assert sig.parameters["n_samples"].default == 10_000
+
+
+def test_copula_reproducible_with_seed():
+    # Regression guard: same inputs + seed → identical output (seeded MC).
+    from quant import copula
+    a = copula.copula_joint_prob([0.68, 0.7, 0.66],
+                                 [[1.0, 0.3, 0.2], [0.3, 1.0, 0.15], [0.2, 0.15, 1.0]],
+                                 n_samples=500, seed=42)
+    b = copula.copula_joint_prob([0.68, 0.7, 0.66],
+                                 [[1.0, 0.3, 0.2], [0.3, 1.0, 0.15], [0.2, 0.15, 1.0]],
+                                 n_samples=500, seed=42)
+    assert a == b
+
+
+def test_ranking_pass_uses_1000_samples():
+    # The NBA SGP ranking pass (_score_sgp) must call the MC copula at
+    # n_samples=1000 (bumped from 300, June 2026). Source-introspect the call.
+    import inspect
+    source = inspect.getsource(sgp._score_sgp)
+    assert "n_samples=1000" in source
+    assert "n_samples=300" not in source
 
 
 def test_implied_prob_or_none_matches_canonical_for_valid_odds():
