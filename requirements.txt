@@ -24,7 +24,13 @@ tzdata
 openpyxl
 
 # Anthropic API — used by engine/context_research.py for per-game research.
+# (context_research_v2.py is API-driven and needs no Anthropic key.)
 anthropic
+
+# HTML parsing fallback for the umpire run-environment scrape in
+# engine/context_research_v2.py. Soft dependency — the umpire factor degrades
+# to stale-neutral when beautifulsoup4 is not installed.
+beautifulsoup4
 
 # ── Custom projection engine ────────────────────────────────────────────────
 # Optional until custom projector goes live (currently parallel-running with
