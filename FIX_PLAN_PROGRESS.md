@@ -117,3 +117,38 @@ Prereqs P-1/P-2 · Phase 0: P0.1,P0.2,P0.4,P0.5,P0.6 · Phase 1: P1.1(EdgeModel)
 ### Phase 3 — hardening bucket (data-contract / determinism)
 - **Canonical snapshot writer** (replay): strip trailing whitespace, deterministic row sort, pinned line endings + `.gitattributes` `replay/snapshots/**/*.csv text eol=lf`. A replay baseline that churns on whitespace is a false-alarm generator in the one check we trust to prove pricing didn't move. Root cause is the external EdgeModel CSV writer (`C:\Dev\EdgeModel`) emitting trailing whitespace on empty-trailing-field rows; fix at ingest/capture so it's neutralized regardless of producer.
 - **Calibration date-format contract** (from P2.11a residual): `count_calibration_days()` normalizes whitespace (`.strip()`) but NOT date *format*, resting on a single-writer ISO `YYYY-MM-DD` guarantee that nothing tests — format drift (`2026-6-15`, `06/15/2026`) would silently miscount and mis-open the Platt gate. Close it via one or both: (a) **pin** — test asserting the calibration `date` column matches `^\d{4}-\d{2}-\d{2}$` so producer-side drift fails CI; (b) **normalize** — key on `date.fromisoformat(d).isoformat()`, skip+warn on unparseable. Pairs with the canonical-writer item above.
+
+---
+
+## HANDOFF — session 5 (2026-06-19)
+
+### Phase 3 hygiene bucket — CLEARED (all pushed to main)
+Worked the Phase-3 bucket to completion. Each its own commit; replay byte-identical +
+ruff green for every one; full suite 1390 → **1451**.
+
+- [x] **S4a-X** pre-commit hook — `0f93317`. Local hook runs the repo's pinned ruff 0.15.17 (`ruff check`, blocking — mirrors CI); format check omitted (advisory; tree not ruff-formatted). Inert until `pre-commit install`.
+- [x] **S4c-X** vig/no-vig property tests — `b92fe89`. Added the missing de-vig invariants to `test_quant_properties.py`: ratio preservation, actual vig removal (each fair ≤ implied, sum=1), idempotence, `total==0` branch, symmetry, two-sided roundtrip, `implied==1/decimal` + odds monotonicity, and **`implied_prob_or_none` robustness (CLV-path wrapper, previously untested)**. Dependency-free sweeps (no `hypothesis`).
+- [x] **Calibration date-format contract** — `c9f4124`. Took option (b): `count_calibration_days()` keys on `date.fromisoformat`-normalized ISO; non-ISO drift excluded + warned (over-count would *prematurely* open the gate). Behaviour-identical on the all-ISO log (live count unchanged 2/10). +2 tests.
+- [x] **S4k-X** CLV weekly ledger export — `a23f471`. New `engine/clv_weekly_export.py`: per Mon–Sun week, every CLV-eligible graded pick + summary; reuses `load_rows` + `weekly_recap` helpers; excludes SGP/parlay/daily_lay/longshot. +3 tests, exports gitignored. **Surfaced: last-weeks avg CLV ≈ −2.4pp, 0% beat-close** — edge-quality flag (consistent with the overconfidence finding).
+- [x] **S4h-X** staking/unit-cap doc — `7cf03dc`. New `docs/staking.md`: the verified sizing→cap pipeline (Kelly `units = f* × 6 ≈ 1/16.7`, floors/caps, `apply_caps` stack, KILLSHOT re-check), code-cited, "do not tune" flagged. Doc-only.
+- [x] **S4l-X README** — `d0bcf71`. New `README.md`: data flow, entry points, daily ops, dev workflow, layout, doc pointers.
+- [x] **S4d-X** calibration drift dashboard — `5505970`. New `engine/tools/calibration_dashboard.py`: rolling reliability per stat (same advisory rule as health_check §20, sliced per stat). +5 tests. **Surfaces the live ~18pp overconfidence per stat/bucket** (e.g. 70%+ bucket pred 72.5% vs obs 55.6%).
+- [x] **S4f-X** thresholds → external config — `73454d3`. Did NOT do the literal "everything to YAML" (would strip the rationale comments + mishandle `frozenset`/`date`/list types). Instead: defaults+docs stay in `thresholds.py`; opt-in `config/thresholds.toml` (stdlib `tomllib`, no new dep) overrides whitelisted **scalars only**. Frozen/calibrated constants excluded from the whitelist → the "don't hand-tune frozen constants" anti-pattern is now **enforced in code**. Dormant by default → replay byte-identical; live override + frozen-guard proven in a subprocess. +12 tests; `config/thresholds.toml` gitignored, `.example.toml` committed.
+
+### Verified ALREADY-DONE (v2 plan was stale — closed by earlier M-audits)
+The fix plan (generated 2026-06-16) still listed these; the code shows them closed:
+- **S4l-X log rotation** — done **M-24/M-25** (`engine/log_setup.py`: `attach_rotating_handler` + `preemptive_rotate`, wired into run_picks/grade_picks/engine_logger + `start_clv_daemon.bat`).
+- **S4j-X centralize log format** — done **M-28** (`engine/engine_logger.py` shared structured logger across the daemons).
+- **S4l-5 daemon → service wrapper** — done (`setup_clv_task.ps1` registers the CLV daemon as a Task Scheduler task: daily 10:00 + at-startup).
+- **Canonical snapshot writer** (the session-4 hardening item) — already solved: `replay/.gitattributes` marks `snapshots/** -text` (binary = byte-exact on every platform). Trailing-whitespace concern lives only in the unbuilt NBA-snapshot path. No change needed.
+
+### N/A
+- **S4b-X** versioned Platt artifact dir — no JSON-artifact architecture here (Platt is code constants; provenance already stamped via `PLATT_FIT_DATE` (P2.7) + `PLATT_SPACE` (P0.4)).
+
+### NOT done — remaining
+- **S4g-X SGP outcome backfill** — **premature.** The consumer (empirical ρ refit) doesn't exist and is data-gated at n≥160; structural-prior ρ is fine until then (P1.6). Raw leg data is already in `pick_log.legs`, so there's no "start collecting now" benefit — backfill *when* the ρ-refit is built. Bundle it there.
+- **S4i-X secrets → keyring** + **`DISCORD_GATES_WEBHOOK` registry add** — `file_guard`-blocked (both edit `secrets_config.py`/`.env`). Manual.
+- **Research-8** BM weights / edge-floor bootstrap — data-gated (n≥150); anti-patterns forbid hand-tuning until then. Not hygiene.
+
+### Data-gated cluster (unchanged — outside hygiene)
+P1.4 (MLB 30/100, Combo 33/100), Calibration Platt (distinct days 2/10 → user reports it is now accruing), P0.3, P1.7, P2.2, P2.3b, P2.4. EdgeModel-CLV gate legitimately frozen (NBA offseason).
