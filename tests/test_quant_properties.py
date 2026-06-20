@@ -18,7 +18,7 @@ from quant.distributions import (
     poisson_pmf, poisson_cdf, normal_cdf, negbinom_pmf, negbinom_cdf,
 )
 from quant.odds import (
-    implied_prob, no_vig, is_decimal_leak, prob_to_american,
+    implied_prob, implied_prob_or_none, no_vig, is_decimal_leak, prob_to_american,
     american_to_decimal, decimal_to_american,
 )
 from quant.derived import calc_tb_prob, mlb_ml_from_nb, calc_edge
@@ -148,6 +148,99 @@ def test_decimal_american_roundtrip(odds):
 def test_is_decimal_leak_threshold(odds, expected):
     # Threshold is the open interval 1.0 < odds < 2.5.
     assert is_decimal_leak(odds) is expected
+
+
+# ---------------------------------------------------------------------------
+# quant.odds — vig / no-vig conversion properties (S4c-X)
+# Dependency-free property sweeps (the codebase uses no `hypothesis`): assert the
+# invariants of de-vig and the implied/decimal/probability conversions hold across
+# the whole valid American-odds domain (|odds| >= 100), not just hand-picked points.
+# ---------------------------------------------------------------------------
+
+# Every valid American odds, both sides of the book, sampled densely.
+_VALID_ODDS = list(range(-2000, -99, 7)) + list(range(100, 2001, 7))
+
+
+def test_implied_prob_equals_inverse_decimal():
+    # implied_prob and american_to_decimal are the same conversion: p == 1/decimal.
+    for o in _VALID_ODDS:
+        assert implied_prob(o) == pytest.approx(1.0 / american_to_decimal(o), rel=1e-12)
+
+
+def test_implied_prob_monotone_decreasing_in_odds():
+    # Across valid odds (favorites → longshots) implied prob never rises; -100 and
+    # +100 both map to 0.5, so the two halves join monotonically.
+    ladder = list(range(-2000, -99)) + list(range(100, 2001))
+    probs = [implied_prob(o) for o in ladder]
+    for a, b in zip(probs, probs[1:]):
+        assert a >= b - 1e-12
+
+
+def test_no_vig_preserves_odds_ratio():
+    # De-vig is a pure renormalization — it rescales but never changes the ratio.
+    for imp1, imp2 in [(0.6, 0.55), (0.52, 0.50), (0.7, 0.4), (0.9, 0.2)]:
+        a, b = no_vig(imp1, imp2)
+        assert a / b == pytest.approx(imp1 / imp2)
+
+
+def test_no_vig_removes_vig_each_side():
+    # On a real two-sided market (implied sum > 1) each fair prob ≤ its implied,
+    # and the pair sums to exactly 1.
+    for o1, o2 in [(-110, -110), (-150, 130), (-200, 170), (-120, 100)]:
+        i1, i2 = implied_prob(o1), implied_prob(o2)
+        assert i1 + i2 > 1.0
+        a, b = no_vig(i1, i2)
+        assert a <= i1 + 1e-12 and b <= i2 + 1e-12
+        assert a + b == pytest.approx(1.0)
+
+
+def test_no_vig_idempotent_on_fair_probs():
+    # Already-fair (sum == 1) inputs pass through unchanged.
+    for a in (0.1, 0.5, 0.732, 0.95):
+        assert no_vig(a, 1.0 - a) == pytest.approx((a, 1.0 - a))
+
+
+def test_no_vig_symmetric_in_arguments():
+    for imp1, imp2 in [(0.6, 0.45), (0.7, 0.4)]:
+        a, b = no_vig(imp1, imp2)
+        b2, a2 = no_vig(imp2, imp1)
+        assert (a, b) == pytest.approx((a2, b2))
+
+
+def test_no_vig_zero_total_returns_even():
+    # The degenerate total==0 branch must not divide by zero.
+    assert no_vig(0.0, 0.0) == (0.5, 0.5)
+
+
+def test_no_vig_keeps_favorite_above_even():
+    # The shorter-priced side stays the favorite after vig removal.
+    fav, dog = no_vig(implied_prob(-200), implied_prob(170))
+    assert fav > 0.5 > dog
+
+
+def test_two_sided_devig_roundtrips_to_fair_odds():
+    # implied → no_vig → prob_to_american → implied recovers the fair prob, and the
+    # two fair probs re-sum to 1.
+    f1, f2 = no_vig(implied_prob(-150), implied_prob(130))
+    assert implied_prob(prob_to_american(f1)) == pytest.approx(f1, abs=1e-9)
+    assert f1 + f2 == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("bad", [0, "abc", None, float("nan"), float("inf"), float("-inf")])
+def test_implied_prob_or_none_rejects_unusable(bad):
+    # The CLV-path hardened wrapper (P0.6/C6) returns None instead of corrupt CLV.
+    assert implied_prob_or_none(bad) is None
+
+
+@pytest.mark.parametrize("odds", [-200, -110, 100, 150])
+def test_implied_prob_or_none_matches_implied_prob(odds):
+    assert implied_prob_or_none(odds) == pytest.approx(implied_prob(odds))
+    assert implied_prob_or_none(str(odds)) == pytest.approx(implied_prob(odds))  # CSV strings
+
+
+@pytest.mark.parametrize("p", [0.0, 1.0, -0.1, 1.5])
+def test_prob_to_american_degenerate_returns_zero(p):
+    assert prob_to_american(p) == 0
 
 
 # ---------------------------------------------------------------------------
