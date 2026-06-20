@@ -1,0 +1,47 @@
+# Optional operator overrides for engine/thresholds.py (audit S4f-X).
+#
+# To activate: copy this file to `config/thresholds.toml` (gitignored) and set only the
+# keys you want to change. Anything left out keeps the documented default in
+# thresholds.py. Only the SCALAR keys below are overridable — calibrated/frozen constants
+# (KELLY_FRACTION, F5_SCALAR, BM_SHRINKAGE_DEFAULT, PLATT_SPACE, BLEND_ALPHA,
+# DEFAULT_MARKET_MULT, WNBA_EV_FLOOR, POISSON_CUTOFF, LONGSHOT_PAIR_RHO) and non-scalar
+# structures are intentionally NOT overridable and change only via a reviewed code edit.
+#
+# Values shown are the current defaults. Types must match (int stays int, float float).
+
+# ── Bonus / daily-lay ─────────────────────────────────────────────────────────
+BONUS_DAILY_CAP          = 5
+MIN_BONUS_SCORE          = 65
+MIN_BONUS_WIN_PROB       = 0.65
+MIN_DAILY_LAY_PROB       = 0.50
+MIN_DAILY_LAY_MARGIN     = 4.0
+MIN_LEG_EDGE_DAILY       = 0.025
+MIN_LEG_COVER_PROB_DAILY = 0.58
+
+# ── Parlay / longshot / SGP sizing ────────────────────────────────────────────
+LONGSHOT_SIZE         = 0.25
+VALUE_PARLAY_SIZE     = 0.25
+LONGSHOT_MAX_PER_GAME = 2
+SGP_LOG_SIZE          = 0.25
+
+# ── KILLSHOT tier ─────────────────────────────────────────────────────────────
+KILLSHOT_SCORE_FLOOR  = 65.0
+KILLSHOT_WP_MARGIN    = 0.03
+KILLSHOT_ODDS_MIN     = -200
+KILLSHOT_ODDS_MAX     = 110
+KILLSHOT_MANUAL_FLOOR = 75.0
+KILLSHOT_WEEKLY_CAP   = 2
+KILLSHOT_SIZE_BASE    = 3.0
+KILLSHOT_SIZE_BUMP    = 4.0
+KILLSHOT_BUMP_WIN_PROB = 0.70
+KILLSHOT_BUMP_EDGE    = 0.06
+
+# ── WNBA early-season gate (day/games fallbacks only) ─────────────────────────
+WNBA_OPENING_GATE_DAYS  = 3
+WNBA_OPENING_GATE_GAMES = 2
+
+# ── Global pick gates ─────────────────────────────────────────────────────────
+MAX_PREMIUM_PICKS = 3
+MIN_PICK_SCORE    = 15
+MIN_OVER_SCORE    = 15
+MIN_WIN_PROB      = 0.50

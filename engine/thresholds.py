@@ -7,6 +7,7 @@ existing call sites and `from run_picks import ...` keep resolving. Imports only
 {stdlib, paths, secrets_config} — never run_picks or the other constants modules.
 """
 from datetime import date
+from pathlib import Path
 
 BONUS_DAILY_CAP = 5             # Max bonus posts per calendar day
 MIN_BONUS_SCORE = 65            # Minimum pick_score to qualify for a bonus drop
@@ -107,3 +108,98 @@ MAX_PREMIUM_PICKS = 3  # per-sport cap (multi-sport days: MLB+WNBA+NHL+NBA)
 MIN_PICK_SCORE    = 15  # lowered 2026-05-27 — probability calibration improved, 25 was too restrictive
 MIN_OVER_SCORE    = 15  # lowered to match MIN_PICK_SCORE — over/under treated equally
 MIN_WIN_PROB      = 0.50  # floor removed 2026-05-27 — probability calibration improved
+
+
+# ── Optional external overrides (audit S4f-X) ─────────────────────────────────
+# The documented defaults above are the source of truth. An OPTIONAL
+# `config/thresholds.toml` may override the operator-tunable SCALARS below without a
+# code edit (single-file config, TOML via stdlib tomllib — no new dependency, and the
+# module keeps its "stdlib + paths only" import contract). Default behaviour is
+# unchanged: with no config file, nothing is overridden (replay byte-identical).
+#
+# Calibrated/frozen constants (KELLY_FRACTION, F5_SCALAR, BM_SHRINKAGE_DEFAULT,
+# PLATT_SPACE, BLEND_ALPHA, DEFAULT_MARKET_MULT, WNBA_EV_FLOOR, POISSON_CUTOFF,
+# LONGSHOT_PAIR_RHO) and non-scalar structures are deliberately NOT overridable —
+# they change only via a reviewed code edit (see the fix-plan anti-patterns).
+_TUNABLE = frozenset({
+    "BONUS_DAILY_CAP", "MIN_BONUS_SCORE", "MIN_BONUS_WIN_PROB", "MIN_DAILY_LAY_PROB",
+    "MIN_DAILY_LAY_MARGIN", "MIN_LEG_EDGE_DAILY", "MIN_LEG_COVER_PROB_DAILY",
+    "LONGSHOT_SIZE", "VALUE_PARLAY_SIZE", "LONGSHOT_MAX_PER_GAME", "SGP_LOG_SIZE",
+    "KILLSHOT_SCORE_FLOOR", "KILLSHOT_WP_MARGIN", "KILLSHOT_ODDS_MIN", "KILLSHOT_ODDS_MAX",
+    "KILLSHOT_MANUAL_FLOOR", "KILLSHOT_WEEKLY_CAP", "KILLSHOT_SIZE_BASE",
+    "KILLSHOT_SIZE_BUMP", "KILLSHOT_BUMP_WIN_PROB", "KILLSHOT_BUMP_EDGE",
+    "WNBA_OPENING_GATE_DAYS", "WNBA_OPENING_GATE_GAMES",
+    "MAX_PREMIUM_PICKS", "MIN_PICK_SCORE", "MIN_OVER_SCORE", "MIN_WIN_PROB",
+})
+
+
+def _coerce_override(current, new):
+    """Coerce `new` to the type of `current` (scalar only). Returns None if incompatible.
+
+    bool is checked before int (bool is an int subclass); a float target accepts ints;
+    an int target accepts a float only if it is integer-valued.
+    """
+    if isinstance(current, bool):
+        return bool(new) if isinstance(new, bool) else None
+    if isinstance(current, int):
+        if isinstance(new, bool):
+            return None
+        if isinstance(new, int):
+            return int(new)
+        if isinstance(new, float) and new.is_integer():
+            return int(new)
+        return None
+    if isinstance(current, float):
+        return float(new) if (isinstance(new, (int, float)) and not isinstance(new, bool)) else None
+    if isinstance(current, str):
+        return str(new) if isinstance(new, str) else None
+    return None
+
+
+def _apply_overrides(ns: dict, overrides: dict, tunable=_TUNABLE) -> dict:
+    """Override whitelisted scalar names in namespace `ns` from `overrides`.
+
+    Only names in `tunable` that already exist in `ns` and coerce to the existing
+    type are applied. Returns the {name: value} actually applied.
+    """
+    applied = {}
+    for name, val in overrides.items():
+        if name not in tunable or name not in ns:
+            continue
+        coerced = _coerce_override(ns[name], val)
+        if coerced is None:
+            continue
+        ns[name] = coerced
+        applied[name] = coerced
+    return applied
+
+
+def _load_threshold_overrides() -> dict:
+    """Opt-in: apply `config/thresholds.toml` over the whitelisted scalars. Fail-soft."""
+    try:
+        import tomllib  # stdlib (Python 3.11+); read-only
+    except ImportError:
+        return {}
+    try:
+        from paths import PROJECT_ROOT
+        cfg = Path(PROJECT_ROOT) / "config" / "thresholds.toml"
+    except Exception:
+        return {}
+    if not cfg.exists():
+        return {}
+    try:
+        with open(cfg, "rb") as fh:
+            data = tomllib.load(fh)
+    except Exception as exc:  # malformed config must never crash a run
+        import sys
+        print(f"[thresholds] WARNING: ignoring {cfg}: {exc}", file=sys.stderr)
+        return {}
+    applied = _apply_overrides(globals(), data)
+    if applied:
+        import sys
+        print(f"[thresholds] applied {len(applied)} override(s) from config/thresholds.toml: "
+              f"{', '.join(sorted(applied))}", file=sys.stderr)
+    return applied
+
+
+_THRESHOLD_OVERRIDES = _load_threshold_overrides()
