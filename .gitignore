@@ -5,6 +5,7 @@ data/*.json
 data/*.txt
 data/picks/
 data/projections/
+data/clv_exports/
 
 # Exception: team_sigmas_*.json are STATIC calibration fixtures (team scoring
 # distributions), not live ledger — committed so a fresh checkout / CI has them
