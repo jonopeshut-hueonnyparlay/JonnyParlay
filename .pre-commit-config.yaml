@@ -1,0 +1,16 @@
+# Pre-commit hooks (S4a-X). Mirrors the BLOCKING half of CI (.github/workflows/ci.yml):
+# `ruff check` (lint) only. CI treats `ruff format --check` as advisory because the
+# codebase is not yet ruff-formatted, so a formatting hook is intentionally omitted here
+# (it would either reformat the whole tree or block every commit). A `local` hook runs
+# the repo's already-pinned ruff (0.15.17) so the hook and CI never drift.
+#
+# Activate once per clone:  pip install pre-commit  &&  pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check (lint, blocking — matches CI)
+        entry: python -m ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: false
