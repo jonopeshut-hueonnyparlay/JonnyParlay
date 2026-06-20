@@ -124,6 +124,34 @@ def test_count_calibration_days_midnight_straddle():
     assert count_calibration_days(adjacent_days) == 2  # no under-count of distinct days
 
 
+def test_count_calibration_days_excludes_non_iso_format():
+    """Producer date-format drift must not inflate the distinct-day count.
+
+    A non-ISO spelling of an existing day (or an unparseable format) is normalized
+    away or skipped — never counted as a phantom extra day that mis-opens the gate.
+    """
+    from gate_check import count_calibration_days
+    rows = [
+        {"run_type": "calibration", "over_p_raw": "0.51", "result": "W", "date": "2026-06-15"},
+        # same logical day, non-zero-padded -> normalized-to or skipped, NOT a 2nd day
+        {"run_type": "calibration", "over_p_raw": "0.49", "result": "L", "date": "2026-6-15"},
+        # US slash format -> unparseable -> excluded
+        {"run_type": "calibration", "over_p_raw": "0.50", "result": "W", "date": "06/15/2026"},
+    ]
+    assert count_calibration_days(rows) == 1  # only the ISO 2026-06-15 day
+
+
+def test_count_calibration_days_all_iso_unchanged():
+    """The normal all-ISO producer case still counts each distinct day exactly."""
+    from gate_check import count_calibration_days
+    rows = [
+        {"run_type": "calibration", "over_p_raw": "0.51", "result": "W",
+         "date": f"2026-06-{d:02d}"}
+        for d in range(15, 25)  # 10 distinct ISO days
+    ]
+    assert count_calibration_days(rows) == 10
+
+
 # ── path constant ────────────────────────────────────────────────────────
 def test_calibration_path_importable():
     from paths import PICK_LOG_CALIBRATION_PATH

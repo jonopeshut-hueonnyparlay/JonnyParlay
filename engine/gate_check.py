@@ -8,6 +8,7 @@ Usage:
 import csv
 import os
 import sys
+from datetime import date
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -71,13 +72,49 @@ def count_calibration_platt(rows: list[dict]) -> int:
     return sum(1 for r in rows if _is_graded_calibration_row(r))
 
 
+def _normalize_calendar_day(raw: str | None) -> str | None:
+    """Strict ISO ``YYYY-MM-DD`` -> canonical day string; None if missing/unparseable.
+
+    Keying distinct days on a normalized date (not the raw string) stops producer
+    format drift (e.g. '2026-6-15', '06/15/2026') from spawning phantom distinct days
+    and mis-opening the Calibration Platt gate. ``date.fromisoformat`` enforces the
+    YYYY-MM-DD contract; anything else is treated as drift.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s).isoformat()
+    except ValueError:
+        return None
+
+
 def count_calibration_days(rows: list[dict]) -> int:
-    """Distinct graded days in the calibration log (cross-day CV validity)."""
-    return len({
-        (r.get("date") or "").strip()
-        for r in rows
-        if _is_graded_calibration_row(r) and _nonempty(r.get("date"))
-    })
+    """Distinct graded days in the calibration log (cross-day CV validity).
+
+    Counts days by normalized ISO date so non-ISO drift cannot inflate the count
+    (over-counting would mis-open the gate, deploying a Platt fit on fewer real
+    cross-validation days than reported). Unparseable non-empty dates are excluded
+    and a single aggregated warning is emitted so producer drift is visible.
+    """
+    days: set[str] = set()
+    drift = 0
+    for r in rows:
+        if not _is_graded_calibration_row(r):
+            continue
+        norm = _normalize_calendar_day(r.get("date"))
+        if norm is None:
+            if _nonempty(r.get("date")):
+                drift += 1
+            continue
+        days.add(norm)
+    if drift:
+        print(
+            f"[gate_check] WARNING: {drift} graded calibration row(s) had a non-ISO "
+            f"date (expected YYYY-MM-DD); excluded from the distinct-day count",
+            file=sys.stderr,
+        )
+    return len(days)
 
 
 def count_mlb_platt(rows: list[dict]) -> int:
