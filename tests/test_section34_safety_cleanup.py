@@ -150,7 +150,10 @@ def test_claude_md_still_mentions_run_picks_as_source_of_truth():
     truth' directive that tells future Claudes to sync to root after edits."""
     src = CLAUDE_MD.read_text(encoding="utf-8")
     assert "source of truth" in src.lower()
-    assert "no sync step needed" in src.lower()  # L16: shims eliminate drift
+    # The shims-eliminate-drift directive must survive. CLAUDE.md was reworded
+    # (the old "no sync step needed" phrasing → "root entry points are shims"),
+    # so guard the concept by its current wording, not the stale literal.
+    assert "shim" in src.lower()  # "root entry points are shims" → no manual sync
 
 
 
