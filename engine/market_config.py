@@ -101,6 +101,10 @@ PROP_MARKETS = {
         "batter_hits", "batter_hits_runs_rbis",
         "batter_rbis", "batter_runs_scored", "pitcher_earned_runs",
     ],
+    "NFL": [
+        "player_pass_yds", "player_rush_yds", "player_reception_yds",
+        "player_receptions", "player_anytime_td", "player_pass_tds",
+    ],
 }
 
 # Maps API market key → our stat label (sport-agnostic)
@@ -129,6 +133,11 @@ MARKET_TO_STAT = {
     "batter_hits_runs_rbis": "HRR",
     "batter_rbis": "RBI",
     "batter_runs_scored": "RUNS",
+    # NFL — yardage (Normal via SIGMA) + counts (Poisson: REC, TDS, PASS_TDS).
+    # ANYTIME_TD maps to TDS (the generic T3 TD label); proj is the anytime lambda.
+    "player_pass_yds": "PASS_YDS", "player_rush_yds": "RUSH_YDS",
+    "player_reception_yds": "REC_YDS", "player_receptions": "REC",
+    "player_anytime_td": "TDS", "player_pass_tds": "PASS_TDS",
 }
 
 # Sport-specific market key overrides — applied after MARKET_TO_STAT when sport is known.

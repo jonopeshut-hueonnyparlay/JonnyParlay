@@ -59,7 +59,13 @@ def calc_prop_prob(proj, line, stat, sigma_override: float = 0.0, sport: str = "
     Normal-distribution stats (PTS etc.). Used to pass dk_std from the custom
     projection engine, which includes a role floor and an observed high-var floor.
     """
-    if stat in POISSON_STATS and (line <= POISSON_CUTOFF or stat == "SOG"):
+    # POISSON_CUTOFF hardening (NFL go-live): a true count stat is Poisson at EVERY
+    # line. The old `line <= POISSON_CUTOFF or stat == "SOG"` guard let over-cutoff
+    # POISSON_STATS (e.g. NFL receptions/receiving lines >8.5) silently fall through to
+    # the Normal/SIGMA-fallback path and mis-price ~5-8pp. Route all POISSON_STATS to
+    # Poisson; behaviour-unchanged for existing sports (no current pick has a
+    # POISSON_STAT line >8.5 — replay byte-identical).
+    if stat in POISSON_STATS:
         k = math.floor(line)
         if line == k:  # Integer line — push-adjusted
             push = poisson_pmf(k, proj)
