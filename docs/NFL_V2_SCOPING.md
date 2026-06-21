@@ -57,10 +57,26 @@ additive constants (those would be dead config). Recommended approach when tackl
   hardening** so REC (receptions) doesn't mis-route at lines >8.5.
 - Gate: `pytest -m "not network"` green + replay byte-identical. Offseason — no urgency.
 
-### Game-line model rework (NOT done)
-Regression-to-mean on EPA + opponent-adjustment + market-anchor + pace/weather so totals
-(and spreads) beat the market. Larger effort; prerequisite for game-line go-live. Gated
-(tail-predictiveness must flip + CLV ≥ 0, else shadow-only).
+### Validation backtest (2024, 5,699 player-games / 385 games) — EdgeModel `8d9b73d`
+Point-in-time backtest caught and fixed two miscalibrations, diagnosed a third:
+- **TD lambdas over-projected** rush +31% / rec +30% (passing fine). Fixed:
+  `LEAGUE_INSIDE10_CONV 0.40→0.305` (empirical 0.282), receiving onto its own
+  `LEAGUE_RZ_REC_RATE=0.315` (empirical 0.239). Post-fix ratios rush 1.03 / rec 1.00.
+- **Yardage prediction σ was too tight** — A1's within-player CV ignores projection
+  error (residual SD 1.6/1.4/1.3). Reset to prediction CVs **0.51/0.77/0.93** → 90%
+  coverage 0.89-0.91. *Lesson: calibrate prop σ to out-of-sample residuals, not
+  within-player CV.*
+- **KNOWN RESIDUAL — yardage mean under-projects high-usage games** (+0.75σ at 15+
+  carries; grows with volume). Game-script/volume effect; the EWMA averages over usage.
+  **Fix = a usage model** (project carries/targets, then yards = volume × efficiency) —
+  a roadmap enhancement, not a scalar. Widened σ mitigates pricing impact for now.
+
+### Game-line model rework (NOT done) — totals AND spreads have no market edge
+Backtest confirmed **both** game lines are non-predictive vs market: total disagreements
+anti-predictive; spread MAE 10.34 vs market 9.53 with ATS cover 50-57% in the wrong
+direction. Rework = regression-to-mean on EPA + opponent-adjustment + market-anchor +
+pace/weather. Larger effort; prerequisite for game-line go-live. Gated (tail-predictiveness
+must flip + CLV ≥ 0, else shadow-only) — **and may not succeed**; game lines stay shadow.
 
 ---
 
