@@ -35,6 +35,13 @@ SIGMA = {
     # NHL goalie — calibrated 2026-05-26 from 15k goalie game-logs (2023-2026), within-player CV=0.253.
     # High-count stat (mean=26.6); Normal is correct (continuous-ish, high-volume).
     "SV":   {"mult": 0.253, "min": 3.5},
+    # NFL yardage — Normal. PREDICTION CVs calibrated on the pricing population
+    # (players with real projected usage) from a 2024 backtest → SD(z)≈1.0, mean
+    # unbiased (EdgeModel feat/nfl-v2 f0aa1db). Mirrors the EdgeModel projector's
+    # PASS_CV/RUSH_CV/REC_CV. DATA_GATED: refit at the NFL CLV gate.
+    "PASS_YDS": {"mult": 0.36, "min": 35.0},
+    "RUSH_YDS": {"mult": 0.62, "min": 14.5},
+    "REC_YDS":  {"mult": 0.72, "min": 13.0},
 }
 
 # HA removed from Poisson — overdispersed at typical lines; moved to NB_STATS (within-player var/mu=1.204, r=13.41)
@@ -42,7 +49,10 @@ SIGMA = {
 # RUNS: MLB batter runs — Poisson (var/mu=0.969 from 169k batter games)
 # GA: NHL goalie goals against — Poisson (within-player var/mu=0.830 from 15k goalie game-logs; sub-Poisson is fine)
 # BB: MLB pitcher walks — Poisson (within-player var/mu=0.992 from 69k pitcher game-logs; Poisson confirmed)
-POISSON_STATS = {"SOG", "REC", "HITS", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB"}  # AST/REB moved to NB_STATS; REC here makes SIGMA["REC"] unreachable (removed from SIGMA)
+POISSON_STATS = {"SOG", "REC", "HITS", "GOALS", "NHLPTS", "NHLBLK", "RUNS", "GA", "BB",
+                 "TDS", "PASS_TDS"}  # AST/REB moved to NB_STATS; REC here makes SIGMA["REC"] unreachable (removed from SIGMA).
+# NFL TDS (anytime) / PASS_TDS price as Poisson with the projected lambda as proj:
+# P(over 0.5)=1-e^-λ. EdgeModel supplies the lambda (rush+rec for TDS; passing for PASS_TDS).
 
 # P16 — Negative binomial distribution for overdispersed count stats.
 # NB(mu, r): var = mu + mu²/r.  r calibrated from within-player conditional variance
@@ -241,6 +251,7 @@ STAT_FAMILY_TIER = {
     "PTS": "T2", "OUTS": "T2", "PA": "T2", "PR": "T2", "PRA": "T2", "RA": "T2",
     "NRFI": "T2", "YRFI": "T2", "TEAM_TOTAL": "T2", "F5_TOTAL": "T2",
     "YARDS": "T2", "TB": "T2", "BB": "T2", "PC": "T2",
+    "PASS_YDS": "T2", "RUSH_YDS": "T2", "REC_YDS": "T2",  # NFL yardage (Normal, calibrated)
     "REC": "T2",    # Plan 10 §Group A: was T1 — target-driven, more projectable than YARDS
     # T1B — binary/low-line
     "AST": "T1B", "HITS": "T1B",
@@ -252,7 +263,7 @@ STAT_FAMILY_TIER = {
     "HA": "T1",     # Plan 10 §Group A: was T1B — least-controllable pitcher stat (on HA unsuspension)
     # T3 — specialty/low-n
     "3PM": "T3", "SOG": "T3", "NHLPTS": "T3", "NHLBLK": "T3",
-    "TDS": "T3", "GOALS": "T3", "ML_DOG": "T3",
+    "TDS": "T3", "GOALS": "T3", "ML_DOG": "T3", "PASS_TDS": "T3",  # NFL TDs — high-var
     "GA": "T3",     # Plan 10 §Group A: was T2 — goaltending least-predictable (RS→PO r≈0.15)
     "SV": "T3",     # Plan 10 §Group A: was T2 — doubly-conditional event; Normal poor fit
 }
