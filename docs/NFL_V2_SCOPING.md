@@ -30,12 +30,37 @@ fixed by a 0.67 dispersion shrink (spread preserved). **However**, the model's t
 until the projection adds regression-to-mean / pace / weather. Spread was healthier
 (corr 0.76, dispersion matched) but was not directionally validated.
 
-### Remaining
-- **Phase 3** — yardage distribution fits (Gamma / hurdle-Gamma / mixture-normal) to
-  replace the fixed CV multipliers. Refinement, deferrable.
-- **Game-line model rework** — regression-to-mean on EPA + better features so totals
-  (and spreads) actually beat the market. Larger effort; prerequisite for game-line
-  go-live. Bigger value than Phase 3.
+### Phase 3 / A1 — yardage dispersion calibrated (DONE, EdgeModel `3c5c3a4`)
+Extended `calibrate_distributions.py` with position-scoped NFL configs and fit the
+**within-player** CV (σ=CV·μ — what the betting engine prices from). Replaced the
+guessed multipliers in `nfl_player_projector.py`:
+- passing_yards 0.26 → **0.314** (min 35) — was too tight   [59 QB / 1634 g]
+- rushing_yards 0.70 → **0.545** (min 14.5) — was too wide  [120 RB / 2982 g]
+- receiving_yds 0.85 → **0.705** (min 13) — was too wide    [362 / 9427 g]
+TD counts confirm Poisson (var/μ 0.80-0.92). The spec's Gamma/hurdle/mixture were
+**not** used: the engine prices Normal-from-CV, passing yards aren't bimodal, and the
+receiving hurdle is already implicit in the unconditional EWMA mean.
+
+### A2 — JonnyParlay prop wiring (NOT done; bigger than first scoped)
+**Finding:** NFL props are not wired into the betting engine *at all* — `SPORT_KEYS`
+has NFL but there is **no NFL prop-market→stat mapping** in `market_config.py`, the tier
+table uses a single generic `"YARDS"` label (can't carry the 3 distinct CVs), there is
+no `SIGMA["YARDS"]`, and nothing loads `nfl_player_projections`. So A2 is a **full
+new-sport integration into live pricing code**, replay-and-test-gated — not a few
+additive constants (those would be dead config). Recommended approach when tackled:
+- **Use `sigma_override`** (pass EdgeModel's per-stat `proj_*_yds_sigma` into
+  `calc_prop_prob`, `prob_core.py`) rather than `SIGMA[label]` constants — this sidesteps
+  the single-`YARDS`-label problem and reuses A1's fitted per-stat σ directly.
+- Add NFL prop markets (pass/rush/rec yards, receptions, anytime TD, passing TD) to
+  `market_config.py`; map each to a distinct stat label; tier them.
+- Add a loader for `nfl_player_projections`; apply the CLAUDE.md **POISSON_CUTOFF
+  hardening** so REC (receptions) doesn't mis-route at lines >8.5.
+- Gate: `pytest -m "not network"` green + replay byte-identical. Offseason — no urgency.
+
+### Game-line model rework (NOT done)
+Regression-to-mean on EPA + opponent-adjustment + market-anchor + pace/weather so totals
+(and spreads) beat the market. Larger effort; prerequisite for game-line go-live. Gated
+(tail-predictiveness must flip + CLV ≥ 0, else shadow-only).
 
 ---
 
