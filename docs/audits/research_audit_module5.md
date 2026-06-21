@@ -209,7 +209,7 @@ run_picks.py (shim), sgp_builder.py (shim), weekly_recap.py (shim)
 
 ### engine/tools/analyze_playoff_scalars.py (295 lines)
 **Purpose:** H2 one-shot playoff minutes scalar refit analysis.  
-**Output:** `data/diagnostics/playoff_baseline_data.csv` + `docs/research/playoff_scalar_refit.md`  
+**Output:** `data/diagnostics/playoff_baseline_data.csv` + `docs/archive/research/playoff_scalar_refit.md`  
 **Round heuristic:** `_DEEP_ROUND_DAY_THRESHOLD=30` days from playoff start (acknowledged as lazy)
 
 ### engine/tools/diag_blowout_buckets.py (149 lines)
