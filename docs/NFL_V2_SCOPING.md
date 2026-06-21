@@ -41,21 +41,18 @@ TD counts confirm Poisson (var/μ 0.80-0.92). The spec's Gamma/hurdle/mixture we
 **not** used: the engine prices Normal-from-CV, passing yards aren't bimodal, and the
 receiving hurdle is already implicit in the unconditional EWMA mean.
 
-### A2 — JonnyParlay prop wiring (NOT done; bigger than first scoped)
-**Finding:** NFL props are not wired into the betting engine *at all* — `SPORT_KEYS`
-has NFL but there is **no NFL prop-market→stat mapping** in `market_config.py`, the tier
-table uses a single generic `"YARDS"` label (can't carry the 3 distinct CVs), there is
-no `SIGMA["YARDS"]`, and nothing loads `nfl_player_projections`. So A2 is a **full
-new-sport integration into live pricing code**, replay-and-test-gated — not a few
-additive constants (those would be dead config). Recommended approach when tackled:
-- **Use `sigma_override`** (pass EdgeModel's per-stat `proj_*_yds_sigma` into
-  `calc_prop_prob`, `prob_core.py`) rather than `SIGMA[label]` constants — this sidesteps
-  the single-`YARDS`-label problem and reuses A1's fitted per-stat σ directly.
-- Add NFL prop markets (pass/rush/rec yards, receptions, anytime TD, passing TD) to
-  `market_config.py`; map each to a distinct stat label; tier them.
-- Add a loader for `nfl_player_projections`; apply the CLAUDE.md **POISSON_CUTOFF
-  hardening** so REC (receptions) doesn't mis-route at lines >8.5.
-- Gate: `pytest -m "not network"` green + replay byte-identical. Offseason — no urgency.
+### A2 — JonnyParlay prop wiring — PRICING HALF DONE (`569d8e0`), data half deferred
+The engine can now **price** NFL props. Distinct stat labels (PASS_YDS/RUSH_YDS/REC_YDS)
+solved the single-`YARDS` problem, so SIGMA constants worked directly (no sigma_override
+needed): `SIGMA[*_YDS]=0.36/0.62/0.72`, `MARKET_TO_STAT`/`PROP_MARKETS["NFL"]` (anytime
+TD→TDS, pass TD→PASS_TDS, both Poisson with the projected λ as proj → anytime=1−e^−λ),
+tier labels, and the **POISSON_CUTOFF hardening** (POISSON_STATS Poisson at every line).
+Gated: 1457 pytest pass (+6 NFL pricing tests), replay byte-identical — no existing
+pricing moved.
+**DEFERRED to preseason (needs live odds to validate):** the *data half* — an EdgeModel
+NFL projections CSV export + a `parse_csv` NFL branch in `odds_io.py` (runtime projections
+load from CSV, not the DB). Contract: ANYTIME_TD/PASS_TDS proj = the lambda
+(rush+rec / passing); yardage proj = proj_*_yds. Plus name-matching + an NFL Odds-API feed.
 
 ### Validation backtest (2024, 5,699 player-games / 385 games) — EdgeModel `8d9b73d`
 Point-in-time backtest caught and fixed two miscalibrations, diagnosed a third:
