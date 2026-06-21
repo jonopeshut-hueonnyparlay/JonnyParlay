@@ -62,14 +62,18 @@ Point-in-time backtest caught and fixed two miscalibrations, diagnosed a third:
 - **TD lambdas over-projected** rush +31% / rec +30% (passing fine). Fixed:
   `LEAGUE_INSIDE10_CONV 0.40→0.305` (empirical 0.282), receiving onto its own
   `LEAGUE_RZ_REC_RATE=0.315` (empirical 0.239). Post-fix ratios rush 1.03 / rec 1.00.
-- **Yardage prediction σ was too tight** — A1's within-player CV ignores projection
-  error (residual SD 1.6/1.4/1.3). Reset to prediction CVs **0.51/0.77/0.93** → 90%
-  coverage 0.89-0.91. *Lesson: calibrate prop σ to out-of-sample residuals, not
-  within-player CV.*
-- **KNOWN RESIDUAL — yardage mean under-projects high-usage games** (+0.75σ at 15+
-  carries; grows with volume). Game-script/volume effect; the EWMA averages over usage.
-  **Fix = a usage model** (project carries/targets, then yards = volume × efficiency) —
-  a roadmap enhancement, not a scalar. Widened σ mitigates pricing impact for now.
+- **Yardage σ — calibrated on the pricing population** (final CVs **0.36/0.62/0.72**,
+  `f0aa1db`). The path here was a lesson in population choice: A1's within-player CVs
+  (0.314/0.545/0.705) were nearly right; a first "fix" to 0.51/0.77/0.93 was calibrated
+  on the conditional-on-*actual*-usage population (selection-inflated → too wide); the
+  final values target players with real *projected* usage (what a prop is carded for) →
+  SD(z)=1.00/1.01/1.00, cover90 0.90/0.94/0.94. *Lesson: calibrate σ on the population
+  you actually bet.*
+- **No usage model needed.** The "mean under-projects high-usage games" (+0.36σ, up to
+  +0.75σ at 15+ carries) was a **collider artifact** of filtering on *actual* usage —
+  unconditionally and on the pricing population the mean is ~0 (unbiased). The decomposition
+  also showed efficiency (ypc) is unbiased, volume residuals aren't predictable from game
+  script (corr 0.05), so a usage model couldn't help even if a bias existed. Dropped.
 
 ### Game-line model rework (NOT done) — totals AND spreads have no market edge
 Backtest confirmed **both** game lines are non-predictive vs market: total disagreements
