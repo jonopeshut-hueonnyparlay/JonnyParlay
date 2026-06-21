@@ -107,5 +107,5 @@ Each of these is a focused session: pull data, form a verdict, implement a targe
 
 ## Completed (reference)
 
-See `docs/audits/AUDIT_HISTORY.md` for full history.
+See `docs/archive/audits/AUDIT_HISTORY.md` for full history.
 Key recent completions: minutes deep-dive (all items), 5-position model, RS/PO scalar refits, PO rate deflators, TB Poisson model, team-proj collision fix, suffix label fixes.

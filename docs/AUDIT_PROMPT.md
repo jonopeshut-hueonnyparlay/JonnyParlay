@@ -175,7 +175,7 @@ Each sport has distinct code paths. Audit them separately.
 
 ## TRACK E — Gate Empirical Validation
 
-Load `data/pick_log.csv`. Reference `docs/research/EMPIRICAL_ANALYSIS_2026-05-24.md` (n=182 settled primary/bonus picks).
+Load `data/pick_log.csv`. Reference `docs/archive/research/EMPIRICAL_ANALYSIS_2026-05-24.md` (n=182 settled primary/bonus picks).
 
 **For every finding: state n and flag anything with n < 30 as provisional.**
 

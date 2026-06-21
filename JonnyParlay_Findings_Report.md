@@ -1193,8 +1193,8 @@ Ordered by combined impact (correctness × frequency × ease of exploitation by 
 - **Layer**: L32: Step 4b — Gates audit
 - **Location**: `engine/gates.py:N/A — absent`
 - **Status**: ❌  ·  **Category**: Logic  ·  **Tested**: N — no test_g2_edge_ceiling.py
-- **Finding**: G2 referenced in multiple audit docs as 'edge ≥ 0.20 (0.28 for soft O0.5) → block' (audit_2026-05-25_trackB.md:113, gate_audit_2026-05-26.md:284, math_audit_s11_13.md:64). NO ENFORCEMENT in current code. grep 'edge.*0\.20|EDGE_CAP|edge_cap' engine/*.py → only _is_soft_o05 at gates.py:203 used by G4/G5. 25%+ edges now pass un-gated.
-- **Evidence**: `grep shows zero edge-ceiling enforcement; multiple math audits explicitly relied on G2 as backstop (math_audit_s9_10.md:243)`
+- **Finding**: G2 referenced in multiple audit docs as 'edge ≥ 0.20 (0.28 for soft O0.5) → block' (docs/archive/audits/audit_2026-05-25_trackB.md:113, gate_audit_2026-05-26.md:284, docs/archive/audits/math_audit_s11_13.md:64). NO ENFORCEMENT in current code. grep 'edge.*0\.20|EDGE_CAP|edge_cap' engine/*.py → only _is_soft_o05 at gates.py:203 used by G4/G5. 25%+ edges now pass un-gated.
+- **Evidence**: `grep shows zero edge-ceiling enforcement; multiple math audits explicitly relied on G2 as backstop (docs/archive/audits/math_audit_s9_10.md:243)`
 - **Next action**: EITHER (a) restore G2 ceiling — extreme-error backstop all prior audits relied on, OR (b) document deliberate removal in CHANGELOG + audit history. Currently silent regression.
 
 #### P1-90. calibrate_platt.py — scope gap for combo/MLB
@@ -1486,7 +1486,7 @@ Ordered by combined impact (correctness × frequency × ease of exploitation by 
 | has_g8_fail checklist | `engine/output_format.py:214-220` | F9.29 | Synced with G8/G8B/G8C/G8D |
 | capture_clv stat markets | `engine/capture_clv.py:—` | Plan 10 §EE | Shipped 2026-06-09 — TEAM_TOTAL via team_totals matcher, NRFI/YRFI via totals_1st_1_innings; PA/PR/RA/PRA combos + laten |
 | Card guard A4 fix | `engine/run_picks.py:—` | A4 2026-05-06 | Bypass for --no-discord (shadow/research) |
-| AUDIT_HISTORY.md | `docs/audits/AUDIT_HISTORY.md:1-323` | — | Closes prior audits |
+| AUDIT_HISTORY.md | `docs/archive/audits/AUDIT_HISTORY.md:1-323` | — | Closes prior audits |
 | BACKLOG.md | `docs/BACKLOG.md:1-111` | — | Tier 1-7 backlog; data-gated items flagged |
 | Math audits (s1-17) | `docs/audits/math_audit_s*.md:—` | — | 5 math audits covering Steps 1-17 (May 22) |
 | Gate audit 2026-05-26 | `docs/audits/gate_audit_2026-05-26.md:—` | — | G8B/G8C/G8D recheckpoints |

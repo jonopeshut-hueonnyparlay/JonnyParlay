@@ -94,7 +94,7 @@ projections were correct as-is (binary in/out design — see
 
 ## Related
 
-- Audit item M1 — `docs/audits/AUDIT_2026-05-06_projection_deep_dive.md` §M1
+- Audit item M1 — `docs/archive/audits/AUDIT_2026-05-06_projection_deep_dive.md` §M1
 - `--late-run` flag definition — `engine/generate_projections.py:566-572`
 - `redistribute_minutes` — `engine/nba_projector.py`
 - Injury parser fallback to previous-day report — commit `fcf47e2`

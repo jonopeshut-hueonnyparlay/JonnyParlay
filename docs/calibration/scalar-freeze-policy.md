@@ -75,6 +75,6 @@ A frozen scalar can move to active when:
 
 ## Related docs
 
-- `docs/audits/AUDIT_2026-05-06_projection_deep_dive.md` (audit that surfaced E5)
+- `docs/archive/audits/AUDIT_2026-05-06_projection_deep_dive.md` (audit that surfaced E5)
 - `memory/projects/custom-projection-engine.md` (project lead, scalar history)
 - `CLAUDE.md` Audit 2026-05-06 status block (refit history canonical record)
