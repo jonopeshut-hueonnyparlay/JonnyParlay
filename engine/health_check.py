@@ -346,16 +346,30 @@ for repo_name, repo_path in [("JonnyParlay", JP_ROOT), ("EdgeModel", EM_ROOT)]:
         )
         check(f"Git has commits: {repo_name}", bool(result2.stdout.strip()), "")
 
-        # Check if ahead of origin
-        result3 = subprocess.run(
-            ["git", "log", "origin/main..HEAD", "--oneline"],
+        # Check if ahead of the branch's OWN upstream (not hard-coded origin/main).
+        # Hard-coding origin/main false-flags every feature-branch checkout: a branch
+        # fully pushed to origin/<branch> still shows commits in `origin/main..HEAD`.
+        # The real data-loss signal is "commits not on my tracking remote".
+        upstream = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
             cwd=repo_path, capture_output=True, text=True, timeout=10
         )
-        unpushed = result3.stdout.strip()
-        if unpushed:
-            warn(f"Git unpushed: {repo_name}", f"{len(unpushed.splitlines())} commits not pushed")
-        else:
+        ref = upstream.stdout.strip()
+        if not ref:
+            # No upstream configured for the current branch — can't assess push state;
+            # don't false-warn.
             check(f"Git pushed: {repo_name}", True)
+        else:
+            result3 = subprocess.run(
+                ["git", "log", f"{ref}..HEAD", "--oneline"],
+                cwd=repo_path, capture_output=True, text=True, timeout=10
+            )
+            unpushed = result3.stdout.strip()
+            if unpushed:
+                warn(f"Git unpushed: {repo_name}",
+                     f"{len(unpushed.splitlines())} commits not pushed to {ref}")
+            else:
+                check(f"Git pushed: {repo_name}", True)
     except Exception as e:
         check(f"Git check: {repo_name}", False, str(e))
 
