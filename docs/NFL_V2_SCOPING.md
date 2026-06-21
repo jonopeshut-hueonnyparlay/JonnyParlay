@@ -1,10 +1,41 @@
 # NFL V2 Models — Scoping Document
 
-*Status: SCOPING ONLY (not implementation). Created 2026-06-20 from the master
-implementation spec (`master_implementation_spec`, V1 §8-9 + V2 §6-9) cross-referenced
-against the live EdgeModel code. This is the input for a future build pass, not a
-green-light to build. The biggest **model** gap in the spec and the only one with a
-hard external deadline (NFL season opens **2026-09-07**).*
+*Created 2026-06-20 from the master implementation spec (`master_implementation_spec`,
+V1 §8-9 + V2 §6-9). The biggest **model** gap in the spec and the only one with a hard
+external deadline (NFL season opens **2026-09-07**).*
+
+---
+
+## Build progress (2026-06-20) — Phases 1, 2, 4 SHIPPED
+Built in an isolated worktree `C:\Dev\EdgeModel-nfl` on branch **`feat/nfl-v2`**
+(off the in-flight `feat/wnba-projector` tip; own dev-DB snapshot; live DB + parallel
+WNBA session untouched). Pushed to `origin/feat/nfl-v2`, not merged to main (waits on
+the WNBA branch landing). Commits:
+- **`c5da037`** F4 — PBP red-zone ingestion (`nfl_pbp_fetcher.py`): inside-10 + RZ
+  counts per player/team/defense from `nflreadpy.load_pbp` (2023-25; 8k player-weeks).
+- **`9ac8ffd`** F5 — red-zone TD models in `project_nfl_player`: rushing λ = inside-10
+  share × team vol × regressed conv (0.40/prior 85); passing λ = RZ-att EWMA × 0.41 ×
+  opp × game-script; receiving λ = RZ-tgt share × team RZ vol × 0.41 × opp. Validated
+  vs real goal-line/RZ roles. `source='nfl_v2'`.
+- **`7366140`** F6 — game-line V2: real total O/U (kills `p_over_total=0.5`), team
+  totals, ML key-number bump. σ_total=13.0 (empirical residual SD).
+- **`37a1277`** total-dispersion calibration (see finding below).
+
+### ⚠ KEY FINDING — NFL totals have NO market edge yet (shadow-only)
+385-game backtest (2023-24): the EPA→points total is **mean-unbiased** (proj 44.2 vs
+market 43.8 / actual 45.3) but was **2× over-dispersed** (SD 6.7 vs market 4.5) →
+fixed by a 0.67 dispersion shrink (spread preserved). **However**, the model's total
+*disagreements with the market remain anti-predictive* (P(over)>0.55 → 49% over;
+<0.45 → 57% over) — EWMA EPA chases hot streaks that regress. **Do not bet NFL totals**
+until the projection adds regression-to-mean / pace / weather. Spread was healthier
+(corr 0.76, dispersion matched) but was not directionally validated.
+
+### Remaining
+- **Phase 3** — yardage distribution fits (Gamma / hurdle-Gamma / mixture-normal) to
+  replace the fixed CV multipliers. Refinement, deferrable.
+- **Game-line model rework** — regression-to-mean on EPA + better features so totals
+  (and spreads) actually beat the market. Larger effort; prerequisite for game-line
+  go-live. Bigger value than Phase 3.
 
 ---
 
