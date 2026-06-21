@@ -2,7 +2,7 @@
 
 _Generated: 2026-06-16 09:28 MDT_
 
-_Supersedes `JonnyParlay_Fix_Plan.md` (v1). Incorporates `Research_Validation_Addendum.md`._
+_Supersedes `docs/archive/JonnyParlay_Fix_Plan.md` (v1). Incorporates `Research_Validation_Addendum.md`._
 
 _Companion to `JonnyParlay_Findings_Report.md` and `JonnyParlay_Master_Audit_Tracker.xlsx`._
 

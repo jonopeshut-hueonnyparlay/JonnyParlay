@@ -62,7 +62,7 @@
 - **`_POS_FLOW` PG receiver fix** (2026-05-10): NBA API never returns position=PG → PG receiver slot was always skipped (SG injuries redistributed only 78% of minutes). PG weight folded into SG; same-position weights unchanged.
 
 ## Closed Audits
-`docs/audits/AUDIT_HISTORY.md` — all pre-2026-06 audits closed.
+`docs/archive/audits/AUDIT_HISTORY.md` — all pre-2026-06 audits closed (archived).
 
 ---
 
