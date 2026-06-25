@@ -20,10 +20,13 @@ SCHEMA HISTORY
   v2 (deprecated)  : adds closing_odds, clv, card_slot, is_home,
                      context_verdict, context_reason, context_score (27 cols)
   v3 (deprecated)  : adds legs — JSON parlay leg detail (28 cols)
-  v4 (current)     : adds over_p_raw — pre-Platt over probability (29 cols).
+  v4 (deprecated)  : adds over_p_raw — pre-Platt over probability (29 cols).
                      Enables proper Platt refit without double-calibration bias
                      (Research Brief 8 / Walsh & Joshi 2024). Blank for legacy
                      rows and non-prop picks (game lines, parlays).
+  v5 (current)     : adds clv_corrected — de-vigged-both-sides CLV (30 cols,
+                     Track-B Sprint 1). Diagnostic only; filled by capture_clv.py
+                     when the close was de-vigged. Blank otherwise. Additive.
 
 Bumping the schema:
   - Add new columns to the end of CANONICAL_HEADER (append-only keeps
@@ -42,7 +45,7 @@ from typing import Callable, Iterable, Mapping
 # Canonical schema (v4)
 # ─────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 CANONICAL_HEADER: list[str] = [
     "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
@@ -69,6 +72,9 @@ CANONICAL_HEADER: list[str] = [
     # transformed) was mistakenly fed back as input. Blank for legacy rows,
     # non-prop picks (game lines, parlays), and manual entries.
     "over_p_raw",
+    # v5: de-vigged-both-sides CLV (Track-B Sprint 1). Diagnostic only, additive;
+    # filled by capture_clv.py when the close was de-vigged, blank otherwise.
+    "clv_corrected",
 ]
 
 # Fast membership checks.
@@ -93,6 +99,9 @@ _V3_COLUMNS: frozenset[str] = frozenset(["legs"])
 # Columns added in v4 (pre-Platt over probability for calibration fidelity).
 _V4_COLUMNS: frozenset[str] = frozenset(["over_p_raw"])
 
+# Columns added in v5 (de-vigged-both-sides CLV diagnostic).
+_V5_COLUMNS: frozenset[str] = frozenset(["clv_corrected"])
+
 # Default value for any canonical column that's missing from an input row.
 # Empty string is what writers emit for "not applicable" / "not yet filled",
 # so using "" preserves the existing "blank means nothing here" contract.
@@ -107,6 +116,7 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     """Infer which schema version an on-disk pick_log was written under.
 
     Returns:
+      5 — header includes any v5-only column (clv_corrected)
       4 — header includes any v4-only column (over_p_raw)
       3 — header includes any v3-only column (legs)
       2 — header includes any v2-only column (CLV/context)
@@ -116,6 +126,8 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     if not on_disk_header:
         return 0
     cols = set(on_disk_header)
+    if cols & _V5_COLUMNS:
+        return 5
     if cols & _V4_COLUMNS:
         return 4
     if cols & _V3_COLUMNS:

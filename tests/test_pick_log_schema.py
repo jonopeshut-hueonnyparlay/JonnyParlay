@@ -34,22 +34,23 @@ sys.path.insert(0, str(HERE / "engine"))
 # Canonical invariants
 # ─────────────────────────────────────────────────────────────────
 
-def test_canonical_header_is_29_cols():
+def test_canonical_header_is_30_cols():
     from pick_log_schema import CANONICAL_HEADER
-    assert len(CANONICAL_HEADER) == 29, (
-        f"CANONICAL_HEADER length locked at 29 (v4); got {len(CANONICAL_HEADER)}. "
+    assert len(CANONICAL_HEADER) == 30, (
+        f"CANONICAL_HEADER length locked at 30 (v5); got {len(CANONICAL_HEADER)}. "
         "If adding a new column: bump SCHEMA_VERSION, update this test, and "
         "verify migrate_row() still produces canonical rows."
     )
 
 
-def test_canonical_header_over_p_raw_is_last():
-    """v4: over_p_raw must be the final column (index 28).
-    legs stays at index 27; over_p_raw appended after it per append-only contract."""
+def test_canonical_header_clv_corrected_is_last():
+    """v5: clv_corrected is the final column (index 29); over_p_raw stays at 28,
+    legs at 27 — append-only contract."""
     from pick_log_schema import CANONICAL_HEADER
-    assert CANONICAL_HEADER[-1] == "over_p_raw", (
-        f"'over_p_raw' must be the last column (index 28); got {CANONICAL_HEADER[-1]!r}"
+    assert CANONICAL_HEADER[-1] == "clv_corrected", (
+        f"'clv_corrected' must be the last column (index 29); got {CANONICAL_HEADER[-1]!r}"
     )
+    assert list(CANONICAL_HEADER).index("clv_corrected") == 29
     assert list(CANONICAL_HEADER).index("over_p_raw") == 28
     assert list(CANONICAL_HEADER).index("legs") == 27
 
@@ -67,9 +68,9 @@ def test_canonical_header_contains_every_v2_only_column():
         assert col in CANONICAL_HEADER, f"v2 column '{col}' missing from canonical"
 
 
-def test_schema_version_is_4():
+def test_schema_version_is_5():
     from pick_log_schema import SCHEMA_VERSION
-    assert SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION == 5
 
 
 # ─────────────────────────────────────────────────────────────────
