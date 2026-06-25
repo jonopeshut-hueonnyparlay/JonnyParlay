@@ -721,6 +721,8 @@ def _do_write_closing_odds(log_path: Path, updates: dict[tuple, dict]) -> int:
         fieldnames.append("closing_odds")
     if "clv" not in fieldnames:
         fieldnames.append("clv")
+    if "clv_corrected" not in fieldnames:
+        fieldnames.append("clv_corrected")
 
     updated = 0
     for row in rows:
@@ -741,6 +743,8 @@ def _do_write_closing_odds(log_path: Path, updates: dict[tuple, dict]) -> int:
             except (TypeError, ValueError):
                 row["closing_odds"] = str(_co)
             row["clv"] = f"{updates[key]['clv']:.4f}" if updates[key]["clv"] is not None else ""
+            _cc = updates[key].get("clv_corrected")
+            row["clv_corrected"] = f"{_cc:.4f}" if _cc is not None else ""
             updated += 1
 
     # Atomic replace: write to tmp then os.replace — prevents partial writes
@@ -1091,6 +1095,29 @@ def calc_clv(your_odds: float, closing_odds: float,
     return a - b
 
 
+_CLV_HOLD = 0.0476  # symmetric two-way hold proxy (-110/-110) for de-vigging the entry side
+
+
+def clv_corrected(clv: float | None, your_odds: float,
+                  close_devigged: bool) -> float | None:
+    """De-vigged-both-sides CLV (Track-B Sprint 1).
+
+    The base `calc_clv` leaves the ENTRY side vigged. When the CLOSE was de-vigged
+    (props/totals, opposite available) the result carries a ~half-vig negative bias; we
+    add it back via the symmetric-hold proxy. When the close was NOT de-vigged (ML/spread,
+    no opposite) the entry and close vigs largely cancel, so `clv` is already comparable —
+    return it unchanged. Additive/diagnostic: never replaces `clv`.
+    """
+    if clv is None:
+        return None
+    if not close_devigged:
+        return clv
+    p = implied_prob(your_odds)
+    if p is None:
+        return clv
+    return clv + p * (_CLV_HOLD / (1.0 + _CLV_HOLD))
+
+
 # ── Game-line CLV capture (additive — separate from the prop path) ─────────────
 
 def load_open_game_lines(run_date: str) -> list[dict]:
@@ -1308,6 +1335,7 @@ def process_game_lines(run_date: str, now: datetime) -> tuple[int, float]:
 
                 clv = (calc_clv(your_odds, closing_odds, closing_opp)
                        if (your_odds is not None and your_odds != 0) else None)
+                clv_corr = clv_corrected(clv, your_odds, closing_opp is not None)
 
                 key = (
                     r.get("date", "").strip(),
@@ -1316,7 +1344,8 @@ def process_game_lines(run_date: str, now: datetime) -> tuple[int, float]:
                     str(r.get("line", "")).strip(),
                     r.get("direction", "").strip().lower(),
                 )
-                updates[key] = {"closing_odds": closing_odds, "clv": clv}
+                updates[key] = {"closing_odds": closing_odds, "clv": clv,
+                                "clv_corrected": clv_corr}
 
                 vf = " (vf)" if closing_opp is not None else ""
                 clv_str = f"{clv:+.1%}{vf}" if clv is not None else "n/a"
@@ -1830,11 +1859,14 @@ def run(run_date: str):
                         pick.get("direction", "").strip().lower(),
                     )
 
+                    clv_corr = clv_corrected(clv, your_odds, closing_odds_opposite is not None)
+
                     if log_path not in updates_by_log:
                         updates_by_log[log_path] = {}
                     updates_by_log[log_path][key] = {
                         "closing_odds": closing_odds,
                         "clv": clv,
+                        "clv_corrected": clv_corr,
                     }
 
                     your_odds_str = f"{your_odds:+.0f}" if your_odds is not None else "n/a"

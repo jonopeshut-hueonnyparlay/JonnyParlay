@@ -6,11 +6,13 @@ resolving. Imports only {thresholds, calibrated, quant.odds} — never run_picks
 or the other extracted modules.
 """
 from thresholds import BM_SHRINKAGE_DEFAULT, KELLY_FRACTION, DEFAULT_MARKET_MULT
-from calibrated import BM_SHRINKAGE_WEIGHT, KELLY_MARKET_MULT, STAT_FAMILY_TIER, TIERS
+from calibrated import (
+    BM_SHRINKAGE_WEIGHT, KELLY_MARKET_MULT, STAT_FAMILY_TIER, TIERS, USE_NO_VIG_ANCHOR,
+)
 from quant.odds import implied_prob
 
 
-def apply_bm_shrinkage(win_prob, odds, tier):
+def apply_bm_shrinkage(win_prob, odds, tier, nv_prob=None):
     """Baker–McHale (2013) shrinkage of model win_prob toward market implied prob.
 
     shrunk_p = w·model_p + (1−w)·implied_p, with w = BM_SHRINKAGE_WEIGHT[tier].
@@ -41,7 +43,13 @@ def apply_bm_shrinkage(win_prob, odds, tier):
     Revisit alongside the "BM direction inverted §B" item.
     """
     w = BM_SHRINKAGE_WEIGHT.get(tier, BM_SHRINKAGE_DEFAULT)
-    return w * win_prob + (1.0 - w) * implied_prob(odds)
+    # Track-B Sprint 1: shrink toward the NO-VIG prob when the flag is on AND the caller
+    # supplies it (evaluate_props has nv_prob in scope). Default path is unchanged (vigged).
+    if USE_NO_VIG_ANCHOR and nv_prob is not None:
+        anchor = nv_prob
+    else:
+        anchor = implied_prob(odds)
+    return w * win_prob + (1.0 - w) * anchor
 
 def kelly_units(win_prob, odds):
     """Continuous Kelly base sizing: f* = (b*p - q) / b, scaled by KELLY_FRACTION.
