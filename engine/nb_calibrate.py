@@ -34,12 +34,10 @@ print("=" * 60)
 print(f"{'Stat':<6} {'n_psn':>6} {'avg_mu':>8} {'avg(v/u)':>10} {'r':>8} {'current_r':>10} {'Poisson?':>10}")
 print("-" * 60)
 
-CURRENT = {"3PM": 9.15, "AST": 9.68, "REB": 10.18}
-
 for stat, col, current_r in [
     ("3PM",  "fg3m", 9.15),
-    ("AST",  "ast",  9.68),
-    ("REB",  "reb",  10.18),
+    ("AST",  "ast",  9.66),   # deployed NB_R (calibrated.py); was 9.68 [audit 2026-06]
+    ("REB",  "reb",  13.16),  # deployed NB_R (calibrated.py); was 10.18 [audit 2026-06]
 ]:
     cur.execute(f"""
         SELECT gs.player_id, ga.season,

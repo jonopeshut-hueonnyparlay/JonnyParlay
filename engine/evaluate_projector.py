@@ -237,8 +237,8 @@ def project_pts(player_id: int, team_id: int, opp_team_id: int,
     """Project PTS using alpha-weighted blend of FGA-decomp + per-min baseline.
 
     alpha: weight on FGA-decomp path (0.0 = pure per-min, 1.0 = pure FGA).
-           Defaults to PTS_BLEND_ALPHA (calibrated 2026-05-01: 0.30).
-    BLEND_BIAS_CORRECTION (+0.386) applied after blending.
+           Defaults to PTS_BLEND_ALPHA (calibrated 2026-05-01: 0.50).
+    BLEND_BIAS_CORRECTION (0.0) applied after blending.
     Re-calibrate annually: --grid-search-alpha --season X-XX --n 2000 --seed 42
     """
     if alpha is None:
