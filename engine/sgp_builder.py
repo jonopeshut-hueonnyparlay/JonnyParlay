@@ -41,6 +41,7 @@ from brand import BRAND_TAGLINE
 from book_names import display_book
 from secrets_config import require_odds_api_key, DISCORD_BONUS_WEBHOOK
 from calibrated import NB_R as _PROP_NB_R  # single source for shared NBA dispersion (leaf module; circular-safe)
+from prob_core import _platt_calibrate_prop  # same Platt calibration straight NBA props get (audit 2026-06)
 
 # -- Constants -------------------------------------------------------------
 
@@ -254,7 +255,10 @@ def _fair_prob(proj, line, stat, direction):
         sigma = max(proj * s["mult"], s["min"])
         under_p = _normal_cdf(line, proj, sigma)
         over_p = 1.0 - under_p
-    return over_p if direction == "over" else under_p
+    # Calibrate the leg like a straight NBA prop: Platt on over_p, derive under
+    # (this builder is NBA-only; MLB-SGP intentionally stays raw). [audit 2026-06]
+    over_p = _platt_calibrate_prop(over_p)
+    return over_p if direction == "over" else (1.0 - over_p)
 
 
 # -- t-copula joint probability (L8 May 2026; t-copula June 2026) ----------
