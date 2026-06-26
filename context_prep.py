@@ -37,7 +37,7 @@ def _load_env(path: Path) -> None:
 
 _load_env(_ENV)
 
-API_KEY   = os.getenv("ODDS_API_KEY", "fe2a128f9a93210ea4a4556f9f33a1e3")
+API_KEY   = os.getenv("ODDS_API_KEY", "")   # never hardcode the key (audit 2026-06)
 LOCAL_TZ  = ZoneInfo("America/Denver")
 
 ACTIVE_SPORTS = {
