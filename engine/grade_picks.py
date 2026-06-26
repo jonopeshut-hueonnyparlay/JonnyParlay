@@ -1365,6 +1365,7 @@ def grade_prop(pick, player_stats, scores_by_game=None):
         first_name = tokens[0] if tokens else ""
         # Prefer matches with BOTH first + last name to avoid collisions
         best_candidate = None
+        weak_count = 0  # distinct last-name-only candidates (audit 2026-06)
         for name, stats in player_stats.items():
             name_norm = _norm(name)
             name_tokens = set(name_norm.split())
@@ -1373,11 +1374,17 @@ def grade_prop(pick, player_stats, scores_by_game=None):
                     # Strong match — first + last name both present
                     actual = stats.get(stat)
                     best_candidate = None
+                    weak_count = 0
                     break
-                elif best_candidate is None:
-                    # Weak fallback — last name only
-                    best_candidate = stats.get(stat)
-        if actual is None and best_candidate is not None:
+                else:
+                    # Weak (last-name-only) candidate
+                    weak_count += 1
+                    if best_candidate is None:
+                        best_candidate = stats.get(stat)
+        # Accept the last-name-only fallback ONLY when unambiguous (one candidate).
+        # With 2+ same-last-name players and no first-name match, do not guess —
+        # grading the wrong player's stat is worse than VOID/None. [audit 2026-06]
+        if actual is None and best_candidate is not None and weak_count == 1:
             actual = best_candidate
 
     if actual is None:
