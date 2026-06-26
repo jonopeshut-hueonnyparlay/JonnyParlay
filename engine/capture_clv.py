@@ -382,6 +382,7 @@ def best_price(outcomes: list[dict], direction: str, line: float | None = None) 
     """
     best_odds = None
     best_book = ""
+    best_dist = None
     for outcome in outcomes:
         book = outcome.get("book", "")
         book_base = book.split("_")[0] if "_" in book else book
@@ -407,15 +408,18 @@ def best_price(outcomes: list[dict], direction: str, line: float | None = None) 
         if not name_match:
             continue
 
-        # Match line (spreads/totals): must be within 0.25
+        # Capture CLV across line movement (no ±0.25 exclusion): prefer the closing
+        # outcome at the NEAREST line to the bet, and within that line keep the best
+        # (highest) odds. Avoids mixing incomparable lines while never dropping a
+        # moved-line close. [audit 2026-06 — was: skip if |o_point - line| > 0.25]
         if line is not None and o_point is not None:
-            if abs(float(o_point) - float(line)) > 0.25:
-                continue
-
-        # Keep best (highest) odds
-        if best_odds is None or o_price > best_odds:
-            best_odds = o_price
-            best_book = book
+            dist = abs(float(o_point) - float(line))
+        else:
+            dist = 0.0
+        if best_dist is None or dist < best_dist - 1e-9:
+            best_dist, best_odds, best_book = dist, o_price, book
+        elif abs(dist - best_dist) <= 1e-9 and (best_odds is None or o_price > best_odds):
+            best_odds, best_book = o_price, book
 
     return best_odds, best_book
 
