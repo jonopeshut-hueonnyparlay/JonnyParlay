@@ -1176,15 +1176,20 @@ def grade_game_line(pick, scores_by_game, linescores=None, nhl_ot_info=None):
         _ls_result = _find_linescore_innings(game, linescores or {})
         if not _ls_result:
             return None
-        innings, _ = _ls_result  # is_final not needed for NRFI (inning 1 either completed or not)
+        innings, _nrfi_is_final = _ls_result
         # Need at least inning 1 complete — check both teams scored their half
         inning1 = next((i for i in innings if i.get("num") == 1), None)
-        if not inning1:
-            return None
-        away_r1 = inning1.get("away", {}).get("runs", None)
-        home_r1 = inning1.get("home", {}).get("runs", None)
+        away_r1 = inning1.get("away", {}).get("runs", None) if inning1 else None
+        home_r1 = inning1.get("home", {}).get("runs", None) if inning1 else None
         if away_r1 is None or home_r1 is None:
-            return None  # Inning not fully complete yet
+            # First inning not gradable. If the game is officially final (postponed/
+            # suspended before a complete 1st), the book voids RFI bets — stake
+            # returned. Mirrors the F5 VOID path; otherwise retry next run.
+            # [audit 2026-06: previously returned None forever -> stuck ungraded]
+            if _nrfi_is_final:
+                logger.info("[NRFI] Game %s final without a complete 1st inning — voiding RFI pick", game)
+                return "VOID"
+            return None  # inning not complete yet
         first_inning_runs = away_r1 + home_r1
         if stat == "NRFI":
             return "W" if first_inning_runs == 0 else "L"
