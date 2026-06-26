@@ -113,7 +113,7 @@ Every row written to `pick_log.csv` MUST have all 27 schema fields (even if blan
 CLAUDE.md lists:
 - Windows path: `C:\Users\jono4\Documents\JonnyParlay\`
 - Cowork mount: `/sessions/.../mnt/JonnyParlay/`
-- Odds API key: `adb07e9742307895c8d7f14264f52aee`
+- Odds API key: `<REDACTED — rotated 2026-06-26; this value is dead. Live key lives in .env / User env var only>`
 - `espnbet` API key → displayed as `theScore Bet`
 - 18 CO_LEGAL_BOOKS
 
