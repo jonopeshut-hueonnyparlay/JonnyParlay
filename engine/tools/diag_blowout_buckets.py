@@ -133,7 +133,7 @@ def main() -> None:
     base = float(bdf.iloc[0]["mean_min"])
     fit = fit_sigmoid(bdf, baseline=base)
     print(f"  best params: max_reduction={fit['max_reduction']:.3f} mid={fit['mid']:.1f} k={fit['k']:.2f}  (MSE={fit['mse']:.5f})")
-    print(f"  current model: max_reduction=0.200 mid=12.0 k=0.40")
+    print(f"  current model: max_reduction=0.19 mid=20.0 k=0.15")  # EdgeModel BLOWOUT_* refit (was 0.200/12.0/0.40)
 
     # Show fit predictions vs actuals
     print(f"\n{'Bucket':<8} {'mid':>4} {'factor_emp':>10} {'fit_factor':>11} {'diff':>6}")

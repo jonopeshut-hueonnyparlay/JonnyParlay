@@ -34,6 +34,11 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
+try:  # advisory display only — read the live deployed sigmas, never a stale literal
+    from calibrated import GAME_SIGMA as _LIVE_GAME_SIGMA
+except ImportError:
+    _LIVE_GAME_SIGMA = {}
+
 
 def _resolve_db_path() -> Path:
     # Check EDGEMODEL_DB_PATH env var (may be loaded from .env by caller)
@@ -235,8 +240,9 @@ def mode_nhl_game_sigmas(conn: sqlite3.Connection):
     print()
     print(f"  Home wins: {home_wins/len(rows):.3f}, Away wins: {away_wins/len(rows):.3f}, Ties: {ties/len(rows):.3f}")
     print()
-    print("  Current GAME_SIGMA['NHL']:")
-    print(f"    total=1.2, spread=1.5, team=1.8, ml=4.0  (all WRONG by ~2x)")
+    _nhl = _LIVE_GAME_SIGMA.get("NHL", {})
+    print("  Current GAME_SIGMA['NHL'] (deployed):")
+    print(f"    total={_nhl.get('total')}, spread={_nhl.get('spread')}, team={_nhl.get('team')}, ml={_nhl.get('ml')}")
     print()
     print("  Calibrated GAME_SIGMA['NHL']:")
     print(f"    total  = {sigma_total:.3f}")
@@ -310,10 +316,12 @@ def mode_wnba_game_total(conn: sqlite3.Connection):
     print(f"  Combined score: mu={mu_total:.2f}, sigma={sigma_total:.3f}")
     print(f"  Per-team score: mu={mu_team:.2f}, sigma={sigma_team:.3f}")
     print()
-    print(f"  Current GAME_SIGMA['WNBA']: total=10.0, team=7.5")
+    _w = _LIVE_GAME_SIGMA.get("WNBA", {})
+    _cur_total, _cur_team = _w.get("total", 10.0), _w.get("team", 7.5)
+    print(f"  Current GAME_SIGMA['WNBA'] (deployed): total={_cur_total}, team={_cur_team}")
     print(f"  Calibrated:                 total={sigma_total:.3f}, team={sigma_team:.3f}")
-    delta_total = sigma_total - 10.0
-    delta_team  = sigma_team  - 7.5
+    delta_total = sigma_total - _cur_total
+    delta_team  = sigma_team  - _cur_team
     print(f"  Delta:                      total={delta_total:+.3f}, team={delta_team:+.3f}")
     print()
     print("  Deploy: update GAME_SIGMA['WNBA']['total'] and ['team'] in engine/run_picks.py (~line 488)")
