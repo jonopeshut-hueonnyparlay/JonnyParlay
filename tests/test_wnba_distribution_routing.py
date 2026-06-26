@@ -43,14 +43,15 @@ def test_wnba_reb_routes_to_nb():
 def test_wnba_3pm_routes_to_nb():
     """WNBA 3PM routes to NB path after carve-out removal.
 
-    Uses the live NB_R_WNBA constant (r recalibrated periodically — 1.342 at
-    go-live 2026-06-09) so this routing test doesn't break on recalibration;
-    the sanity bound below pins it far from NBA's r=9.15.
+    Uses the live NB_R_WNBA constant (r recalibrated periodically — refit to ~5.0 on
+    2026-06-26 from the within-player var/mu=1.16; the prior 1.342 was a pooled fit
+    that over-dispersed) so this routing test doesn't break on recalibration; the
+    sanity bound below pins it to mild overdispersion, still distinct from NBA's r=9.15.
     """
     from run_picks import NB_R_WNBA
     proj, line = 2.0, 1.5
     r = NB_R_WNBA["3PM"]
-    assert 1.0 < r < 2.0  # WNBA 3PM is heavily overdispersed vs NBA r=9.15
+    assert 3.0 < r < 9.0  # WNBA 3PM mild overdispersion (within-player), still < NBA r=9.15
     k = int(line)
     expected_over = 1.0 - negbinom_cdf(k, proj, r)
 

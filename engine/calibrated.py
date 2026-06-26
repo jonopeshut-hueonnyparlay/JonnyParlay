@@ -90,7 +90,10 @@ NB_R = {
 NB_R_WNBA = {
     "AST": 11.37,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
     "REB": 10.74,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
-    "3PM": 1.342,  # recalibrated 2026-06-09 (go-live): 13,970 rows (min>=8), var/mu=1.708, zero_rate=0.502
+    "3PM": 5.0,    # REFIT 2026-06-26 (STAGED, pending sign-off): within-player var/mu=1.16 (the prior
+                   #   1.342 was fit on POOLED var/mu=1.81 — between-player spread, wrong for single-player
+                   #   pricing; it implied var/mu~1.97 and was beaten by Poisson). r=5 is the calibration-
+                   #   optimal single value (flat 4-6) on 17k logs: hit-rate mean|err| 0.032->0.021. [audit 2026-06]
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
