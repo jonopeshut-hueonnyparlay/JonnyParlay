@@ -347,7 +347,7 @@ def project_stl(player_id: int, team_id: int, opp_team_id: int,
     proj_poss  = game_pace * proj_min / 48.0
     stl_rate, _ = compute_stl_blk_rates(df, pos_group, team_pace)
     opp_tov    = get_team_tov_rate(opp_team_id, season, db_path)
-    opp_tov_fac = float(np.clip(opp_tov / LEAGUE_AVG_TOV_RATE, 0.80, 1.30))
+    opp_tov_fac = float(np.clip(opp_tov / LEAGUE_AVG_TOV_RATE, 0.80, 1.20))  # match production MATCHUP_CLIP (was 1.30) [audit 2026-06]
     return max(0.0, stl_rate * proj_poss * opp_tov_fac)
 
 
