@@ -29,6 +29,12 @@ except ImportError:
     _CANONICAL_HEADER = []
     _PICK_LOG_GL_PATH = Path(__file__).parent / "data" / "pick_log_game_lines.csv"
 
+try:
+    from team_resolve import resolve_team_abbrev
+except ImportError:
+    def resolve_team_abbrev(name):   # graceful fallback if engine import unavailable
+        return ""
+
 try:                                  # source the key from secrets, never hardcode
     from secrets_config import ODDS_API_KEY as API_KEY   # engine/ is on sys.path (above)
 except ImportError:
@@ -267,16 +273,21 @@ def team_total_odds(game, abbr_list):
             if mkt["key"] != "team_totals":
                 continue
             for out in mkt.get("outcomes", []):
-                desc = out.get("description", "").upper()
-                for abbr in abbr_list:
-                    if abbr not in desc:
-                        continue
-                    side = out["name"].lower()
-                    if abbr not in result:
-                        result[abbr] = {"book": bm["title"], "line": out.get("point")}
+                # Resolve the outcome's full team name to an abbrev instead of a
+                # substring test (abbr is rarely a literal substring of the name —
+                # failed for ~half of teams). [audit 2026-06]
+                abbr = resolve_team_abbrev(out.get("description", ""))
+                if abbr not in abbr_list:
+                    continue
+                side = out["name"].lower()
+                if abbr not in result:
+                    result[abbr] = {"book": bm["title"], "line": out.get("point")}
+                # Keep the best (highest) price per side across books, not last-seen.
+                _cur = result[abbr].get(f"{side}_odds")
+                if _cur is None or out["price"] > _cur:
                     result[abbr][f"{side}_odds"] = out["price"]
-                    if out.get("point"):
-                        result[abbr]["line"] = out["point"]
+                if out.get("point"):
+                    result[abbr]["line"] = out["point"]
     return result
 
 # â”€â”€ Edge formatting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
