@@ -1981,7 +1981,38 @@ def _atomic_write_rows(log_path, fieldnames, rows, lock_timeout=30):
     log_path = str(log_path)
     lock_path = log_path + ".lock"
 
+    # CLV-owned columns the CLV daemon writes concurrently; same row key it uses.
+    _CLV_COLS = ("closing_odds", "clv", "clv_corrected")
+
+    def _clv_key(r):
+        return (r.get("date", "").strip(), r.get("player", "").strip().lower(),
+                r.get("stat", "").strip(), str(r.get("line", "")).strip(),
+                r.get("direction", "").strip().lower())
+
     def _do_write():
+        # Merge-on-write (audit 2026-06, lost-update race): we read these rows
+        # without the lock, then grade over a slow network window during which the
+        # CLV daemon may have written closing_odds/clv to the same log. Re-read the
+        # on-disk CLV columns under the lock and preserve any non-empty value so this
+        # stale snapshot can't clobber a fresher CLV update. These columns are
+        # informational (never affect result/pl), so a key edge-case is benign.
+        try:
+            with open(log_path, "r", encoding="utf-8") as _df:
+                _disk = {_clv_key(r): r for r in csv.DictReader(_df)}
+        except FileNotFoundError:
+            _disk = {}
+        if _disk:
+            for _row in rows:
+                _dr = _disk.get(_clv_key(_row))
+                if not _dr:
+                    continue
+                for _c in _CLV_COLS:
+                    if _c not in fieldnames:
+                        continue
+                    _dv = _dr.get(_c, "")
+                    if _dv not in (None, ""):
+                        _row[_c] = _dv
+
         fd, tmp_path = tempfile.mkstemp(
             prefix=os.path.basename(log_path) + ".",
             suffix=".tmp",
