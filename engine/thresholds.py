@@ -66,7 +66,7 @@ POISSON_CUTOFF = 8.5  # line threshold below which Poisson applies for low-count
 #     (sigma /= factor in calc_prop_prob) so win_prob, edge, score AND Kelly size
 #     all shrink coherently — the old edge-mult lowered ranking but sized at full
 #     confidence. Factors are DATA_GATED: recalibrate at WNBA go-live (100 graded).
-WNBA_SEASON_START = date(2026, 5, 13)   # update each season
+WNBA_SEASON_START = date(2026, 5, 8)    # 2026 opener Fri May 8 (WNBA.com); was 5/13 (audit 2026-06)
 WNBA_OPENING_GATE_DAYS = 3              # FALLBACK day gate (games-played source unavailable)
 WNBA_OPENING_GATE_GAMES = 2             # both teams need >= 2 current-season games
 WNBA_EARLY_SEASON_EDGE_MULT = [         # (day_threshold, factor) — ascending; sigma /= factor
