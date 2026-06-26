@@ -567,6 +567,16 @@ def build_candidate_legs(projections, odds_data, event):
         odds = info["odds"]
         book = info["book"]
         other_odds = info.get("other_side_odds")
+        # If the global-best-odds book isn't allowed for SGP, fall back to the best
+        # ALLOWED book that offers this line instead of dropping the candidate — it
+        # still has to pass every gate below at the allowed-book price. [audit 2026-06]
+        if book not in SGP_ALLOWED_BOOKS:
+            _allowed = {b: o for b, o in info.get("book_odds", {}).items()
+                        if b in SGP_ALLOWED_BOOKS}
+            if not _allowed:
+                continue
+            book = max(_allowed, key=lambda b: _allowed[b])
+            odds = _allowed[book]
         name_key = _normalize_name(player)
         proj_data = projections.get(name_key)
         if not proj_data or stat not in proj_data["proj"]:
@@ -591,8 +601,6 @@ def build_candidate_legs(projections, odds_data, event):
         if odds > MAX_LEG_ODDS:   # reject anything not juiced enough (e.g. +100, -110 etc.)
             continue
         if odds < -300:
-            continue
-        if book not in SGP_ALLOWED_BOOKS:
             continue
         # Composite pool score: blends edge (sharp signal) with excess WP above
         # the floor (hit rate signal). Only WP above MIN_LEG_WIN_PROB matters —
