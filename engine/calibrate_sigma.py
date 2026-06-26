@@ -9,7 +9,7 @@ Stats calibrated:
   PTS  — single-stat Normal prop + combo path component
   REB  — combo path only (single-stat REB routes through NB_STATS r=10.18)
   AST  — combo path only (single-stat AST routes through NB_STATS r=9.68)
-         Currently no SIGMA["AST"] entry — falls back to {"mult": 0.40, "min": 2.0}
+         SIGMA["AST"] = {"mult": 0.53, "min": 2.0} in production (3-season median CV≈0.507)
 
 Stats NOT calibrated here (no game log data in projections.db):
   OUTS, HA — MLB pitcher stats — require separate MLB game log DB
@@ -31,9 +31,9 @@ DB_PATH = Path(__file__).parent.parent / "data" / "projections.db"
 CURRENT_SIGMA = {
     "PTS": {"mult": 0.35, "min": 5.0},   # min raised 4.5→5.0 (MAE backtest 2026-05-25)
     "REB": {"mult": 0.48, "min": 2.0},   # mult 0.58→0.48, min 2.5→2.0 (empirical CV, combo path)
-    # AST has no entry — falls back to {"mult": 0.40, "min": 2.0}
+    # AST now in production SIGMA at mult 0.53 (mirrored by AST_FALLBACK below)
 }
-AST_FALLBACK = {"mult": 0.40, "min": 2.0}
+AST_FALLBACK = {"mult": 0.53, "min": 2.0}  # synced to live SIGMA["AST"] in calibrated.py; was 0.40 (audit 2026-06)
 
 # Column name in player_game_stats for each stat
 STAT_COL = {
