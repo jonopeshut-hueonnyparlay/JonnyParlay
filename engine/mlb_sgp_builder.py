@@ -390,7 +390,9 @@ def _score_mlb_sgp(legs):
 def _size_mlb_sgp(legs):
     """Same quality gates as NBA SGP sizing."""
     avg_edge = sum(l["edge"] for l in legs) / len(legs)
-    if avg_edge < 0.035:
+    cohesion = _correlation_cohesion_mlb(legs)
+    # cohesion >= 0.55 gate now matches NBA size_sgp (was missing here). [audit 2026-06]
+    if avg_edge < 0.035 or cohesion < 0.55:
         return SGP_SIZE_DEFAULT
     probs = [l["fair_prob"] for l in legs]
     corr_mat = _build_corr_matrix_mlb(legs)
