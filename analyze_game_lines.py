@@ -29,7 +29,10 @@ except ImportError:
     _CANONICAL_HEADER = []
     _PICK_LOG_GL_PATH = Path(__file__).parent / "data" / "pick_log_game_lines.csv"
 
-API_KEY   = "adb07e9742307895c8d7f14264f52aee"
+try:                                  # source the key from secrets, never hardcode
+    from secrets_config import ODDS_API_KEY as API_KEY   # engine/ is on sys.path (above)
+except ImportError:
+    API_KEY = os.getenv("ODDS_API_KEY", "")
 BASE      = "https://api.the-odds-api.com/v4/sports"
 REGIONS   = "us,us2,us_ex"
 BOOKS_STR = "draftkings,fanduel,betmgm,caesars,pointsbetus"
