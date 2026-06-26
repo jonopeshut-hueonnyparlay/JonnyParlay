@@ -1490,9 +1490,10 @@ def compute_pl(size, odds_str, result):
     if odds == 0:
         logger.warning(f"[compute_pl] Zero odds for result={result!r} size={size} — returning 0.0")
         return 0.0
-    if result == "W":
+    res = str(result).strip().upper() if result is not None else ""  # normalize (audit 2026-06)
+    if res == "W":
         return round(size * (100 / abs(odds)), 4) if odds < 0 else round(size * (odds / 100), 4)
-    elif result == "L":
+    elif res == "L":
         return round(-size, 4)
     return 0.0  # Push / VOID / blank
 
