@@ -53,6 +53,17 @@ _UPSERT = (
     "mean=excluded.mean, game_date=excluded.game_date, model_version=excluded.model_version"
 )
 
+# #4 feed split: the SLATE (who is playing / for whom / salary), decoupled from the
+# projection rows but written from the same feed. source='sabersim'.
+_SLATE_UPSERT = (
+    "INSERT INTO slate(game_date, sport, entity_id, name, team, opponent, position, "
+    "salary, source) "
+    "VALUES(:game_date,:sport,:entity_id,:name,:team,:opponent,:position,:salary,'sabersim') "
+    "ON CONFLICT(game_date, sport, entity_id, source) DO UPDATE SET "
+    "name=excluded.name, team=excluded.team, opponent=excluded.opponent, "
+    "position=excluded.position, salary=excluded.salary"
+)
+
 
 def _markets_for(sport: str, player: dict) -> list:
     s = (sport or "").upper()
@@ -63,9 +74,9 @@ def _markets_for(sport: str, player: dict) -> list:
     return []
 
 
-def _table_exists(conn) -> bool:
+def _table_exists(conn, name: str = "projection") -> bool:
     return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='projection'"
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
     ).fetchone() is not None
 
 
@@ -92,10 +103,31 @@ def ingest_players(conn, players: list, sport: str, game_date: str) -> int:
     return n
 
 
+def write_slate(conn, players: list, sport: str, game_date: str) -> int:
+    """Upsert one sport's slate rows (who is playing / team / opp / salary). Caller
+    commits. The decoupled market-data record (#4), written from the same feed."""
+    n = 0
+    for p in players or []:
+        nk = (p.get("name_key") or name_key(p.get("name", "")) or "").strip()
+        if not nk:
+            continue
+        sal = p.get("salary")
+        try:
+            sal = float(sal) if sal is not None else None
+        except (TypeError, ValueError):
+            sal = None
+        conn.execute(_SLATE_UPSERT, {
+            "game_date": game_date, "sport": (sport or "").upper(), "entity_id": nk,
+            "name": p.get("name"), "team": p.get("team"), "opponent": p.get("opp"),
+            "position": p.get("pos"), "salary": sal})
+        n += 1
+    return n
+
+
 def ingest(all_players: dict, game_date: str, db_path=None) -> int:
-    """Write every sport's SaberSim projections into the contract. `all_players` is
-    {sport: [player dicts]} (run_picks' pool). Returns rows written (0 on any failure
-    -- fail-soft, never raises)."""
+    """Write every sport's SaberSim projections (and the decoupled slate rows) into the
+    shared store. `all_players` is {sport: [player dicts]} (run_picks' pool). Returns
+    projection rows written (0 on any failure -- fail-soft, never raises)."""
     path = Path(db_path or EDGEMODEL_DB_PATH)
     if not path.exists():
         log.warning("sabersim_ingest: projections.db not found at %s", path)
@@ -103,11 +135,14 @@ def ingest(all_players: dict, game_date: str, db_path=None) -> int:
     try:
         conn = sqlite3.connect(path)
         try:
-            if not _table_exists(conn):
+            if not _table_exists(conn, "projection"):
                 return 0  # EdgeModel hasn't created the contract yet -> skip this run
+            has_slate = _table_exists(conn, "slate")
             total = 0
             for sport, players in (all_players or {}).items():
                 total += ingest_players(conn, players, sport, game_date)
+                if has_slate:
+                    write_slate(conn, players, sport, game_date)
             conn.commit()
             return total
         finally:

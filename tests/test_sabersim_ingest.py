@@ -19,12 +19,21 @@ _DDL = (
     " source TEXT NOT NULL, model_version TEXT, mean REAL,"
     " UNIQUE (run_id, sport, market, entity_id, source))"
 )
+_SLATE_DDL = (
+    "CREATE TABLE slate ("
+    " game_date TEXT NOT NULL, sport TEXT NOT NULL, entity_id TEXT NOT NULL,"
+    " name TEXT, team TEXT, opponent TEXT, position TEXT, salary REAL,"
+    " source TEXT NOT NULL DEFAULT 'sabersim',"
+    " UNIQUE (game_date, sport, entity_id, source))"
+)
 
 
-def _db_with_contract(tmp_path):
+def _db_with_contract(tmp_path, with_slate=True):
     db = tmp_path / "proj.db"
     conn = sqlite3.connect(db)
     conn.execute(_DDL)
+    if with_slate:
+        conn.execute(_SLATE_DDL)
     conn.commit()
     conn.close()
     return db
@@ -118,3 +127,34 @@ def test_absent_contract_table_is_failsoft(tmp_path):
 def test_unknown_sport_writes_nothing(tmp_path):
     db = _db_with_contract(tmp_path)
     assert si.ingest({"XFL": [{"name": "X", "PTS": 1.0}]}, "2026-06-26", db_path=db) == 0
+
+
+# --- #4 slate feed split ----------------------------------------------------
+
+def _slate_rows(db):
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        return {r["entity_id"]: r for r in conn.execute(
+            "SELECT entity_id, team, opponent, position, salary FROM slate")}
+    finally:
+        conn.close()
+
+
+def test_ingest_writes_decoupled_slate_rows(tmp_path):
+    db = _db_with_contract(tmp_path)
+    players = [{"name": "A'ja Wilson", "team": "LV", "opp": "SEA", "pos": "F",
+                "salary": 9800, "PTS": 22.5, "REB": 9.1, "AST": 2.3, "3PM": 0.4}]
+    si.ingest({"WNBA": players}, "2026-06-26", db_path=db)
+    row = _slate_rows(db)[name_key("A'ja Wilson")]
+    assert (row["team"], row["opponent"], row["position"]) == ("LV", "SEA", "F")
+    assert row["salary"] == 9800.0
+
+
+def test_slate_absent_table_does_not_break_projection_write(tmp_path):
+    # Older EdgeModel without the slate table: projections still write, slate skipped.
+    db = _db_with_contract(tmp_path, with_slate=False)
+    n = si.ingest({"WNBA": [{"name": "A'ja Wilson", "team": "LV", "opp": "SEA",
+                             "PTS": 22.5, "REB": 9.1, "AST": 2.3, "3PM": 0.4}]},
+                  "2026-06-26", db_path=db)
+    assert n == 4  # projection rows still written despite no slate table
