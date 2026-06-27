@@ -26,12 +26,12 @@
   Failed gates: 896
 
   Gate failure breakdown:
-    G_WNBA_EDGE: 525
+    G_WNBA_EDGE: 526
     G7: 229
     G_RA_DISABLED: 89
+    G13: 25
     G7b: 24
-    G13: 24
-    G14: 5
+    G14: 3
 
   Top filtered picks (edge > 3% but failed gates):
   Player                    Stat    Line Dir        WP   Edge   Odds Gate     Game

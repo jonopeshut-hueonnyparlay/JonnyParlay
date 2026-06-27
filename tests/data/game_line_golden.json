@@ -1,0 +1,52 @@
+[
+  {
+    "sport": "MLB",
+    "game": "BOS@NYY",
+    "label": "SPREAD AWAY BOS (+1.5)",
+    "model": 0.5403003715943299,
+    "edge": 0.040300371594329865,
+    "odds": -110,
+    "book": "DraftKings",
+    "line": null
+  },
+  {
+    "sport": "MLB",
+    "game": "BOS@NYY",
+    "label": "TT UNDER BOS (4.0)",
+    "model": 0.5640290601627236,
+    "edge": 0.06402906016272358,
+    "odds": -110,
+    "book": "DraftKings",
+    "line": null
+  },
+  {
+    "sport": "MLB",
+    "game": "BOS@NYY",
+    "label": "TT UNDER NYY (4.5)",
+    "model": 0.5741269772078013,
+    "edge": 0.07412697720780126,
+    "odds": -110,
+    "book": "DraftKings",
+    "line": null
+  },
+  {
+    "sport": "NBA",
+    "game": "BOS@NYK",
+    "label": "ML HOME  NYK",
+    "model": 0.6140918811988774,
+    "edge": 0.05204808557843932,
+    "odds": -140,
+    "book": "DraftKings",
+    "line": null
+  },
+  {
+    "sport": "NBA",
+    "game": "BOS@NYK",
+    "label": "TT OVER  BOS (105.5)",
+    "model": 0.5407298988701641,
+    "edge": 0.040729898870164094,
+    "odds": -110,
+    "book": "DraftKings",
+    "line": null
+  }
+]
