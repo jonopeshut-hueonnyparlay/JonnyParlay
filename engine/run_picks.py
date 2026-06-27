@@ -1028,6 +1028,21 @@ def main():
 
     all_players, sports, csv_paths_resolved = _stage_load_csvs(args)
 
+    # Champion/challenger store: write the LIVE (SaberSim) slate projections into the
+    # shared `projection` contract (source='sabersim'), alongside EdgeModel's rows, so
+    # both sources sit in one comparable store. BEFORE the resolver so these are the pure
+    # live numbers (the resolver may blend EdgeModel in). Fail-soft; skipped under
+    # --no-save (replay/test) so it never writes during byte-identical replay.
+    if not args.no_save:
+        try:
+            import sabersim_ingest as _ssi
+            from datetime import datetime as _sdt
+            _n_ssi = _ssi.ingest(all_players, _sdt.now().strftime("%Y-%m-%d"))
+            if _n_ssi:
+                print(f"  [Contract] Wrote {_n_ssi} SaberSim projection rows (source=sabersim)")
+        except Exception:
+            pass
+
     # Multi-source resolver: blend/swap EdgeModel projections into the live pool per
     # data/coverage_manifest.csv. DORMANT by default (every market 'shadow'/weight=0)
     # -> byte-identical pass-through; fail-soft. A market is only blended after the
