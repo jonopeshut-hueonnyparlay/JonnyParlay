@@ -37,10 +37,69 @@ _SOURCES = {
 }
 
 
+def _fetch_from_contract(conn, sport: str, game_date: str) -> dict:
+    """Read EdgeModel rows from the source-tagged `projection` contract table.
+
+    The contract stores entity_id=name_key and market already in JonnyParlay stat
+    codes (PTS/REB/.../HITS/TB/HR) with mean=the projection -- i.e. the exact same
+    numbers the per-sport tables hold, written by EdgeModel's
+    populate_projection_contract. Returns {} if the table is absent (fail-soft) or
+    no row matches (then the caller falls back to the per-sport tables, byte-identically).
+    """
+    out: dict = {}
+    try:
+        rows = conn.execute(
+            "SELECT entity_id, market, mean FROM projection "
+            "WHERE game_date = ? AND upper(sport) = ? AND source = 'edgemodel' "
+            "AND mean IS NOT NULL",
+            [game_date, (sport or "").upper()],
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}  # contract table not present in this DB -> fall back
+    for r in rows:
+        nk = (r["entity_id"] or "").strip()
+        stat = r["market"]
+        if nk and stat:
+            out[(nk, stat)] = float(r["mean"])
+    return out
+
+
+def _fetch_from_per_sport(conn, specs, game_date: str) -> dict:
+    """Read EdgeModel projections straight from the per-sport projection tables."""
+    out: dict = {}
+    for table, name_col, sport_filter, col_map in specs:
+        select_cols = ", ".join([name_col] + list(col_map))
+        where, params = "run_date = ?", [game_date]
+        if sport_filter is not None:
+            where += " AND sport = ?"
+            params.append(sport_filter)
+        try:
+            rows = conn.execute(
+                f"SELECT {select_cols} FROM {table} WHERE {where}", params
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue  # table/column absent in this DB -> skip, fail-soft
+        for r in rows:
+            nk = name_key(r[name_col])
+            if not nk:
+                continue
+            for db_col, stat in col_map.items():
+                v = r[db_col]
+                if v is not None:
+                    out[(nk, stat)] = float(v)
+    return out
+
+
 def fetch(sport: str, game_date: str, db_path=None) -> dict:
     """{(name_key, stat): proj_value} of EdgeModel projections for a sport+date.
 
-    Returns {} on any failure (unknown sport, missing DB/date, absent table).
+    Reads the source-tagged `projection` contract first (the unification backbone);
+    falls back to the per-sport projection tables when the contract has no row for
+    this slate (historical dates, or before EdgeModel's first contract-populating
+    run). The two paths are byte-identical -- the contract's mean is written from the
+    same per-sport numbers -- so switching the reader changes nothing downstream.
+
+    Returns {} on any failure (unknown sport, missing DB/date, absent tables).
     """
     specs = _SOURCES.get((sport or "").upper())
     if not specs:
@@ -50,34 +109,16 @@ def fetch(sport: str, game_date: str, db_path=None) -> dict:
         log.warning("edgemodel_adapter: projections.db not found at %s", path)
         return {}
 
-    out: dict = {}
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
-            for table, name_col, sport_filter, col_map in specs:
-                select_cols = ", ".join([name_col] + list(col_map))
-                where, params = "run_date = ?", [game_date]
-                if sport_filter is not None:
-                    where += " AND sport = ?"
-                    params.append(sport_filter)
-                try:
-                    rows = conn.execute(
-                        f"SELECT {select_cols} FROM {table} WHERE {where}", params
-                    ).fetchall()
-                except sqlite3.OperationalError:
-                    continue  # table/column absent in this DB -> skip, fail-soft
-                for r in rows:
-                    nk = name_key(r[name_col])
-                    if not nk:
-                        continue
-                    for db_col, stat in col_map.items():
-                        v = r[db_col]
-                        if v is not None:
-                            out[(nk, stat)] = float(v)
+            out = _fetch_from_contract(conn, sport, game_date)
+            if out:
+                return out
+            return _fetch_from_per_sport(conn, specs, game_date)
         finally:
             conn.close()
     except Exception as exc:
         log.warning("edgemodel_adapter: read failed (%s)", exc)
         return {}
-    return out

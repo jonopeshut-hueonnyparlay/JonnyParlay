@@ -67,3 +67,52 @@ def test_missing_db_is_failsoft(tmp_path):
 
 def test_unknown_sport_is_empty(tmp_path):
     assert ea.fetch("XFL", "2026-06-26", db_path=_make_db(tmp_path)) == {}
+
+
+# --- contract-first read (the unification backbone, #3) ---------------------
+
+def _add_contract(db, rows):
+    """Add the minimal `projection` contract table + rows (game_date, sport,
+    entity_id, market, source, mean) to an existing temp DB."""
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS projection (game_date TEXT, sport TEXT, "
+        "entity_id TEXT, market TEXT, source TEXT, mean REAL)")
+    conn.executemany("INSERT INTO projection VALUES (?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def test_contract_read_used_when_present_and_equals_per_sport(tmp_path):
+    db = _make_db(tmp_path)
+    per_sport = ea.fetch("WNBA", "2026-06-26", db_path=db)   # contract absent -> per-sport
+    # Populate the contract with the SAME numbers EdgeModel would write.
+    aja = name_key("A'ja Wilson")
+    _add_contract(db, [
+        ("2026-06-26", "WNBA", aja, "PTS", "edgemodel", 22.5),
+        ("2026-06-26", "WNBA", aja, "REB", "edgemodel", 9.1),
+        ("2026-06-26", "WNBA", aja, "AST", "edgemodel", 2.3),
+        ("2026-06-26", "WNBA", aja, "3PM", "edgemodel", 0.4),
+    ])
+    via_contract = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert via_contract == per_sport            # byte-identical reader switch
+
+
+def test_contract_ignores_other_sources_and_sports(tmp_path):
+    db = _make_db(tmp_path)
+    aja = name_key("A'ja Wilson")
+    _add_contract(db, [
+        ("2026-06-26", "WNBA", aja, "PTS", "edgemodel", 22.5),
+        ("2026-06-26", "WNBA", aja, "PTS", "sabersim", 99.9),   # other source ignored
+        ("2026-06-26", "NBA", aja, "PTS", "edgemodel", 88.8),   # other sport ignored
+    ])
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res[(aja, "PTS")] == 22.5
+
+
+def test_falls_back_to_per_sport_when_contract_empty_for_date(tmp_path):
+    db = _make_db(tmp_path)
+    # Contract has a row for a different date only -> this slate falls back.
+    _add_contract(db, [("2026-06-20", "WNBA", name_key("A'ja Wilson"), "PTS", "edgemodel", 1.0)])
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res[(name_key("A'ja Wilson"), "PTS")] == 22.5   # per-sport value, not the contract's
