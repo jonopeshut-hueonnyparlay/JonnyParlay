@@ -88,8 +88,9 @@ def test_migrate_file_dry_run_reports_without_writing(tmp_path):
     res = migrate_file(p)  # dry_run defaults True
     assert res["status"] == "would_migrate"
     assert res["from_version"] == 1
-    assert res["to_version"] == 5
+    assert res["to_version"] == 6
     assert "over_p_raw" in res["added_columns"]
+    assert "clv_corrected" in res["added_columns"]
     assert p.read_bytes() == before  # not written
 
 

@@ -322,6 +322,7 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None, run_t
                         _src,
                         "edgemodel" if _src != _live_source else "",
                         run_id,
+                        "",  # v6: clv_corrected — filled by capture_clv.py
                     ])
                 # Commit to disk before releasing the outer lock (audit H-5).
                 f.flush()
