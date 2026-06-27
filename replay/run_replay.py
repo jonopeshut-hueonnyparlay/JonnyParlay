@@ -95,6 +95,46 @@ def _run_worker_subprocess(date, sport, csv_path, odds_path, as_of):
     return res.stdout or "", res.stderr or "", res.returncode
 
 
+def _apply_manifest_pin(snap_dir: Path) -> Path:
+    """Pin the in-force coverage_manifest into the replay (P-1 / #8).
+
+    The resolver + game-line handover both read resolver._MANIFEST_PATH. At replay we
+    point it at the snapshot's pinned ``coverage_manifest.csv`` when present, so a
+    promoted (weight>0) market replays DETERMINISTICALLY from a frozen input rather than
+    the developer's live manifest. Absent -> point at a guaranteed-missing path so the
+    resolver is DORMANT in replay (replay output is then independent of whatever is in
+    the live coverage_manifest -- a strict determinism improvement). Returns the path used.
+    """
+    import resolver
+    pinned = snap_dir / "coverage_manifest.csv"
+    resolver._MANIFEST_PATH = pinned if pinned.exists() else (snap_dir / "__no_pinned_manifest__.csv")
+    return resolver._MANIFEST_PATH
+
+
+def _check_calibration_pin(snap_dir: Path) -> str:
+    """Record + soft-check the pinned calibration_version (meta.json) against the code.
+
+    Advisory only: a mismatch is printed to STDERR (never stdout, so goldens are
+    unaffected) -- it flags that the snapshot was captured under a different calibration
+    than the code now carries. Returns the pinned value ("" if none)."""
+    meta_path = snap_dir / "meta.json"
+    pinned = ""
+    if meta_path.exists():
+        try:
+            pinned = (json.loads(meta_path.read_text(encoding="utf-8")) or {}).get("calibration_version", "") or ""
+        except (OSError, json.JSONDecodeError):
+            pinned = ""
+    if pinned:
+        try:
+            from calibrated import PLATT_FIT_DATE as _cur
+        except Exception:
+            _cur = ""
+        if _cur and pinned != _cur:
+            print(f"[replay] WARNING: pinned calibration_version {pinned!r} != code {_cur!r} "
+                  f"({snap_dir.name})", file=sys.stderr)
+    return pinned
+
+
 def _worker_entry(ns):
     """Inside the isolated subprocess: patch determinism seams, run main()."""
     sys.path.insert(0, str(ENGINE_DIR))
@@ -114,6 +154,13 @@ def _worker_entry(ns):
     mlb_starter_fetcher.fetch_confirmed_starters = lambda *a, **k: {}
 
     import run_picks  # noqa: E402  (after sys.path setup + patches)
+
+    # #8: pin the in-force coverage_manifest + record the calibration_version so a
+    # promoted market replays deterministically (and replay is independent of the live
+    # manifest). Derive the snapshot dir from the frozen CSV path.
+    _snap_dir = Path(ns.csv).resolve().parent
+    _apply_manifest_pin(_snap_dir)
+    _check_calibration_pin(_snap_dir)
 
     sys.argv = [
         "run_picks.py", str(ns.csv),
