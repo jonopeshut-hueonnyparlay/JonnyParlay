@@ -35,6 +35,14 @@ except ImportError:
     def resolve_team_abbrev(name):   # graceful fallback if engine import unavailable
         return ""
 
+# Distribution primitives are the canonical engine/quant implementations (the
+# same math engine/evaluators.py prices with). Previously duplicated verbatim in
+# this file; consolidated 2026-06-26 (Stage 1 game-line pricer collapse). The
+# byte-identity of the dedup is pinned by
+# tests/test_game_line_canonical_primitives.py.
+from quant.distributions import normal_cdf, negbinom_pmf, negbinom_cdf
+from quant.derived import mlb_ml_from_nb
+
 try:                                  # source the key from secrets, never hardcode
     from secrets_config import ODDS_API_KEY as API_KEY   # engine/ is on sys.path (above)
 except ImportError:
@@ -45,45 +53,8 @@ BOOKS_STR = "draftkings,fanduel,betmgm,caesars,pointsbetus"
 HEADERS   = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 # â”€â”€ Distributions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-def normal_cdf(x, mu, sigma):
-    if sigma <= 0:
-        return 1.0 if x >= mu else 0.0
-    return 0.5 * (1.0 + math.erf((x - mu) / (sigma * math.sqrt(2))))
-
-def negbinom_pmf(k, mu, r):
-    """NB PMF: P(X=k) with mean=mu, dispersion=r."""
-    if mu <= 0:
-        return 1.0 if k == 0 else 0.0
-    k = int(k)
-    if k < 0:
-        return 0.0
-    p = r / (r + mu)
-    log_pmf = (
-        math.lgamma(k + r) - math.lgamma(r) - math.lgamma(k + 1)
-        + r * math.log(p) + k * math.log(1.0 - p)
-    )
-    return math.exp(log_pmf)
-
-def negbinom_cdf(k, mu, r):
-    """NB CDF: P(X <= k) with mean=mu, dispersion=r."""
-    if mu <= 0:
-        return 1.0
-    total = 0.0
-    for i in range(int(k) + 1):
-        total += negbinom_pmf(i, mu, r)
-    return min(total, 1.0)
-
-def mlb_ml_from_nb(mu_home, mu_away, r):
-    """P(home wins) via direct NB probability sum. Ties = 50/50."""
-    if mu_home <= 0 or mu_away <= 0:
-        return 0.5
-    home_wp = 0.0
-    for k in range(31):
-        ph = negbinom_pmf(k, mu_home, r)
-        pa_lt = negbinom_cdf(k - 1, mu_away, r) if k > 0 else 0.0
-        pa_eq = negbinom_pmf(k, mu_away, r)
-        home_wp += ph * (pa_lt + 0.5 * pa_eq)
-    return min(max(home_wp, 0.0), 1.0)
+# (normal_cdf / negbinom_pmf / negbinom_cdf / mlb_ml_from_nb now imported from
+#  quant.distributions + quant.derived — see the import block above.)
 
 # â”€â”€ Sigmas (mirrored from GAME_SIGMA + F5_SIGMA in run_picks.py) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # NHL calibrated 2026-06-05 from 3936 games. MLB team total uses NB (not sigma).
