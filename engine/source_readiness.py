@@ -26,6 +26,7 @@ import csv
 import math
 import sys
 from collections import defaultdict
+from datetime import date as _date
 from pathlib import Path
 
 _ENGINE = Path(__file__).resolve().parent
@@ -43,11 +44,60 @@ _MANIFEST_PATH = Path(DATA_DIR) / "coverage_manifest.csv"
 MIN_DISAGREE = 30          # min-sample precondition (disagreements, not total picks)
 _Z = 1.96                  # ~95% one-sided-ish normal-approx margin
 
+# Walk-forward purged/embargoed evaluation (#10, López de Prado). The pooled win-rate
+# can be carried by one hot streak; this scores EdgeModel's disagreement win-rate
+# out-of-sample across contiguous time folds, purging rows within EMBARGO_DAYS of each
+# fold boundary. Advisory + a veto: a market can't be ready-candidate if it clears the
+# pooled gate but FAILS out-of-sample. Non-blocking when too little dated data exists.
+WF_FOLDS = 5
+WF_EMBARGO_DAYS = 1
+
 _MANIFEST_FIELDS = [
     "sport", "market", "live_source", "challenger", "mode", "weight",
     "n_total", "n_disagree", "em_win_rate_dis", "min_sample_ok", "edge_ok",
-    "em_brier_mean", "live_brier_mean", "brier_edge", "verdict", "target_weight",
+    "em_brier_mean", "live_brier_mean", "brier_edge",
+    "wf_win_rate", "wf_folds", "wf_ok", "verdict", "target_weight",
 ]
+
+
+def _parse_date(s):
+    try:
+        y, m, d = str(s)[:10].split("-")
+        return _date(int(y), int(m), int(d))
+    except Exception:
+        return None
+
+
+def _walk_forward(dis_rows: list, n_folds: int = WF_FOLDS,
+                  embargo_days: int = WF_EMBARGO_DAYS):
+    """Out-of-sample EdgeModel disagreement win-rate across contiguous time folds.
+
+    dis_rows: [(date_str, em_won_bool)] for DISAGREEMENTS only. Splits the distinct
+    dates into n_folds contiguous blocks; within each block (after the first) purges
+    rows inside the first `embargo_days` after the block boundary. Returns
+    (mean_fold_win_rate, n_folds_used), or (None, 0) when too little dated data exists
+    to evaluate (then the caller treats it as non-blocking).
+    """
+    dated = [(_parse_date(d), bool(w)) for (d, w) in dis_rows]
+    dated = [(d, w) for (d, w) in dated if d is not None]
+    uniq = sorted({d for d, _ in dated})
+    if len(dated) < n_folds * 2 or len(uniq) < n_folds:
+        return None, 0
+    fold_size = math.ceil(len(uniq) / n_folds)
+    rates = []
+    for k in range(n_folds):
+        block = uniq[k * fold_size:(k + 1) * fold_size]
+        if not block:
+            continue
+        start = block[0]
+        block_set = set(block)
+        kept = [w for (d, w) in dated
+                if d in block_set and (k == 0 or (d - start).days >= embargo_days)]
+        if kept:
+            rates.append(sum(kept) / len(kept))
+    if not rates:
+        return None, 0
+    return sum(rates) / len(rates), len(rates)
 
 # Weight-ramp (advisory): shrunk-toward-incumbent, capped during maturation. The
 # manifest's LIVE `weight` stays 0 (resolver dormant) until promote() is run for a
@@ -77,14 +127,17 @@ def _wilson_lower(wins: int, n: int, z: float = _Z) -> float:
 def score(rows: list[dict]) -> list[dict]:
     """Aggregate compare rows -> per-(sport, market) readiness manifest rows."""
     agg: dict = defaultdict(lambda: {"n": 0, "dis": 0, "em": 0, "eb": 0.0, "lb": 0.0, "bn": 0})
+    dis_by_market: dict = defaultdict(list)   # (sport,market) -> [(date, em_won)] for #10
     for r in rows:
         key = ((r.get("sport") or "").upper(), (r.get("stat") or "").upper())
         a = agg[key]
         a["n"] += 1
         if str(r.get("agree")) == "0":
             a["dis"] += 1
-            if r.get("disagree_winner") == "edgemodel":
+            em_won = r.get("disagree_winner") == "edgemodel"
+            if em_won:
                 a["em"] += 1
+            dis_by_market[key].append((r.get("date"), em_won))
         eb, lb = _f(r.get("em_brier")), _f(r.get("live_brier"))
         if eb is not None and lb is not None:
             a["eb"] += eb
@@ -102,7 +155,11 @@ def score(rows: list[dict]) -> list[dict]:
         live_brier = a["lb"] / a["bn"] if a["bn"] else None
         brier_edge = (live_brier - em_brier) if a["bn"] else None
         brier_ok = brier_edge is None or brier_edge >= 0  # absent brier doesn't block; worse Brier vetoes
-        if min_sample_ok and edge_ok and brier_ok:
+        # #10 walk-forward purged/embargoed out-of-sample win-rate. Non-blocking when
+        # too little dated data exists (wf None -> wf_ok True); a veto otherwise.
+        wf_win_rate, wf_folds = _walk_forward(dis_by_market.get((sport, market), []))
+        wf_ok = wf_win_rate is None or wf_win_rate > 0.5
+        if min_sample_ok and edge_ok and brier_ok and wf_ok:
             verdict, mode = "ready-candidate", "shadow"   # promotion is a separate, manual gate
         elif not min_sample_ok:
             verdict, mode = "insufficient-sample", "shadow"
@@ -120,6 +177,8 @@ def score(rows: list[dict]) -> list[dict]:
             "em_brier_mean": round(em_brier, 4) if em_brier is not None else "",
             "live_brier_mean": round(live_brier, 4) if live_brier is not None else "",
             "brier_edge": round(brier_edge, 4) if brier_edge is not None else "",
+            "wf_win_rate": round(wf_win_rate, 3) if wf_win_rate is not None else "",
+            "wf_folds": wf_folds, "wf_ok": int(wf_ok),
             "verdict": verdict, "target_weight": target_weight,
         })
     return out

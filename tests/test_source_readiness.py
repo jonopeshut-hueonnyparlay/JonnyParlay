@@ -135,6 +135,48 @@ def test_game_line_brier_veto_flows_through_run(tmp_path):
     assert m["verdict"] == "live-source-holds"
 
 
+def _dated_dis(sport, stat, per_day):
+    """Disagreement rows across days: per_day = {date: (em_wins, live_wins)}."""
+    rows = []
+    for day, (emw, livew) in per_day.items():
+        rows += [{"sport": sport, "stat": stat, "agree": "0",
+                  "disagree_winner": "edgemodel", "date": day} for _ in range(emw)]
+        rows += [{"sport": sport, "stat": stat, "agree": "0",
+                  "disagree_winner": "live", "date": day} for _ in range(livew)]
+    return rows
+
+
+def test_walk_forward_vetoes_when_out_of_sample_fails():
+    # Pooled: 60/75 EM wins (80%) over 6 days clears the pooled edge gate -- BUT the
+    # last 3 days are all live wins, so the out-of-sample fold win-rate collapses and
+    # the #10 walk-forward veto holds the market.
+    per_day = {
+        "2026-06-01": (20, 0), "2026-06-02": (20, 0), "2026-06-03": (20, 0),
+        "2026-06-04": (0, 5), "2026-06-05": (0, 5), "2026-06-06": (0, 5),
+    }
+    m = sr.score(_dated_dis("NBA", "PTS", per_day))[0]
+    assert m["edge_ok"] == 1            # pooled edge clears
+    assert m["wf_ok"] == 0             # but out-of-sample fails
+    assert m["verdict"] == "live-source-holds"
+
+
+def test_walk_forward_confirms_when_consistent():
+    # EM wins ~70% every day across 6 days -> walk-forward agrees with the pooled gate.
+    per_day = {d: (7, 3) for d in (
+        "2026-06-01", "2026-06-02", "2026-06-03",
+        "2026-06-04", "2026-06-05", "2026-06-06")}
+    m = sr.score(_dated_dis("NBA", "PTS", per_day))[0]
+    assert m["wf_folds"] >= 2 and m["wf_ok"] == 1
+    assert m["verdict"] == "ready-candidate"
+
+
+def test_walk_forward_non_blocking_without_dates():
+    # Dateless rows (legacy) -> wf can't evaluate -> non-blocking -> verdict unchanged.
+    m = sr.score(_rows_brier("NBA", "AST", 20, 35, 15, em_brier=0.18, live_brier=0.25))[0]
+    assert m["wf_win_rate"] == "" and m["wf_ok"] == 1
+    assert m["verdict"] == "ready-candidate"
+
+
 def test_wilson_lower_bounds():
     assert sr._wilson_lower(0, 0) == 0.0
     # 35/50 = 0.70; lower bound should clear 0.5 but stay below the point estimate
