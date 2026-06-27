@@ -216,8 +216,15 @@ check("sgp_builder single-source invariant runs at import",
       "NB_R single-source load-time invariant missing")
 check("sgp_builder BLK/STL stay SGP-only", '"BLK": 2.8' in sgp and '"STL": 3.6' in sgp,
       "SGP-only NB_R stats BLK/STL missing from _SGP_ONLY_NB_R")
-# Copula math moved to quant/copula.py (Step 7); the *0.87 deflation lives there now.
-copula_src = read_file(ENGINE / "quant" / "copula.py")
+# Copula math moved out of the repo into the shared pricing_core package during
+# unification (the in-repo engine/quant was deleted), so read the source from the
+# INSTALLED quant.copula module rather than a now-missing repo path.
+try:
+    import inspect as _inspect
+    import quant.copula as _copula_mod
+    copula_src = _inspect.getsource(_copula_mod)
+except Exception:
+    copula_src = ""
 check("quant/copula.py copula *0.87", "0.87" in copula_src, "Copula deflation factor not found")
 check("sgp_builder SGP_JOINT_EV_MARGIN=0.025", "0.025" in sgp, "")
 # P2.6: ρ-matrix PSD/in-range validation. The load-time invariants are the real
