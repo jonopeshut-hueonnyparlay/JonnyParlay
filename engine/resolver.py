@@ -28,6 +28,14 @@ try:
 except Exception:  # pragma: no cover
     DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
+try:
+    # Combo (correlated) markets -> their component marginals. Blending a combo means
+    # blending each COMPONENT projection so the copula (COMBO_RHO) re-runs on blended
+    # marginals downstream -- NOT blending the joint combo probability.
+    from calibrated import COMBO_COMPONENTS
+except Exception:  # pragma: no cover
+    COMBO_COMPONENTS = {}
+
 log = logging.getLogger("jonnyparlay")
 
 _MANIFEST_PATH = Path(DATA_DIR) / "coverage_manifest.csv"
@@ -81,6 +89,41 @@ def _active_markets(manifest_path=None) -> dict:
     return active
 
 
+def blend_marginal(live, em, w: float):
+    """Projection-level blend of one marginal: (1-w)*live + w*em. Live unchanged if em
+    is absent or live isn't numeric."""
+    if em is None or not isinstance(live, (int, float)):
+        return live
+    return (1.0 - w) * live + w * em
+
+
+def blend_prob(live_p: float, em_p: float, w: float) -> float:
+    """Probability-level blend of ONE marginal probability, clamped to [0,1].
+
+    For a CORRELATED multi-leg market (combo / same-game / SGP), blend each leg's
+    MARGINAL (projection via blend_marginal, or marginal prob here) and then re-run the
+    single copula (calc_combo_prob / the SGP sampler) ONCE on the blended marginals.
+    NEVER blend the joint/parlay probability of independently-priced legs -- that
+    discards the copula's correlation and double-counts the blend. See
+    _blend_market_into_player: a promoted combo market blends its COMPONENTS, not 'PRA'.
+    """
+    try:
+        return max(0.0, min(1.0, (1.0 - w) * float(live_p) + w * float(em_p)))
+    except (TypeError, ValueError):
+        return live_p
+
+
+def _blend_market_into_player(p: dict, nk: str, market: str, w: float, em: dict) -> None:
+    """Blend one promoted market into player p (in place). Simple stats blend their own
+    projection; combo markets blend each component marginal so the copula re-runs on the
+    blended marginals (correlation preserved), never on a blended joint probability."""
+    components = COMBO_COMPONENTS.get(market, (market,))
+    for comp in components:
+        em_proj = em.get((nk, comp))
+        if em_proj is not None and isinstance(p.get(comp), (int, float)):
+            p[comp] = blend_marginal(p[comp], em_proj, w)
+
+
 def resolve_players(all_players: dict, game_date: str, manifest_path=None, db_path=None) -> dict:
     """Blend EdgeModel projections into the live pool per the coverage_manifest.
 
@@ -105,11 +148,8 @@ def resolve_players(all_players: dict, game_date: str, manifest_path=None, db_pa
                 continue
             for p in players:
                 nk = name_key(p.get("name"))
-                for stat, w in markets.items():
-                    em_proj = em.get((nk, stat))
-                    live_proj = p.get(stat)
-                    if em_proj is not None and isinstance(live_proj, (int, float)):
-                        p[stat] = (1.0 - w) * live_proj + w * em_proj
+                for market, w in markets.items():
+                    _blend_market_into_player(p, nk, market, w, em)
             log.info("resolver: blended %d EdgeModel market(s) into %s pool", len(markets), sport)
     except Exception as exc:  # pragma: no cover - never break pricing
         log.warning("resolver: blend failed (%s) -- live source unchanged", exc)
