@@ -179,8 +179,16 @@ def _read_compare(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def run(compare_path: Path = None, manifest_path: Path = None) -> list[dict]:
+_GL_COMPARE_PATH = Path(DATA_DIR) / "pick_log_gl_source_compare.csv"
+
+
+def run(compare_path: Path = None, manifest_path: Path = None,
+        gl_compare_path: Path = None) -> list[dict]:
     rows = _read_compare(Path(compare_path or _COMPARE_PATH))
+    # Also ingest the MLB game-line comparison (sport=MLB, market -> stat); no Brier there.
+    for r in _read_compare(Path(gl_compare_path or _GL_COMPARE_PATH)):
+        rows.append({"sport": "MLB", "stat": (r.get("market") or "").upper(),
+                     "agree": r.get("agree"), "disagree_winner": r.get("disagree_winner")})
     manifest = score(rows)
     out = Path(manifest_path or _MANIFEST_PATH)
     out.parent.mkdir(parents=True, exist_ok=True)

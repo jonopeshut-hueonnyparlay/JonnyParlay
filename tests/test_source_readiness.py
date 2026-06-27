@@ -98,6 +98,24 @@ def test_promote_noop_when_no_target_weight(tmp_path):
     assert sr.promote("NBA", "PTS", manifest_path=man) is False  # nothing to promote
 
 
+def test_run_ingests_game_line_comparison(tmp_path):
+    import csv as _csv
+    pc = tmp_path / "compare.csv"
+    with open(pc, "w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=["sport", "stat", "agree", "disagree_winner"])
+        w.writeheader()
+        w.writerow({"sport": "NBA", "stat": "PTS", "agree": "1", "disagree_winner": ""})
+    gl = tmp_path / "gl.csv"
+    with open(gl, "w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=["market", "agree", "disagree_winner"])
+        w.writeheader()
+        w.writerow({"market": "TOTAL", "agree": "0", "disagree_winner": "edgemodel"})
+    out = sr.run(compare_path=pc, manifest_path=tmp_path / "m.csv", gl_compare_path=gl)
+    markets = {(m["sport"], m["market"]) for m in out}
+    assert ("MLB", "TOTAL") in markets   # game-line market promoted into the manifest
+    assert ("NBA", "PTS") in markets
+
+
 def test_wilson_lower_bounds():
     assert sr._wilson_lower(0, 0) == 0.0
     # 35/50 = 0.70; lower bound should clear 0.5 but stay below the point estimate
