@@ -324,9 +324,15 @@ def find_outcome(outcomes, name_map, abbr):
     return None
 
 # â”€â”€ MLB team total NB probability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# MLB team-total NB pricing now lives in the canonical engine
-# (game_line_pricing.team_total_mlb_nb) — see the call site in analyze_mlb.
-from game_line_pricing import team_total_mlb_nb
+# Game-line pricing is the canonical engine (game_line_pricing). Market anchoring
+# is applied at trust=BLEND_ALPHA (the same calibrated 0.25 evaluators.py uses),
+# pulling raw projections toward the market — the CLV fix for the bet-generating
+# analyzer (2026-06-26 Stage 1 Commit 2).
+from game_line_pricing import (
+    team_total_mlb_nb, blend, prob_total_over, prob_spread_cover, prob_ml_mlb_nb,
+    prob_ml_normal, prob_team_total_normal,
+)
+from thresholds import BLEND_ALPHA
 
 # â”€â”€ MLB analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
@@ -376,8 +382,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
             oh = find_outcome(outs, MLB_NAME_MAP, home_abbr)
             if oa and oh:
                 pa_nv, ph_nv = novigp(american_to_prob(oa["price"]), american_to_prob(oh["price"]))
-                mh = mlb_ml_from_nb(home_proj, away_proj, MLB_TEAM_RUN_R)
-                ma = 1.0 - mh
+                # Anchor each side's NB win prob toward its no-vig market price.
+                mh = prob_ml_mlb_nb(home_proj, away_proj, MLB_TEAM_RUN_R, ph_nv, is_home=True,  trust=BLEND_ALPHA)
+                ma = prob_ml_mlb_nb(home_proj, away_proj, MLB_TEAM_RUN_R, pa_nv, is_home=False, trust=BLEND_ALPHA)
                 e = edge_str(mh, ph_nv, f"ML HOME  {home_abbr}", odds=oh["price"], book=ml["book"])
                 if e: edges.append(e)
                 e = edge_str(ma, pa_nv, f"ML AWAY  {away_abbr}", odds=oa["price"], book=ml["book"])
@@ -392,7 +399,8 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
             if oa and oh:
                 sp_line = oh.get("point", 0)
                 ph_nv, pa_nv = novigp(american_to_prob(oh["price"]), american_to_prob(oa["price"]))
-                cover_h = 1.0 - normal_cdf(-sp_line, margin, sig["spread"])
+                # Anchor projected margin toward the market-implied margin (-sp_line).
+                cover_h = prob_spread_cover(margin, -sp_line, sp_line, sig["spread"], is_home=True, trust=BLEND_ALPHA)
                 e = edge_str(cover_h,       ph_nv, f"SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"], book=sp["book"])
                 if e: edges.append(e)
                 e = edge_str(1.0-cover_h,   pa_nv, f"SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"], book=sp["book"])
@@ -407,7 +415,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
             if ov and un:
                 tline = ov.get("point", 0)
                 pov_nv, pun_nv = novigp(american_to_prob(ov["price"]), american_to_prob(un["price"]))
-                mov = 1.0 - normal_cdf(tline, total_proj, sig["total"])
+                mov = prob_total_over(total_proj, tline, sig["total"], trust=BLEND_ALPHA)
                 e = edge_str(mov,      pov_nv, f"TOTAL OVER  ({tline})", odds=ov["price"], book=tot["book"])
                 if e: edges.append(e)
                 e = edge_str(1.0-mov,  pun_nv, f"TOTAL UNDER ({tline})", odds=un["price"], book=tot["book"])
@@ -431,7 +439,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 if not ttl or oo is None or uo is None:
                     continue
                 pov_nv, pun_nv = novigp(american_to_prob(oo), american_to_prob(uo))
-                mov, mun = team_total_mlb_nb(proj, ttl, MLB_TEAM_RUN_R)
+                # Per-team NB dispersion (global r only as fallback); anchor proj to the line.
+                _tt_r = get_mlb_team_run_r(abbr)
+                mov, mun = team_total_mlb_nb(blend(proj, ttl, BLEND_ALPHA), ttl, _tt_r)
                 e = edge_str(mov, pov_nv, f"TT OVER  {abbr} ({ttl})", odds=oo, book=info.get("book",""))
                 if e: edges.append(e)
                 e = edge_str(mun, pun_nv, f"TT UNDER {abbr} ({ttl})", odds=uo, book=info.get("book",""))
@@ -449,7 +459,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 f5line = ov.get("point", 0)
                 pov_nv, pun_nv = novigp(american_to_prob(ov["price"]), american_to_prob(un["price"]))
                 f5proj = total_proj * F5_SCALAR
-                mov = 1.0 - normal_cdf(f5line, f5proj, F5_SIGMA["total"])
+                mov = prob_total_over(f5proj, f5line, F5_SIGMA["total"], trust=BLEND_ALPHA)
                 e = edge_str(mov,     pov_nv, f"F5 TOTAL OVER  ({f5line})", odds=ov["price"], book=f5t["book"])
                 if e: edges.append(e)
                 e = edge_str(1.0-mov, pun_nv, f"F5 TOTAL UNDER ({f5line})", odds=un["price"], book=f5t["book"])
@@ -464,10 +474,13 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
             if oa and oh:
                 pa_nv, ph_nv = novigp(american_to_prob(oa["price"]), american_to_prob(oh["price"]))
                 f5m = (home_proj - away_proj) * F5_SCALAR
-                mh = 1.0 - normal_cdf(0, f5m, F5_SIGMA["spread"])
-                e = edge_str(mh,     ph_nv, f"F5 ML HOME  {home_abbr}", odds=oh["price"], book=f5ml["book"])
+                # F5 ML has no independent spread line -> anchor each side's raw win prob to no-vig.
+                raw_mh = 1.0 - normal_cdf(0, f5m, F5_SIGMA["spread"])
+                mh = blend(raw_mh, ph_nv, BLEND_ALPHA)
+                ma = blend(1.0 - raw_mh, pa_nv, BLEND_ALPHA)
+                e = edge_str(mh, ph_nv, f"F5 ML HOME  {home_abbr}", odds=oh["price"], book=f5ml["book"])
                 if e: edges.append(e)
-                e = edge_str(1.0-mh, pa_nv, f"F5 ML AWAY  {away_abbr}", odds=oa["price"], book=f5ml["book"])
+                e = edge_str(ma, pa_nv, f"F5 ML AWAY  {away_abbr}", odds=oa["price"], book=f5ml["book"])
                 if e: edges.append(e)
 
         # F5 SPREAD â€” Normal
@@ -480,7 +493,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 sp_line = oh.get("point", 0)
                 ph_nv, pa_nv = novigp(american_to_prob(oh["price"]), american_to_prob(oa["price"]))
                 f5m = (home_proj - away_proj) * F5_SCALAR
-                cover_h = 1.0 - normal_cdf(-sp_line, f5m, F5_SIGMA["spread"])
+                cover_h = prob_spread_cover(f5m, -sp_line, sp_line, F5_SIGMA["spread"], is_home=True, trust=BLEND_ALPHA)
                 e = edge_str(cover_h,       ph_nv, f"F5 SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"], book=f5sp["book"])
                 if e: edges.append(e)
                 e = edge_str(1.0-cover_h,   pa_nv, f"F5 SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"], book=f5sp["book"])
@@ -567,7 +580,14 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
             oh = find_outcome(outs, NBA_NAME_MAP, home_abbr)
             if oa and oh:
                 pa_nv, ph_nv = novigp(american_to_prob(oa["price"]), american_to_prob(oh["price"]))
-                mh = 1.0 - normal_cdf(0, margin, sig["ml"])
+                # Anchor projected margin toward the market spread (variable-spread ML); raw if none.
+                _sp_ml = best_book_odds(game, "spreads")
+                _mkt_margin = margin
+                if _sp_ml:
+                    _oh_sp = find_outcome(_sp_ml["outcomes"], NBA_NAME_MAP, home_abbr)
+                    if _oh_sp and _oh_sp.get("point") is not None:
+                        _mkt_margin = -_oh_sp["point"]
+                mh = prob_ml_normal(margin, _mkt_margin, sig["ml"], is_home=True, trust=BLEND_ALPHA)
                 ma = 1.0 - mh
                 e = edge_str(mh, ph_nv, f"ML HOME  {home_abbr}", odds=oh["price"], book=ml["book"])
                 if e: edges.append(e)
@@ -583,7 +603,8 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
             if oa and oh:
                 sp_line = oh.get("point", 0)
                 ph_nv, pa_nv = novigp(american_to_prob(oh["price"]), american_to_prob(oa["price"]))
-                cover_h = 1.0 - normal_cdf(-sp_line, margin, sig["spread"])
+                # Anchor projected margin toward the market-implied margin (-sp_line).
+                cover_h = prob_spread_cover(margin, -sp_line, sp_line, sig["spread"], is_home=True, trust=BLEND_ALPHA)
                 e = edge_str(cover_h,       ph_nv, f"SPREAD HOME {home_abbr} ({sp_line:+.1f})", odds=oh["price"], book=sp["book"])
                 if e: edges.append(e)
                 e = edge_str(1.0-cover_h,   pa_nv, f"SPREAD AWAY {away_abbr} ({-sp_line:+.1f})", odds=oa["price"], book=sp["book"])
@@ -598,7 +619,7 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
             if ov and un:
                 tline = ov.get("point", 0)
                 pov_nv, pun_nv = novigp(american_to_prob(ov["price"]), american_to_prob(un["price"]))
-                mov = 1.0 - normal_cdf(tline, total_proj, sig["total"])
+                mov = prob_total_over(total_proj, tline, sig["total"], trust=BLEND_ALPHA)
                 e = edge_str(mov,     pov_nv, f"TOTAL OVER  ({tline})", odds=ov["price"], book=tot["book"])
                 if e: edges.append(e)
                 e = edge_str(1.0-mov, pun_nv, f"TOTAL UNDER ({tline})", odds=un["price"], book=tot["book"])
@@ -620,7 +641,7 @@ def analyze_nba(games_data, team_projs=None, ctx_verdicts=None):
                 if not ttl or oo is None or uo is None:
                     continue
                 pov_nv, pun_nv = novigp(american_to_prob(oo), american_to_prob(uo))
-                mov = 1.0 - normal_cdf(ttl, proj, sig["team"])
+                mov = prob_team_total_normal(proj, ttl, sig["team"], trust=BLEND_ALPHA)
                 e = edge_str(mov,     pov_nv, f"TT OVER  {abbr} ({ttl})", odds=oo, book=info.get("book",""))
                 if e: edges.append(e)
                 e = edge_str(1.0-mov, pun_nv, f"TT UNDER {abbr} ({ttl})", odds=uo, book=info.get("book",""))
