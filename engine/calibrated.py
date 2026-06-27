@@ -11,6 +11,8 @@ run_picks re-imports those populated dicts (the get_game_sigma* accessors stay i
 """
 from pathlib import Path
 
+from pricing_core import WNBA_NB_R as _PC_WNBA_NB_R  # WNBA NB-r: shared single source of truth
+
 SIGMA = {
     # NBA / NHL — Normal distribution sigma: σ = max(proj * mult, min)
     # NOTE: SOG/HITS removed — POISSON_STATS takes priority.
@@ -87,13 +89,15 @@ NB_R = {
     "TB":  1.3,    # calibrated 2026-05-26: 169k batter game-logs, within-player var/mu=2.117. Fallback only — calc_tb_prob() uses component Poisson convolution (1B/2B/3B/HR) when TB_1B available, which is more accurate.
 }
 
+# WNBA NB dispersion r — single source: pricing_core.WNBA_NB_R (was a local literal;
+# centralised so the JonnyParlay<->EdgeModel lockstep can't drift). Values unchanged:
+#   reb/ast calibrated 2026-06-04 (202 players / 13,322 games, 2023-26 WNBA RS, min>=8);
+#   3PM(fg3m)=5.0 within-player refit 2026-06-26 (prior 1.342 was pooled/over-dispersed,
+#   implied var/mu~1.97, beaten by Poisson; r=5 calibration-optimal on 17k logs). [audit 2026-06]
 NB_R_WNBA = {
-    "AST": 11.37,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
-    "REB": 10.74,  # calibrated 2026-06-04: 202 players / 13,322 games (2023-2026 WNBA RS, min>=8)
-    "3PM": 5.0,    # REFIT 2026-06-26 (STAGED, pending sign-off): within-player var/mu=1.16 (the prior
-                   #   1.342 was fit on POOLED var/mu=1.81 — between-player spread, wrong for single-player
-                   #   pricing; it implied var/mu~1.97 and was beaten by Poisson). r=5 is the calibration-
-                   #   optimal single value (flat 4-6) on 17k logs: hit-rate mean|err| 0.032->0.021. [audit 2026-06]
+    "AST": _PC_WNBA_NB_R["ast"],
+    "REB": _PC_WNBA_NB_R["reb"],
+    "3PM": _PC_WNBA_NB_R["fg3m"],
 }
 
 # Combo props: PTS+REB+AST, PTS+REB, PTS+AST, REB+AST
