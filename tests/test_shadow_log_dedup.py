@@ -164,9 +164,9 @@ def test_shadow_log_schema_rewrite_still_fires(tmp_path):
         new_header = reader.fieldnames
         rows = list(reader)
 
-    # Header upgraded to canonical schema v4
-    assert list(new_header)[-3:] == ["source", "model_version", "run_id"]
-    assert len(new_header) == 32
+    # Header upgraded to canonical schema v6
+    assert list(new_header)[-4:] == ["source", "model_version", "run_id", "clv_corrected"]
+    assert len(new_header) == 33
     # Original row preserved
     assert len(rows) == 1
     assert rows[0]["player"] == "LeBron James"

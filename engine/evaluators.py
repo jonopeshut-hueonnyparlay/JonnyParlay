@@ -172,7 +172,7 @@ def evaluate_props(matched_props, mode="Default", cooldown_players=None):
             # are the LEAST calibrated paths (MLB uncalibrated, combos ~5pp inflated),
             # so shrinkage toward market is most defensible exactly there.
             # Edge recomputed from the shrunk prob (same formula: model_p − no-vig_p).
-            win_prob = apply_bm_shrinkage(win_prob, odds, tier)
+            win_prob = apply_bm_shrinkage(win_prob, odds, tier, nv_prob=nv_prob)
             raw_edge = win_prob - nv_prob
 
             adj_edge = raw_edge * conf

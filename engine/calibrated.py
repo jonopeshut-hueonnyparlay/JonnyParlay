@@ -291,6 +291,12 @@ TIERS = {
 # (BM_SHRINKAGE_DEFAULT lives in thresholds.py.)
 BM_SHRINKAGE_WEIGHT = {"T2": 0.85, "T1": 0.75, "T1B": 0.80, "T3": 0.70}
 
+# Track-B Sprint 1: switch the BM shrinkage anchor from the VIGGED single-side implied
+# to the NO-VIG market prob (the theoretically-correct anchor — see sizing_core docstring).
+# Flag-gated and DATA_GATED: keep False until CLV maturity / per-family refit n>=150 + sign-off.
+# False => byte-identical to current behaviour (vigged anchor).
+USE_NO_VIG_ANCHOR = False
+
 # Per-market Kelly multipliers applied BEFORE rounding and floor/cap.
 # Lookup: (sport, stat, direction) → (sport, stat, None) → DEFAULT_MARKET_MULT.
 # Only applied to straight prop sizing (not SGP/parlay/daily_lay).

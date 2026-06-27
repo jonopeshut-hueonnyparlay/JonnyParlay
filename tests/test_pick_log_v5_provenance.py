@@ -12,14 +12,17 @@ import pick_log_schema as pls
 # ── schema (v5, append-only) ────────────────────────────────────────────────
 
 def test_schema_version_and_header():
-    assert pls.SCHEMA_VERSION == 5
-    assert pls.CANONICAL_HEADER[-3:] == ["source", "model_version", "run_id"]
+    assert pls.SCHEMA_VERSION == 6
+    # v5 provenance trio followed by the v6 clv_corrected column.
+    assert pls.CANONICAL_HEADER[-4:] == ["source", "model_version", "run_id", "clv_corrected"]
     assert pls.LIVE_SOURCE == "sabersim"
 
 
-def test_detect_v5_and_v4():
-    assert pls.detect_schema_version(pls.CANONICAL_HEADER) == 5
-    v4 = [c for c in pls.CANONICAL_HEADER if c not in ("source", "model_version", "run_id")]
+def test_detect_v6_v5_and_v4():
+    assert pls.detect_schema_version(pls.CANONICAL_HEADER) == 6
+    v5 = [c for c in pls.CANONICAL_HEADER if c != "clv_corrected"]
+    assert pls.detect_schema_version(v5) == 5
+    v4 = [c for c in v5 if c not in ("source", "model_version", "run_id")]
     assert pls.detect_schema_version(v4) == 4
 
 

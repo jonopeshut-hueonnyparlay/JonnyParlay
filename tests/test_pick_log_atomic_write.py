@@ -69,11 +69,11 @@ def test_header_rewrite_uses_tmp_file(tmp_path):
     assert "context_verdict" in new_header  # one of the v2 columns
     assert "legs" in new_header             # v3: 28th column
     assert "over_p_raw" in new_header       # v4: 29th column
-    assert list(new_header)[-3:] == ["source", "model_version", "run_id"], (
-        f"v5 provenance cols must be the final three but got: {new_header[-3:]!r}"
+    assert list(new_header)[-4:] == ["source", "model_version", "run_id", "clv_corrected"], (
+        f"v5 provenance + v6 clv_corrected must be the final cols but got: {new_header[-4:]!r}"
     )
     assert list(new_header).index("legs") == 27
-    assert len(new_header) == 32, f"Expected 32 columns, got {len(new_header)}"
+    assert len(new_header) == 33, f"Expected 33 columns, got {len(new_header)}"
     # Original rows preserved
     assert len(surviving_rows) == 2
     assert surviving_rows[0]["player"] == "LeBron James"

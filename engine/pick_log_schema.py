@@ -24,7 +24,7 @@ SCHEMA HISTORY
                      Enables proper Platt refit without double-calibration bias
                      (Research Brief 8 / Walsh & Joshi 2024). Blank for legacy
                      rows and non-prop picks (game lines, parlays).
-  v5 (current)     : adds source, model_version, run_id — per-bet SOURCE PROVENANCE
+  v5 (deprecated)  : adds source, model_version, run_id — per-bet SOURCE PROVENANCE
                      (32 cols). `source` = which source drove the live price
                      ('sabersim' by default; 'edgemodel'/'blend:<w>' once a market
                      is promoted via the coverage_manifest). `model_version` =
@@ -32,6 +32,11 @@ SCHEMA HISTORY
                      the bet to its run (cross-refs the run_manifest / projection
                      contract in projections.db). Append-only; blank-fills for
                      legacy rows. Powers the bet_lineage reconstruction.
+  v6 (current)     : adds clv_corrected — de-vigged-both-sides CLV (33 cols,
+                     Track-B Sprint 1). Diagnostic only; filled by capture_clv.py
+                     when the close was de-vigged (props/totals), blank otherwise
+                     (and for ML/spread, where the entry/close vigs cancel). `clv`
+                     is untouched. Append-only; blank for legacy rows.
 
 Bumping the schema:
   - Add new columns to the end of CANONICAL_HEADER (append-only keeps
@@ -50,7 +55,7 @@ from typing import Callable, Iterable, Mapping
 # Canonical schema (v4)
 # ─────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Default `source` label for the live pricing source (SaberSim CSV). A bet carries
 # this unless the resolver promoted its market off 'shadow' (then 'edgemodel' or
@@ -86,6 +91,9 @@ CANONICAL_HEADER: list[str] = [
     "source",          # which source drove the price: 'sabersim'|'edgemodel'|'blend:<w>'
     "model_version",   # pricing/model tag (blank for the live source)
     "run_id",          # ties the bet to its run (cross-refs run_manifest / projection contract)
+    # v6: de-vigged-both-sides CLV (Track-B Sprint 1). Diagnostic only, additive;
+    # filled by capture_clv.py when the close was de-vigged, blank otherwise.
+    "clv_corrected",
 ]
 
 # Fast membership checks.
@@ -113,6 +121,9 @@ _V4_COLUMNS: frozenset[str] = frozenset(["over_p_raw"])
 # Columns added in v5 (per-bet source provenance).
 _V5_COLUMNS: frozenset[str] = frozenset(["source", "model_version", "run_id"])
 
+# Columns added in v6 (de-vigged-both-sides CLV diagnostic).
+_V6_COLUMNS: frozenset[str] = frozenset(["clv_corrected"])
+
 # Default value for any canonical column that's missing from an input row.
 # Empty string is what writers emit for "not applicable" / "not yet filled",
 # so using "" preserves the existing "blank means nothing here" contract.
@@ -127,6 +138,7 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     """Infer which schema version an on-disk pick_log was written under.
 
     Returns:
+      6 — header includes any v6-only column (clv_corrected)
       5 — header includes any v5-only column (source/model_version/run_id)
       4 — header includes any v4-only column (over_p_raw)
       3 — header includes any v3-only column (legs)
@@ -137,6 +149,8 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     if not on_disk_header:
         return 0
     cols = set(on_disk_header)
+    if cols & _V6_COLUMNS:
+        return 6
     if cols & _V5_COLUMNS:
         return 5
     if cols & _V4_COLUMNS:
@@ -653,6 +667,9 @@ assert _V4_COLUMNS.issubset(KNOWN_COLUMNS), (
 )
 assert _V5_COLUMNS.issubset(KNOWN_COLUMNS), (
     "v5 columns must all be part of the canonical schema"
+)
+assert _V6_COLUMNS.issubset(KNOWN_COLUMNS), (
+    "v6 columns must all be part of the canonical schema"
 )
 
 
