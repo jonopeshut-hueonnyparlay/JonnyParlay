@@ -36,7 +36,34 @@ except Exception:  # pragma: no cover
 
 _OUT_PATH = Path(DATA_DIR) / "pick_log_gl_source_compare.csv"
 _OUT_FIELDS = ["date", "game", "market", "line", "live_side", "em_side",
-               "actual", "live_win", "em_win", "agree", "disagree_winner"]
+               "actual", "live_win", "em_win", "agree", "disagree_winner",
+               # #9: proper scoring -- each source's prob for the binary event
+               # (over / home-win) + Brier vs outcome, so the readiness gate's
+               # Brier veto applies to game-line markets too.
+               "live_prob", "em_prob", "live_brier", "em_brier"]
+
+
+def _brier(p, outcome: int):
+    """(p-outcome)^2, or '' if p isn't a usable probability."""
+    try:
+        p = float(p)
+    except (TypeError, ValueError):
+        return ""
+    if not 0.0 <= p <= 1.0:
+        return ""
+    return round((p - outcome) ** 2, 6)
+
+
+def _live_prob_for_event(win_prob, bet_dir: str, event_dir: str):
+    """Live source's probability of `event_dir` from the logged win_prob (the prob of
+    the bet's own side). e.g. a logged 'under' win_prob -> P(over) = 1 - win_prob."""
+    try:
+        wp = float(win_prob)
+    except (TypeError, ValueError):
+        return ""
+    if not 0.0 <= wp <= 1.0:
+        return ""
+    return round(wp if bet_dir == event_dir else 1.0 - wp, 6)
 
 
 def fetch_mlb_game_projections(game_date: str, db_path=None) -> dict:
@@ -94,6 +121,7 @@ def compare_rows(pick_rows: list[dict], fetch=fetch_mlb_game_projections, db_pat
                 continue
             direction = (r.get("direction") or "").strip().lower()
 
+            # event_dir = the canonical binary event we score both sources on.
             if market == "TOTAL" and direction in ("over", "under"):
                 try:
                     line = float(r.get("line"))
@@ -105,6 +133,8 @@ def compare_rows(pick_rows: list[dict], fetch=fetch_mlb_game_projections, db_pat
                 live_side = direction
                 em_side = "over" if g["proj_total"] > line else "under"
                 actual = "over" if actual_over else "under"
+                event_dir, outcome = "over", int(actual_over)
+                em_prob = g.get("p_over_total")
             elif market == "ML" and direction in ("home", "away"):
                 if g.get("p_home_win") is None:
                     continue
@@ -112,18 +142,24 @@ def compare_rows(pick_rows: list[dict], fetch=fetch_mlb_game_projections, db_pat
                 live_side = direction
                 em_side = "home" if g["p_home_win"] > 0.5 else "away"
                 actual = "home" if actual_home else "away"
+                event_dir, outcome = "home", int(actual_home)
+                em_prob = g.get("p_home_win")
             else:
                 continue  # SPREAD / TEAM_TOTAL / F5_* not covered yet
 
             live_win = result == "W"
             em_win = em_side == actual
             agree = live_side == em_side
+            live_prob = _live_prob_for_event(r.get("win_prob"), direction, event_dir)
             out.append({
                 "date": date, "game": r.get("game", ""), "market": market,
                 "line": r.get("line", ""), "live_side": live_side, "em_side": em_side,
                 "actual": actual, "live_win": int(live_win), "em_win": int(em_win),
                 "agree": int(agree),
                 "disagree_winner": "" if agree else ("edgemodel" if em_win else "live"),
+                "live_prob": live_prob, "em_prob": em_prob if em_prob is not None else "",
+                "live_brier": _brier(live_prob, outcome),
+                "em_brier": _brier(em_prob, outcome),
             })
     return out
 

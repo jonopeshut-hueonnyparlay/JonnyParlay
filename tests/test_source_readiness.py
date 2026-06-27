@@ -116,6 +116,25 @@ def test_run_ingests_game_line_comparison(tmp_path):
     assert ("NBA", "PTS") in markets
 
 
+def test_game_line_brier_veto_flows_through_run(tmp_path):
+    # GL compare: 40 disagreements all won by EdgeModel (edge clears), BUT EdgeModel's
+    # Brier is worse (0.40 > 0.20) -> #9 veto must hold the market 'live-source-holds'.
+    import csv as _csv
+    gl = tmp_path / "gl.csv"
+    with open(gl, "w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=["market", "agree", "disagree_winner",
+                                           "em_brier", "live_brier"])
+        w.writeheader()
+        for _ in range(40):
+            w.writerow({"market": "TOTAL", "agree": "0", "disagree_winner": "edgemodel",
+                        "em_brier": "0.40", "live_brier": "0.20"})
+    out = {(m["sport"], m["market"]): m for m in sr.run(
+        compare_path=tmp_path / "none.csv", manifest_path=tmp_path / "m.csv", gl_compare_path=gl)}
+    m = out[("MLB", "TOTAL")]
+    assert m["edge_ok"] == 1 and m["brier_edge"] < 0
+    assert m["verdict"] == "live-source-holds"
+
+
 def test_wilson_lower_bounds():
     assert sr._wilson_lower(0, 0) == 0.0
     # 35/50 = 0.70; lower bound should clear 0.5 but stay below the point estimate

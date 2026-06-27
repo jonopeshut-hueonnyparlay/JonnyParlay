@@ -53,3 +53,46 @@ def test_empty_projections_yields_nothing():
 def test_teams_parse():
     assert gl._teams("BOS@NYY") == ("NYY", "BOS")
     assert gl._teams("nope") == ("", "")
+
+
+# --- #9 proper scoring (Brier) ---------------------------------------------
+
+_PROJ_B = {("NYY", "BOS"): {"proj_total": 9.5, "p_home_win": 0.60, "p_over_total": 0.62}}
+
+
+def test_total_brier_uses_p_over_total_and_logged_win_prob():
+    rows = [{"date": "2026-06-26", "sport": "MLB", "game": "BOS@NYY", "stat": "TOTAL",
+             "line": "8.5", "direction": "over", "result": "W", "win_prob": "0.55"}]
+    r = gl.compare_rows(rows, fetch=lambda *a, **k: _PROJ_B)[0]
+    # event = over, outcome = 1 (over hit).
+    assert r["em_prob"] == 0.62
+    assert r["em_brier"] == round((0.62 - 1) ** 2, 6)
+    assert r["live_prob"] == 0.55
+    assert r["live_brier"] == round((0.55 - 1) ** 2, 6)
+
+
+def test_under_bet_flips_live_prob_to_over_event():
+    rows = [{"date": "2026-06-26", "sport": "MLB", "game": "BOS@NYY", "stat": "TOTAL",
+             "line": "8.5", "direction": "under", "result": "L", "win_prob": "0.70"}]
+    r = gl.compare_rows(rows, fetch=lambda *a, **k: _PROJ_B)[0]
+    # bet was under (win_prob 0.70 of under) and lost -> over hit, outcome=1.
+    # live P(over) = 1 - 0.70 = 0.30.
+    assert r["live_prob"] == 0.30
+    assert r["live_brier"] == round((0.30 - 1) ** 2, 6)
+
+
+def test_ml_brier_uses_p_home_win():
+    rows = [{"date": "2026-06-26", "sport": "MLB", "game": "BOS@NYY", "stat": "ML",
+             "line": "0", "direction": "home", "result": "W", "win_prob": "0.58"}]
+    r = gl.compare_rows(rows, fetch=lambda *a, **k: _PROJ_B)[0]
+    assert r["em_prob"] == 0.60 and r["em_brier"] == round((0.60 - 1) ** 2, 6)
+    assert r["live_prob"] == 0.58 and r["live_brier"] == round((0.58 - 1) ** 2, 6)
+
+
+def test_brier_blank_when_em_prob_absent():
+    # _PROJ (no p_over_total) -> em_brier blank, but row still produced.
+    rows = [{"date": "2026-06-26", "sport": "MLB", "game": "BOS@NYY", "stat": "TOTAL",
+             "line": "8.5", "direction": "over", "result": "W", "win_prob": "0.55"}]
+    r = gl.compare_rows(rows, fetch=_fetch)[0]
+    assert r["em_prob"] == "" and r["em_brier"] == ""
+    assert r["live_brier"] == round((0.55 - 1) ** 2, 6)  # live still scored
