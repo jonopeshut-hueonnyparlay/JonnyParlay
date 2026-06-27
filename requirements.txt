@@ -60,3 +60,11 @@ freezegun
 # bump deliberately. `ruff check` is enforced; `ruff format --check` is advisory
 # (the codebase is not yet ruff-formatted — see ruff.toml).
 ruff==0.15.17
+
+# Shared distribution->probability + game-line pricing library (quant.*,
+# game_line_pricing). Lives in the sibling repo C:\Dev\pricing_core and is
+# editable-installed; the in-repo engine/quant + engine/game_line_pricing copies
+# were removed in favour of it (Stage 2 unification, kills lockstep drift).
+# Single box: `pip install -e C:\Dev\pricing_core`. If the env is rebuilt or the
+# path moves, re-run that or imports of quant/game_line_pricing will fail.
+-e file:///C:/Dev/pricing_core
