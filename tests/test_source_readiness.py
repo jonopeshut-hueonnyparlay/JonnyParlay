@@ -60,6 +60,44 @@ def test_ready_candidate_when_disagreement_and_brier_agree():
     assert m["verdict"] == "ready-candidate"
 
 
+def test_ramp_target_weight_zero_until_ready_then_shrunk():
+    # not ready -> target 0
+    m = sr.score(_rows("NBA", "AST", 10, 8, 0))[0]
+    assert m["target_weight"] == 0.0 and m["weight"] == 0.0
+    # strongly-better ready market -> capped, shrunk target in (0, W_MAX]
+    m2 = sr.score(_rows_brier("NBA", "AST", 20, 45, 5, em_brier=0.15, live_brier=0.25))[0]
+    assert m2["verdict"] == "ready-candidate"
+    assert 0.0 < m2["target_weight"] <= sr.RAMP_W_MAX
+    assert m2["weight"] == 0.0  # LIVE weight stays 0 until promote()
+
+
+def test_promote_then_demote_round_trip(tmp_path):
+    rows = sr.score(_rows_brier("NBA", "AST", 20, 45, 5, em_brier=0.15, live_brier=0.25))
+    man = tmp_path / "coverage_manifest.csv"
+    import csv as _csv
+    with open(man, "w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=sr._MANIFEST_FIELDS)
+        w.writeheader(); w.writerows(rows)
+
+    assert sr.promote("NBA", "AST", manifest_path=man) is True
+    got = {r["market"]: r for r in _csv.DictReader(open(man, encoding="utf-8"))}["AST"]
+    assert got["mode"] == "blend" and float(got["weight"]) > 0.0
+
+    assert sr.demote("NBA", "AST", manifest_path=man) is True
+    got2 = {r["market"]: r for r in _csv.DictReader(open(man, encoding="utf-8"))}["AST"]
+    assert got2["mode"] == "shadow" and float(got2["weight"]) == 0.0
+
+
+def test_promote_noop_when_no_target_weight(tmp_path):
+    rows = sr.score(_rows("NBA", "PTS", 10, 5, 5))  # not ready -> target_weight 0
+    man = tmp_path / "coverage_manifest.csv"
+    import csv as _csv
+    with open(man, "w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=sr._MANIFEST_FIELDS)
+        w.writeheader(); w.writerows(rows)
+    assert sr.promote("NBA", "PTS", manifest_path=man) is False  # nothing to promote
+
+
 def test_wilson_lower_bounds():
     assert sr._wilson_lower(0, 0) == 0.0
     # 35/50 = 0.70; lower bound should clear 0.5 but stay below the point estimate

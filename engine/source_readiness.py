@@ -44,10 +44,16 @@ MIN_DISAGREE = 30          # min-sample precondition (disagreements, not total p
 _Z = 1.96                  # ~95% one-sided-ish normal-approx margin
 
 _MANIFEST_FIELDS = [
-    "sport", "market", "live_source", "challenger", "mode",
+    "sport", "market", "live_source", "challenger", "mode", "weight",
     "n_total", "n_disagree", "em_win_rate_dis", "min_sample_ok", "edge_ok",
-    "em_brier_mean", "live_brier_mean", "brier_edge", "verdict",
+    "em_brier_mean", "live_brier_mean", "brier_edge", "verdict", "target_weight",
 ]
+
+# Weight-ramp (advisory): shrunk-toward-incumbent, capped during maturation. The
+# manifest's LIVE `weight` stays 0 (resolver dormant) until promote() is run for a
+# market -- a deliberate, reversible sign-off, never automatic.
+RAMP_W_MAX = 0.5            # cap: never auto-recommend full handover while maturing
+RAMP_Z0, RAMP_Z1 = 0.5, 0.65   # win-rate Wilson-LB ramp band -> [0, W_MAX]
 
 
 def _f(x):
@@ -102,17 +108,68 @@ def score(rows: list[dict]) -> list[dict]:
             verdict, mode = "insufficient-sample", "shadow"
         else:
             verdict, mode = "live-source-holds", "shadow"
+        # Advisory ramp: what weight you COULD promote to. Live weight stays 0.
+        lb = _wilson_lower(em, dis)
+        ramp_frac = max(0.0, min(1.0, (lb - RAMP_Z0) / (RAMP_Z1 - RAMP_Z0)))
+        target_weight = round(RAMP_W_MAX * ramp_frac, 3) if verdict == "ready-candidate" else 0.0
         out.append({
             "sport": sport, "market": market, "live_source": "sabersim",
-            "challenger": "edgemodel", "mode": mode,
+            "challenger": "edgemodel", "mode": mode, "weight": 0.0,
             "n_total": n, "n_disagree": dis, "em_win_rate_dis": round(win_rate, 3),
             "min_sample_ok": int(min_sample_ok), "edge_ok": int(edge_ok),
             "em_brier_mean": round(em_brier, 4) if em_brier is not None else "",
             "live_brier_mean": round(live_brier, 4) if live_brier is not None else "",
             "brier_edge": round(brier_edge, 4) if brier_edge is not None else "",
-            "verdict": verdict,
+            "verdict": verdict, "target_weight": target_weight,
         })
     return out
+
+
+def _rewrite_market(sport: str, market: str, *, mode: str, weight: float,
+                    manifest_path=None) -> bool:
+    """Set the LIVE mode+weight for one (sport, market) in the manifest. Returns True if found."""
+    path = Path(manifest_path or _MANIFEST_PATH)
+    if not path.exists():
+        return False
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    fields = list(rows[0].keys()) if rows else _MANIFEST_FIELDS
+    hit = False
+    for r in rows:
+        if (r.get("sport") or "").upper() == sport.upper() and (r.get("market") or "").upper() == market.upper():
+            r["mode"], r["weight"], hit = mode, weight, True
+    if hit:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            w.writerows(rows)
+    return hit
+
+
+def promote(sport: str, market: str, weight: float = None, manifest_path=None) -> bool:
+    """DELIBERATE handover: set a market live for EdgeModel (mode=blend, weight>0).
+
+    Defaults to the market's advisory target_weight. The resolver then blends
+    EdgeModel into that market on the next run. Reversible via demote(). This is the
+    sign-off step -- nothing promotes automatically.
+    """
+    path = Path(manifest_path or _MANIFEST_PATH)
+    if weight is None and path.exists():
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            for r in csv.DictReader(f):
+                if (r.get("sport") or "").upper() == sport.upper() and \
+                   (r.get("market") or "").upper() == market.upper():
+                    weight = _f(r.get("target_weight")) or 0.0
+                    break
+    weight = max(0.0, min(1.0, weight or 0.0))
+    if weight <= 0.0:
+        return False  # nothing to promote (no recommended weight)
+    return _rewrite_market(sport, market, mode="blend", weight=weight, manifest_path=manifest_path)
+
+
+def demote(sport: str, market: str, manifest_path=None) -> bool:
+    """ROLLBACK a market to the live source (mode=shadow, weight=0)."""
+    return _rewrite_market(sport, market, mode="shadow", weight=0.0, manifest_path=manifest_path)
 
 
 def _read_compare(path: Path) -> list[dict]:
