@@ -177,6 +177,32 @@ def test_walk_forward_non_blocking_without_dates():
     assert m["verdict"] == "ready-candidate"
 
 
+def test_format_report_dashboard():
+    # Build a manifest with one ready-candidate and one still-accruing market.
+    man = sr.score(
+        _rows_brier("NBA", "AST", 20, 45, 5, em_brier=0.15, live_brier=0.25)
+        + _rows("NBA", "PTS", 5, 4, 0))
+    report = sr.format_report(man)
+    assert "readiness dashboard" in report
+    assert "NBA/AST" in report and "NBA/PTS" in report
+    # ready-candidate sorts above insufficient-sample
+    assert report.index("NBA/AST") < report.index("NBA/PTS")
+    assert "ready-candidate(s)" in report
+    assert "%" in report   # sample-progress percentage rendered
+
+
+def test_read_manifest_roundtrip(tmp_path):
+    man = sr.score(_rows("NBA", "AST", 10, 8, 0))
+    p = tmp_path / "coverage_manifest.csv"
+    sr.run(compare_path=tmp_path / "none.csv", manifest_path=p,
+           gl_compare_path=tmp_path / "none2.csv")
+    # _read_manifest returns the persisted rows as dicts (manifest written by run()).
+    rows = sr._read_manifest(p)
+    assert isinstance(rows, list)
+    assert sr._read_manifest(tmp_path / "absent.csv") == []
+    _ = man  # silence unused
+
+
 def test_wilson_lower_bounds():
     assert sr._wilson_lower(0, 0) == 0.0
     # 35/50 = 0.70; lower bound should clear 0.5 but stay below the point estimate

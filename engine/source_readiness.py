@@ -260,15 +260,80 @@ def run(compare_path: Path = None, manifest_path: Path = None,
     return manifest
 
 
+_VERDICT_RANK = {"ready-candidate": 0, "live-source-holds": 1, "insufficient-sample": 2}
+
+
+def _i(x, d=0):
+    try:
+        return int(float(x))
+    except (TypeError, ValueError):
+        return d
+
+
+def _ff(x, d=0.0):
+    v = _f(x)
+    return d if v is None else v
+
+
+def format_report(manifest: list[dict]) -> str:
+    """Human-readable per-market accrual/readiness dashboard (#16).
+
+    Sorts markets by closeness to promotion (ready-candidates first, by target_weight;
+    then live-holds; then still-accruing by sample progress), and shows the sample
+    progress toward MIN_DISAGREE, EM win-rate, the proper-scoring (Brier) edge, the
+    walk-forward out-of-sample check, the verdict, and the advisory target_weight.
+    Pure formatting over manifest rows -- writes nothing.
+    """
+    def _key(m):
+        return (_VERDICT_RANK.get(m.get("verdict"), 3),
+                -_ff(m.get("target_weight")),
+                -_ff(m.get("em_win_rate_dis")))
+
+    lines = [
+        f"EdgeModel readiness dashboard  (MIN_DISAGREE={MIN_DISAGREE}; promotion is manual)",
+        f"{'market':14} {'sample':>14} {'EMwin%':>7} {'brier':>7} {'wf':>4} "
+        f"{'verdict':>20} {'target_w':>9}",
+        "-" * 80,
+    ]
+    for m in sorted(manifest, key=_key):
+        dis = _i(m.get("n_disagree"))
+        pct = min(100, round(100 * dis / MIN_DISAGREE)) if MIN_DISAGREE else 100
+        sample = f"{dis:>3}/{MIN_DISAGREE} {pct:>3}%"
+        be = m.get("brier_edge")
+        be_s = f"{_ff(be):+.3f}" if be not in (None, "") else "  -  "
+        wf = m.get("wf_ok")
+        wf_s = "n/a" if m.get("wf_win_rate") in (None, "") else ("ok" if _i(wf) else "FAIL")
+        lines.append(
+            f"{m.get('sport','')+'/'+m.get('market',''):14} {sample:>14} "
+            f"{100*_ff(m.get('em_win_rate_dis')):>6.1f}% {be_s:>7} {wf_s:>4} "
+            f"{m.get('verdict',''):>20} {_ff(m.get('target_weight')):>9.3f}")
+    ready = sum(1 for m in manifest if m.get("verdict") == "ready-candidate")
+    lines.append("-" * 80)
+    lines.append(f"{len(manifest)} market(s); {ready} ready-candidate(s). "
+                 f"Promote a ready market with: source_readiness.promote(sport, market).")
+    return "\n".join(lines)
+
+
+def _read_manifest(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Per-market EdgeModel readiness gate")
     ap.add_argument("--compare", help="path to pick_log_source_compare.csv")
+    ap.add_argument("--report", action="store_true",
+                    help="print the readiness dashboard from the existing manifest (read-only)")
     ns = ap.parse_args()
-    man = run(compare_path=ns.compare)
-    print(f"\nReadiness manifest ({len(man)} markets) -> {_MANIFEST_PATH}")
-    print(f"{'sport/market':18} {'n':>5} {'disagr':>7} {'EM win%':>8} {'verdict':>20}")
-    for m in man:
-        print(f"{m['sport']+'/'+m['market']:18} {m['n_total']:>5} {m['n_disagree']:>7} "
-              f"{100*m['em_win_rate_dis']:>7.1f}% {m['verdict']:>20}")
-    print(f"\nMIN_DISAGREE={MIN_DISAGREE}. Every market stays 'shadow' until it clears the "
-          f"sample + edge gate; promotion to 'live' is a separate, deliberate step.")
+    if ns.report:
+        man = _read_manifest(Path(_MANIFEST_PATH))
+        if not man:
+            print(f"No manifest at {_MANIFEST_PATH} yet -- run without --report first.")
+        else:
+            print(format_report(man))
+    else:
+        man = run(compare_path=ns.compare)
+        print(f"\nReadiness manifest ({len(man)} markets) -> {_MANIFEST_PATH}\n")
+        print(format_report(man))
