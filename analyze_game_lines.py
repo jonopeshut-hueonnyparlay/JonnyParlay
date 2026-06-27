@@ -324,23 +324,9 @@ def find_outcome(outcomes, name_map, abbr):
     return None
 
 # â”€â”€ MLB team total NB probability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-def mlb_tt_prob(proj, line, direction="over"):
-    """P(over/under) for MLB team total using NB distribution."""
-    k_floor = int(math.floor(line))
-    if line == k_floor:  # integer line â€” push-adjusted
-        push = negbinom_pmf(k_floor, proj, MLB_TEAM_RUN_R)
-        non_push = 1.0 - push
-        if non_push <= 0:
-            return 0.5
-        if direction == "over":
-            return (1.0 - negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)) / non_push
-        else:
-            return negbinom_cdf(k_floor - 1, proj, MLB_TEAM_RUN_R) / non_push
-    else:  # half-line
-        if direction == "over":
-            return 1.0 - negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)
-        else:
-            return negbinom_cdf(k_floor, proj, MLB_TEAM_RUN_R)
+# MLB team-total NB pricing now lives in the canonical engine
+# (game_line_pricing.team_total_mlb_nb) — see the call site in analyze_mlb.
+from game_line_pricing import team_total_mlb_nb
 
 # â”€â”€ MLB analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
@@ -445,8 +431,7 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 if not ttl or oo is None or uo is None:
                     continue
                 pov_nv, pun_nv = novigp(american_to_prob(oo), american_to_prob(uo))
-                mov   = mlb_tt_prob(proj, ttl, "over")
-                mun   = mlb_tt_prob(proj, ttl, "under")
+                mov, mun = team_total_mlb_nb(proj, ttl, MLB_TEAM_RUN_R)
                 e = edge_str(mov, pov_nv, f"TT OVER  {abbr} ({ttl})", odds=oo, book=info.get("book",""))
                 if e: edges.append(e)
                 e = edge_str(mun, pun_nv, f"TT UNDER {abbr} ({ttl})", odds=uo, book=info.get("book",""))
