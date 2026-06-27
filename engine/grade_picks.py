@@ -2704,6 +2704,22 @@ Examples:
     if use_default_paths:
         _grade_game_lines_log(args)
 
+    # ── Source-comparison shadow (EdgeModel vs live, per market) ──────────────
+    # After grading writes results, refresh the EdgeModel-vs-live comparison and
+    # the per-market readiness manifest so the data accrues automatically. Wholly
+    # post-grade, read-only over projections.db, and FAIL-SOFT: a shadow error must
+    # never affect grading. Skipped on --repost / custom paths.
+    if use_default_paths and not args.repost:
+        try:
+            import source_shadow
+            import source_readiness
+            comp = source_shadow.run()
+            source_readiness.run()
+            logger.info("source shadow: %d comparison rows graded; readiness manifest refreshed",
+                        len(comp))
+        except Exception as exc:  # pragma: no cover - never block grading
+            logger.warning("source shadow/readiness failed (non-fatal): %s", exc)
+
 
 if __name__ == "__main__":
     main()
