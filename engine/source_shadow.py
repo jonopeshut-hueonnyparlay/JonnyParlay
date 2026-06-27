@@ -28,6 +28,7 @@ if str(_ENGINE) not in sys.path:
 
 import edgemodel_adapter as ea
 from name_utils import name_key
+from prob_core import calc_prop_prob
 
 try:
     from paths import PICK_LOG_PATH, DATA_DIR
@@ -40,7 +41,21 @@ _OUT_FIELDS = [
     "date", "sport", "player", "stat", "line",
     "live_proj", "em_proj", "live_side", "em_side", "actual_over",
     "live_win", "em_win", "agree", "disagree_winner",
+    # Proper scoring: price BOTH sources through the same engine (pricing held
+    # constant -> isolates projection quality), Brier vs the realized over/under.
+    "live_prob_over", "em_prob_over", "live_brier", "em_brier",
 ]
+
+
+def _brier_pair(live_proj, em_proj, line, stat, sport, actual_over):
+    """Over-probability + Brier for each source via calc_prop_prob. ('' x4) on failure."""
+    try:
+        live_p = calc_prop_prob(live_proj, line, stat, sport=sport)[0]
+        em_p = calc_prop_prob(em_proj, line, stat, sport=sport)[0]
+        return (round(live_p, 6), round(em_p, 6),
+                round((live_p - actual_over) ** 2, 6), round((em_p - actual_over) ** 2, 6))
+    except Exception:
+        return "", "", "", ""
 
 
 def _f(x):
@@ -95,12 +110,14 @@ def compare_rows(pick_rows: list[dict], adapter_fetch=ea.fetch, db_path=None) ->
             agree = live_side == em_side
             disagree_winner = "" if agree else ("edgemodel" if em_win else "live")
 
+            lp, ep, lb, eb = _brier_pair(live_proj, em_proj, line, stat, sport, actual_over)
             out.append({
                 "date": date, "sport": sport, "player": r.get("player", ""),
                 "stat": stat, "line": line, "live_proj": live_proj, "em_proj": em_proj,
                 "live_side": live_side, "em_side": em_side, "actual_over": int(actual_over),
                 "live_win": int(live_win), "em_win": int(em_win), "agree": int(agree),
                 "disagree_winner": disagree_winner,
+                "live_prob_over": lp, "em_prob_over": ep, "live_brier": lb, "em_brier": eb,
             })
     return out
 
