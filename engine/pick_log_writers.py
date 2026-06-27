@@ -23,6 +23,7 @@ from market_config import _BLOCKED_LOG_SKIP_GATES, _BLOCKED_LOG_COLS
 from book_names import norm_book as _norm_book
 from pick_log_schema import (
     CANONICAL_HEADER,
+    LIVE_SOURCE as _LIVE_SOURCE,
     normalize_american_odds as _normalize_odds,
     normalize_size as _normalize_size,
     normalize_proj as _normalize_proj,
@@ -159,6 +160,20 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None, run_t
     _now_et  = datetime.now(ZoneInfo("America/New_York"))
     run_date = _now_et.strftime("%Y-%m-%d")
     run_time = _now_et.strftime("%H:%M")
+    # v5 provenance: run_id ties these rows to the run; source per market comes from
+    # the resolver's coverage_manifest decision (LIVE_SOURCE while every market is
+    # dormant/'shadow'; 'edgemodel'/'blend:<w>' once a market is promoted). Fail-soft.
+    run_id = f"{run_date}T{run_time}"
+    try:
+        import resolver as _resolver
+        _src_map = _resolver.source_map()
+        _live_source = _resolver.LIVE_SOURCE
+    except Exception:
+        _src_map, _live_source = {}, "sabersim"
+
+    def _src_for(pick):
+        return _src_map.get(((pick.get("sport") or "").upper(),
+                             (pick.get("stat") or "").upper()), _live_source)
 
     # All logs (live and shadow) use cross-run dedup keyed on
     # (date, player, stat, line, direction). A same-day re-run with the
@@ -263,6 +278,7 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None, run_t
                         p.get("direction", "").strip().lower(),
                     )
                     card_slot = card_slot_map.get(slot_key, "")
+                    _src = _src_for(p)
                     writer.writerow([
                         run_date,
                         run_time,
@@ -302,6 +318,10 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None, run_t
                         "",  # legs — blank for primary/bonus (F2.5: was missing, silently dropped)
                         # v4: pre-Platt over_p; blank for non-prop picks (game lines, parlays).
                         f"{p['over_p_raw']:.4f}" if p.get("over_p_raw") is not None else "",
+                        # v5 provenance: source from the resolver decision, model tag, run id.
+                        _src,
+                        "edgemodel" if _src != _live_source else "",
+                        run_id,
                     ])
                 # Commit to disk before releasing the outer lock (audit H-5).
                 f.flush()
@@ -417,6 +437,10 @@ def _log_daily_lay(alt_spread_parlay, today_str, save=True):
         "context_score": "",
         "legs": _daily_lay_legs_json(legs),
         "over_p_raw": "",
+        # v5 provenance: parlay legs are live-source priced; aggregate row, no run_id.
+        "source": _LIVE_SOURCE,
+        "model_version": "",
+        "run_id": "",
     }]
 
     try:
@@ -547,6 +571,10 @@ def _log_longshot(safest6_parlay, today_str, save=True):
         "context_score":   "",
         "legs":            legs_json,
         "over_p_raw":      "",
+        # v5 provenance: parlay legs are live-source priced; aggregate row, no run_id.
+        "source":          _LIVE_SOURCE,
+        "model_version":   "",
+        "run_id":          "",
     }
 
     try:
@@ -639,6 +667,10 @@ def _log_value_parlay(value_parlay, today_str, save=True):
         "context_score":   "",
         "legs":            legs_json,
         "over_p_raw":      "",
+        # v5 provenance: parlay legs are live-source priced; aggregate row, no run_id.
+        "source":          _LIVE_SOURCE,
+        "model_version":   "",
+        "run_id":          "",
     }
 
     try:
@@ -678,6 +710,14 @@ def _log_bonus_pick(pick, run_id, today_str, save=True):
     # means header drift between the primary and bonus writers is impossible.
     BONUS_HEADER = CANONICAL_HEADER
     write_header = not log_path.exists() or log_path.stat().st_size == 0
+    # v5 provenance: resolve this bonus pick's source from the coverage_manifest.
+    try:
+        import resolver as _resolver
+        _bonus_live = _resolver.LIVE_SOURCE
+        _bonus_src = _resolver.source_map().get(
+            ((pick.get("sport") or "").upper(), (pick.get("stat") or "").upper()), _bonus_live)
+    except Exception:
+        _bonus_live = _bonus_src = "sabersim"
     with _pick_log_lock(log_path):
         with open(log_path, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=BONUS_HEADER, extrasaction="ignore")
@@ -717,6 +757,10 @@ def _log_bonus_pick(pick, run_id, today_str, save=True):
                 "context_score":    pick.get("context_score", ""),
                 # v4: pre-Platt over_p; blank if not carried through (e.g. legacy pick dict).
                 "over_p_raw": f"{pick['over_p_raw']:.4f}" if pick.get("over_p_raw") is not None else "",
+                # v5 provenance: source per market (resolver decision), model tag, run id.
+                "source": _bonus_src,
+                "model_version": "edgemodel" if _bonus_src != _bonus_live else "",
+                "run_id": str(run_id) if run_id is not None else "",
             })
             # Commit to disk before releasing the outer lock (audit H-5).
             f.flush()

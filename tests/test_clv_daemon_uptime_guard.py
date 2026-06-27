@@ -33,11 +33,11 @@ SCHEMA_HEADER = (
     "date,run_time,run_type,sport,player,team,stat,line,direction,proj,"
     "win_prob,edge,odds,book,tier,pick_score,size,game,mode,result,"
     "closing_odds,clv,card_slot,is_home,context_verdict,context_reason,"
-    "context_score,legs,over_p_raw"
+    "context_score,legs,over_p_raw,source,model_version,run_id"
 )
 
 def _write_pick_log(path: Path, rows: list[dict]) -> None:
-    """Write a minimal pick_log CSV with the 29-col schema."""
+    """Write a minimal pick_log CSV with the canonical schema."""
     fields = SCHEMA_HEADER.split(",")
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")

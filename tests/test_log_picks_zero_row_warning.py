@@ -45,13 +45,14 @@ def _today_et():
 
 
 def _seed_29col_log(path: Path, rows=()):
-    """Write a fresh pick_log with the canonical schema-v4 header."""
+    """Write a fresh pick_log with the canonical schema-v5 header."""
     header = [
         "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
         "direction", "proj", "win_prob", "edge", "odds", "book",
         "tier", "pick_score", "size", "game", "mode", "result",
         "closing_odds", "clv", "card_slot", "is_home",
         "context_verdict", "context_reason", "context_score", "legs", "over_p_raw",
+        "source", "model_version", "run_id",
     ]
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)

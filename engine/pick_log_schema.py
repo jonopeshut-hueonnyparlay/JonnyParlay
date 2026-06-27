@@ -20,10 +20,18 @@ SCHEMA HISTORY
   v2 (deprecated)  : adds closing_odds, clv, card_slot, is_home,
                      context_verdict, context_reason, context_score (27 cols)
   v3 (deprecated)  : adds legs — JSON parlay leg detail (28 cols)
-  v4 (current)     : adds over_p_raw — pre-Platt over probability (29 cols).
+  v4 (deprecated)  : adds over_p_raw — pre-Platt over probability (29 cols).
                      Enables proper Platt refit without double-calibration bias
                      (Research Brief 8 / Walsh & Joshi 2024). Blank for legacy
                      rows and non-prop picks (game lines, parlays).
+  v5 (current)     : adds source, model_version, run_id — per-bet SOURCE PROVENANCE
+                     (32 cols). `source` = which source drove the live price
+                     ('sabersim' by default; 'edgemodel'/'blend:<w>' once a market
+                     is promoted via the coverage_manifest). `model_version` =
+                     pricing/model tag (blank for the live source). `run_id` ties
+                     the bet to its run (cross-refs the run_manifest / projection
+                     contract in projections.db). Append-only; blank-fills for
+                     legacy rows. Powers the bet_lineage reconstruction.
 
 Bumping the schema:
   - Add new columns to the end of CANONICAL_HEADER (append-only keeps
@@ -42,7 +50,12 @@ from typing import Callable, Iterable, Mapping
 # Canonical schema (v4)
 # ─────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+
+# Default `source` label for the live pricing source (SaberSim CSV). A bet carries
+# this unless the resolver promoted its market off 'shadow' (then 'edgemodel' or
+# 'blend:<w>'). Single source of truth so every writer agrees.
+LIVE_SOURCE = "sabersim"
 
 CANONICAL_HEADER: list[str] = [
     "date", "run_time", "run_type", "sport", "player", "team", "stat", "line",
@@ -69,6 +82,10 @@ CANONICAL_HEADER: list[str] = [
     # transformed) was mistakenly fed back as input. Blank for legacy rows,
     # non-prop picks (game lines, parlays), and manual entries.
     "over_p_raw",
+    # v5: per-bet source provenance.
+    "source",          # which source drove the price: 'sabersim'|'edgemodel'|'blend:<w>'
+    "model_version",   # pricing/model tag (blank for the live source)
+    "run_id",          # ties the bet to its run (cross-refs run_manifest / projection contract)
 ]
 
 # Fast membership checks.
@@ -93,6 +110,9 @@ _V3_COLUMNS: frozenset[str] = frozenset(["legs"])
 # Columns added in v4 (pre-Platt over probability for calibration fidelity).
 _V4_COLUMNS: frozenset[str] = frozenset(["over_p_raw"])
 
+# Columns added in v5 (per-bet source provenance).
+_V5_COLUMNS: frozenset[str] = frozenset(["source", "model_version", "run_id"])
+
 # Default value for any canonical column that's missing from an input row.
 # Empty string is what writers emit for "not applicable" / "not yet filled",
 # so using "" preserves the existing "blank means nothing here" contract.
@@ -107,6 +127,7 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     """Infer which schema version an on-disk pick_log was written under.
 
     Returns:
+      5 — header includes any v5-only column (source/model_version/run_id)
       4 — header includes any v4-only column (over_p_raw)
       3 — header includes any v3-only column (legs)
       2 — header includes any v2-only column (CLV/context)
@@ -116,6 +137,8 @@ def detect_schema_version(on_disk_header: Iterable[str] | None) -> int:
     if not on_disk_header:
         return 0
     cols = set(on_disk_header)
+    if cols & _V5_COLUMNS:
+        return 5
     if cols & _V4_COLUMNS:
         return 4
     if cols & _V3_COLUMNS:
@@ -628,10 +651,14 @@ assert _V3_COLUMNS.issubset(KNOWN_COLUMNS), (
 assert _V4_COLUMNS.issubset(KNOWN_COLUMNS), (
     "v4 columns must all be part of the canonical schema"
 )
+assert _V5_COLUMNS.issubset(KNOWN_COLUMNS), (
+    "v5 columns must all be part of the canonical schema"
+)
 
 
 __all__ = [
     "SCHEMA_VERSION",
+    "LIVE_SOURCE",
     "CANONICAL_HEADER",
     "KNOWN_COLUMNS",
     "MANUAL_REQUIRED_FIELDS",

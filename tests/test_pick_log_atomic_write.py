@@ -64,16 +64,16 @@ def test_header_rewrite_uses_tmp_file(tmp_path):
         new_header = reader.fieldnames
         surviving_rows = list(reader)
 
-    # New header should be the full 29-col schema (superset of old_header)
+    # New header should be the full canonical schema (superset of old_header)
     assert set(old_header).issubset(set(new_header))
     assert "context_verdict" in new_header  # one of the v2 columns
     assert "legs" in new_header             # v3: 28th column
     assert "over_p_raw" in new_header       # v4: 29th column
-    assert new_header[-1] == "over_p_raw", (
-        f"'over_p_raw' must be the final column (schema_version=4) but got: {new_header[-1]!r}"
+    assert list(new_header)[-3:] == ["source", "model_version", "run_id"], (
+        f"v5 provenance cols must be the final three but got: {new_header[-3:]!r}"
     )
     assert list(new_header).index("legs") == 27
-    assert len(new_header) == 29, f"Expected 29 columns, got {len(new_header)}"
+    assert len(new_header) == 32, f"Expected 32 columns, got {len(new_header)}"
     # Original rows preserved
     assert len(surviving_rows) == 2
     assert surviving_rows[0]["player"] == "LeBron James"

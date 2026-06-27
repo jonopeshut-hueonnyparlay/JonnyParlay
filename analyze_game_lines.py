@@ -22,11 +22,13 @@ if str(_ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(_ENGINE_DIR))
 try:
     from pick_log_schema import CANONICAL_HEADER as _CANONICAL_HEADER
+    from pick_log_schema import LIVE_SOURCE as _LIVE_SOURCE
     from paths import PICK_LOG_GAME_LINES_PATH as _PICK_LOG_GL_PATH
     _HAVE_SCHEMA = True
 except ImportError:
     _HAVE_SCHEMA = False
     _CANONICAL_HEADER = []
+    _LIVE_SOURCE = "sabersim"
     _PICK_LOG_GL_PATH = Path(__file__).parent / "data" / "pick_log_game_lines.csv"
 
 try:
@@ -816,7 +818,7 @@ def _gl_lock(log_path):
 
 
 def _write_game_line_bets(bets, log_path):
-    """Write selected bets to pick_log_game_lines.csv using the 29-col schema."""
+    """Write selected bets to pick_log_game_lines.csv using the canonical schema."""
     if not _HAVE_SCHEMA or not _CANONICAL_HEADER:
         print("  [warn] pick_log_schema not available -- skipping log.")
         return 0
@@ -874,6 +876,11 @@ def _write_game_line_bets(bets, log_path):
                     "context_score":   "",
                     "legs":            1,
                     "over_p_raw":      f"{model_p:.4f}",
+                    # v5 provenance: game lines are live-source priced (EdgeModel
+                    # game-line handover is dormant until the manifest promotes them).
+                    "source":          _LIVE_SOURCE,
+                    "model_version":   "",
+                    "run_id":          f"{today}T{now}",
                 }
                 writer.writerow(row)
             f.flush()

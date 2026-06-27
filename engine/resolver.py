@@ -33,6 +33,34 @@ log = logging.getLogger("jonnyparlay")
 _MANIFEST_PATH = Path(DATA_DIR) / "coverage_manifest.csv"
 _ACTIVE_MODES = {"blend", "live"}
 
+try:
+    from pick_log_schema import LIVE_SOURCE
+except Exception:  # pragma: no cover
+    LIVE_SOURCE = "sabersim"
+
+
+def _source_label(weight: float) -> str:
+    """Provenance label for a market priced at blend `weight` on EdgeModel.
+
+    w>=1.0 -> fully 'edgemodel'; 0<w<1 -> 'blend:<w>'; otherwise the live source.
+    """
+    if weight >= 1.0:
+        return "edgemodel"
+    if weight > 0.0:
+        return f"blend:{weight:.3f}"
+    return LIVE_SOURCE
+
+
+def source_map(manifest_path=None) -> dict:
+    """{(SPORT, STAT): source_label} for markets promoted off 'shadow'. Markets not
+    present are priced by the live source (caller defaults to LIVE_SOURCE). Today's
+    all-'shadow' manifest -> {} (every bet's source is the live source). Fail-soft."""
+    try:
+        return {k: _source_label(w) for k, w in _active_markets(manifest_path).items()}
+    except Exception as exc:  # pragma: no cover
+        log.warning("resolver.source_map failed (%s)", exc)
+        return {}
+
 
 def _active_markets(manifest_path=None) -> dict:
     """{(SPORT, STAT): weight} for markets promoted off 'shadow' (mode in {blend,live}, weight>0)."""
