@@ -336,6 +336,22 @@ from game_line_pricing import (
 )
 from thresholds import BLEND_ALPHA
 
+try:
+    import game_line_handover as _gl_handover
+except Exception:  # pragma: no cover
+    _gl_handover = None
+
+
+def _gl_today_et() -> str:
+    """ET run-date for matching EdgeModel mlb_game_projections (blank on failure)."""
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        return _dt.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
 # â”€â”€ MLB analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
     print("\n" + "="*72)
@@ -355,6 +371,15 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
     else:
         proj_map = {(a, h): (ap, hp) for a, ap, h, hp in MLB_PROJS}
     matched = 0
+
+    # Readiness-gated EdgeModel game-line handover (DORMANT -> ({}, {}) -> no blend,
+    # byte-identical; gated by test_game_line_golden_master). Fail-soft.
+    _gl_w, _gl_em = ({}, {})
+    if _gl_handover is not None:
+        try:
+            _gl_w, _gl_em = _gl_handover.prepare(_gl_today_et())
+        except Exception:
+            _gl_w, _gl_em = ({}, {})
 
     for game in games_data:
         away_name = game.get("away_team", "").lower()
@@ -387,6 +412,9 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
                 # Anchor each side's NB win prob toward its no-vig market price.
                 mh = prob_ml_mlb_nb(home_proj, away_proj, MLB_TEAM_RUN_R, ph_nv, is_home=True,  trust=BLEND_ALPHA)
                 ma = prob_ml_mlb_nb(home_proj, away_proj, MLB_TEAM_RUN_R, pa_nv, is_home=False, trust=BLEND_ALPHA)
+                if _gl_w:  # readiness-gated EdgeModel ML handover (dormant -> unchanged)
+                    mh = _gl_handover.blend_ml_prob(_gl_w, _gl_em, home_abbr, away_abbr, mh, is_home=True)
+                    ma = _gl_handover.blend_ml_prob(_gl_w, _gl_em, home_abbr, away_abbr, ma, is_home=False)
                 e = edge_str(mh, ph_nv, f"ML HOME  {home_abbr}", odds=oh["price"], book=ml["book"])
                 if e: edges.append(e)
                 e = edge_str(ma, pa_nv, f"ML AWAY  {away_abbr}", odds=oa["price"], book=ml["book"])
@@ -417,7 +445,10 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
             if ov and un:
                 tline = ov.get("point", 0)
                 pov_nv, pun_nv = novigp(american_to_prob(ov["price"]), american_to_prob(un["price"]))
-                mov = prob_total_over(total_proj, tline, sig["total"], trust=BLEND_ALPHA)
+                # Readiness-gated EdgeModel TOTAL handover (dormant -> total_proj unchanged).
+                _tot = _gl_handover.blend_total(_gl_w, _gl_em, home_abbr, away_abbr, total_proj) \
+                    if _gl_w else total_proj
+                mov = prob_total_over(_tot, tline, sig["total"], trust=BLEND_ALPHA)
                 e = edge_str(mov,      pov_nv, f"TOTAL OVER  ({tline})", odds=ov["price"], book=tot["book"])
                 if e: edges.append(e)
                 e = edge_str(1.0-mov,  pun_nv, f"TOTAL UNDER ({tline})", odds=un["price"], book=tot["book"])

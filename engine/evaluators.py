@@ -28,7 +28,22 @@ from team_resolve import (
 )
 from gates import check_prop_gates, check_game_gates
 
+try:
+    import game_line_handover as _glh
+except Exception:  # pragma: no cover
+    _glh = None
+
 logger = logging.getLogger("jonnyparlay")
+
+
+def _gl_today_et() -> str:
+    """ET run-date for matching EdgeModel mlb_game_projections (blank on failure)."""
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        return _dt.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
 
 
 def match_props_to_projections(props, players):
@@ -241,6 +256,15 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
         if team not in team_proj:
             team_proj[team] = {"saber_total": p["saber_total"], "saber_team": p["saber_team"]}
 
+    # Readiness-gated EdgeModel game-line handover (MLB only; DORMANT -> ({}, {}) ->
+    # no blend, byte-identical -> replay byte-identical). Fail-soft.
+    _gl_w, _gl_em = ({}, {})
+    if _glh is not None and (sport or "").upper() == "MLB":
+        try:
+            _gl_w, _gl_em = _glh.prepare(_gl_today_et())
+        except Exception:
+            _gl_w, _gl_em = ({}, {})
+
     # --- TOTALS ---
     for gl in game_lines:
         total_info = gl.get("total", {})
@@ -268,6 +292,9 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
 
         # Blend SaberSim total with market line
         proj = line + BLEND_ALPHA * (proj - line)
+        if _gl_w:  # readiness-gated EdgeModel TOTAL handover (dormant -> unchanged)
+            proj = _glh.blend_total(_gl_w, _gl_em, resolve_team_abbrev(gl["home"]),
+                                    resolve_team_abbrev(gl["away"]), proj)
 
         sigma = get_game_sigma(sport, home_name, away_name, "total")
         over_p = 1.0 - normal_cdf(line, proj, sigma)
@@ -494,6 +521,10 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
                 if sport == "MLB":
                     # NB direct sum: more accurate for discrete run-scoring than Normal
                     raw_home_wp = mlb_ml_from_nb(home_proj, away_proj, MLB_TEAM_RUN_R)
+                    if _gl_w:  # readiness-gated EdgeModel ML handover (dormant -> unchanged)
+                        raw_home_wp = _glh.blend_ml_prob(
+                            _gl_w, _gl_em, resolve_team_abbrev(home_name),
+                            resolve_team_abbrev(away_name), raw_home_wp, is_home=True)
                     raw_team_wp = raw_home_wp if is_home else (1.0 - raw_home_wp)
                 else:
                     raw_team_wp = 1.0 - normal_cdf(0, raw_margin if is_home else -raw_margin, sigma)
