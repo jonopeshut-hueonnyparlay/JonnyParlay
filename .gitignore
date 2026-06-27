@@ -94,3 +94,7 @@ memory/
 docs for pbj/
 *.js
 context_prompt_today.txt
+
+# Transient SaberSim slate CSVs downloaded at the repo root for a run
+/mlb.csv
+/wnba.csv
