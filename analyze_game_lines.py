@@ -482,6 +482,10 @@ def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
 
         src = ev if ev else game
 
+        # F5 markets use the flat F5_SCALAR prorate of the SaberSim full-game projection.
+        # JonnyParlay has no starter/SIERA data at this layer, so STARTER-AWARE F5 (#2)
+        # lives in EdgeModel (engine/f5_model.py) and reaches here via the game-line
+        # handover (#5): when an F5 market is promoted, EdgeModel's proj_f5_* blends in.
         # F5 TOTAL â€” Normal
         f5t = best_book_odds(src, "totals_1st_5_innings")
         if f5t:
