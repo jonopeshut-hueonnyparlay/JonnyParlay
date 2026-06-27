@@ -45,8 +45,16 @@ _Z = 1.96                  # ~95% one-sided-ish normal-approx margin
 
 _MANIFEST_FIELDS = [
     "sport", "market", "live_source", "challenger", "mode",
-    "n_total", "n_disagree", "em_win_rate_dis", "min_sample_ok", "edge_ok", "verdict",
+    "n_total", "n_disagree", "em_win_rate_dis", "min_sample_ok", "edge_ok",
+    "em_brier_mean", "live_brier_mean", "brier_edge", "verdict",
 ]
+
+
+def _f(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
 
 
 def _wilson_lower(wins: int, n: int, z: float = _Z) -> float:
@@ -62,7 +70,7 @@ def _wilson_lower(wins: int, n: int, z: float = _Z) -> float:
 
 def score(rows: list[dict]) -> list[dict]:
     """Aggregate compare rows -> per-(sport, market) readiness manifest rows."""
-    agg: dict = defaultdict(lambda: {"n": 0, "dis": 0, "em": 0})
+    agg: dict = defaultdict(lambda: {"n": 0, "dis": 0, "em": 0, "eb": 0.0, "lb": 0.0, "bn": 0})
     for r in rows:
         key = ((r.get("sport") or "").upper(), (r.get("stat") or "").upper())
         a = agg[key]
@@ -71,6 +79,11 @@ def score(rows: list[dict]) -> list[dict]:
             a["dis"] += 1
             if r.get("disagree_winner") == "edgemodel":
                 a["em"] += 1
+        eb, lb = _f(r.get("em_brier")), _f(r.get("live_brier"))
+        if eb is not None and lb is not None:
+            a["eb"] += eb
+            a["lb"] += lb
+            a["bn"] += 1
 
     out: list[dict] = []
     for (sport, market), a in sorted(agg.items()):
@@ -78,7 +91,12 @@ def score(rows: list[dict]) -> list[dict]:
         win_rate = em / dis if dis else 0.0
         min_sample_ok = dis >= MIN_DISAGREE
         edge_ok = _wilson_lower(em, dis) > 0.5            # EdgeModel beats 50% with confidence
-        if min_sample_ok and edge_ok:
+        # Proper-scoring veto: lower Brier = better. brier_edge>0 => EdgeModel scores better.
+        em_brier = a["eb"] / a["bn"] if a["bn"] else None
+        live_brier = a["lb"] / a["bn"] if a["bn"] else None
+        brier_edge = (live_brier - em_brier) if a["bn"] else None
+        brier_ok = brier_edge is None or brier_edge >= 0  # absent brier doesn't block; worse Brier vetoes
+        if min_sample_ok and edge_ok and brier_ok:
             verdict, mode = "ready-candidate", "shadow"   # promotion is a separate, manual gate
         elif not min_sample_ok:
             verdict, mode = "insufficient-sample", "shadow"
@@ -88,7 +106,11 @@ def score(rows: list[dict]) -> list[dict]:
             "sport": sport, "market": market, "live_source": "sabersim",
             "challenger": "edgemodel", "mode": mode,
             "n_total": n, "n_disagree": dis, "em_win_rate_dis": round(win_rate, 3),
-            "min_sample_ok": int(min_sample_ok), "edge_ok": int(edge_ok), "verdict": verdict,
+            "min_sample_ok": int(min_sample_ok), "edge_ok": int(edge_ok),
+            "em_brier_mean": round(em_brier, 4) if em_brier is not None else "",
+            "live_brier_mean": round(live_brier, 4) if live_brier is not None else "",
+            "brier_edge": round(brier_edge, 4) if brier_edge is not None else "",
+            "verdict": verdict,
         })
     return out
 

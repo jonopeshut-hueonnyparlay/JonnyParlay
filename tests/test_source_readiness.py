@@ -40,6 +40,26 @@ def test_enough_sample_but_no_edge_holds_live():
     assert m["verdict"] == "live-source-holds"
 
 
+def _rows_brier(sport, stat, n_agree, em_wins, live_wins, em_brier, live_brier):
+    rows = _rows(sport, stat, n_agree, em_wins, live_wins)
+    for r in rows:
+        r["em_brier"], r["live_brier"] = str(em_brier), str(live_brier)
+    return rows
+
+
+def test_brier_veto_holds_live_when_edgemodel_scores_worse():
+    # disagreements favour EM (edge_ok) BUT EM's Brier is worse (0.30 > 0.20) -> vetoed
+    m = sr.score(_rows_brier("NBA", "AST", 20, 35, 15, em_brier=0.30, live_brier=0.20))[0]
+    assert m["edge_ok"] == 1 and m["brier_edge"] < 0
+    assert m["verdict"] == "live-source-holds"
+
+
+def test_ready_candidate_when_disagreement_and_brier_agree():
+    m = sr.score(_rows_brier("NBA", "AST", 20, 35, 15, em_brier=0.18, live_brier=0.25))[0]
+    assert m["brier_edge"] > 0
+    assert m["verdict"] == "ready-candidate"
+
+
 def test_wilson_lower_bounds():
     assert sr._wilson_lower(0, 0) == 0.0
     # 35/50 = 0.70; lower bound should clear 0.5 but stay below the point estimate
