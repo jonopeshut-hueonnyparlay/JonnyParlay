@@ -2713,10 +2713,12 @@ Examples:
         try:
             import source_shadow
             import source_readiness
+            import source_shadow_game_lines
             comp = source_shadow.run()
             source_readiness.run()
-            logger.info("source shadow: %d comparison rows graded; readiness manifest refreshed",
-                        len(comp))
+            gl_comp = source_shadow_game_lines.run()
+            logger.info("source shadow: %d prop + %d game-line comparison rows; readiness refreshed",
+                        len(comp), len(gl_comp))
         except Exception as exc:  # pragma: no cover - never block grading
             logger.warning("source shadow/readiness failed (non-fatal): %s", exc)
 
