@@ -19,6 +19,7 @@ from calibrated import (
 from quant.distributions import normal_cdf, negbinom_pmf, negbinom_cdf
 from quant.odds import implied_prob, no_vig, is_decimal_leak
 from quant.derived import mlb_ml_from_nb, calc_tb_prob, calc_edge
+from game_line_pricing import team_total_mlb_nb
 from prob_core import _platt_calibrate_prop, calc_prop_prob, calc_combo_prob, pick_score
 from sizing_core import apply_bm_shrinkage, get_tier, get_tier_min_edge
 from team_resolve import (
@@ -550,19 +551,11 @@ def evaluate_game_lines(game_lines, team_totals, players, sport, mode="Default")
         proj = line + BLEND_ALPHA * (proj - line)
 
         if sport == "MLB":
-            # NB is more accurate for discrete run-scoring (var/mu~2.26).
-            # Half-line (e.g., 3.5): over = P(X >= 4) = 1 - P(X <= 3)
-            # Integer line (e.g., 4.0): push-adjusted
+            # NB is more accurate for discrete run-scoring (var/mu~2.26); per-team
+            # dispersion where available (global r only as fallback). Push-adjusted
+            # on integer lines. Canonical impl: game_line_pricing.team_total_mlb_nb.
             _mlb_r = get_mlb_team_run_r(resolve_team_abbrev(team) or team)
-            k_floor = int(math.floor(line))
-            if line == k_floor:  # integer line
-                push = negbinom_pmf(k_floor, proj, _mlb_r)
-                non_push = 1.0 - push
-                over_p  = (1.0 - negbinom_cdf(k_floor, proj, _mlb_r)) / non_push if non_push > 0 else 0.5
-                under_p = negbinom_cdf(k_floor - 1, proj, _mlb_r) / non_push if non_push > 0 else 0.5
-            else:
-                over_p  = 1.0 - negbinom_cdf(k_floor, proj, _mlb_r)
-                under_p = negbinom_cdf(k_floor, proj, _mlb_r)
+            over_p, under_p = team_total_mlb_nb(proj, line, _mlb_r)
         else:
             over_p = 1.0 - normal_cdf(line, proj, sigma)
             under_p = normal_cdf(line, proj, sigma)
