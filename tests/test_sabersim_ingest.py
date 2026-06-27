@@ -28,10 +28,21 @@ _SLATE_DDL = (
 )
 
 
-def _db_with_contract(tmp_path, with_slate=True):
+# Contract variant WITH the #3 calibration governance columns.
+_DDL_CAL = (
+    "CREATE TABLE projection ("
+    " run_id TEXT, game_date TEXT NOT NULL, sport TEXT NOT NULL,"
+    " entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, market TEXT NOT NULL,"
+    " source TEXT NOT NULL, model_version TEXT, mean REAL,"
+    " calibration_method TEXT, calibration_version TEXT,"
+    " UNIQUE (run_id, sport, market, entity_id, source))"
+)
+
+
+def _db_with_contract(tmp_path, with_slate=True, cal=False):
     db = tmp_path / "proj.db"
     conn = sqlite3.connect(db)
-    conn.execute(_DDL)
+    conn.execute(_DDL_CAL if cal else _DDL)
     if with_slate:
         conn.execute(_SLATE_DDL)
     conn.commit()
@@ -111,6 +122,35 @@ def test_coexists_with_edgemodel_source(tmp_path):
     # Both sources present for the same player/market -> directly comparable.
     assert got[(aja, "PTS", "edgemodel")] == 21.0
     assert got[(aja, "PTS", "sabersim")] == 22.5
+
+
+def test_calibration_governance_stamped_per_sport(tmp_path):
+    """#3: when the contract carries the calibration columns, SaberSim rows stamp the
+    GOVERNING regime per sport -- NBA/WNBA Platt-calibrated, MLB skips Platt ('none')."""
+    from calibrated import PLATT_FIT_DATE
+    db = _db_with_contract(tmp_path, cal=True)
+    si.ingest({"WNBA": [{"name": "A'ja Wilson", "PTS": 22.5, "REB": 9.1, "AST": 2.3, "3PM": 0.4}],
+               "MLB": [{"name": "Aaron Judge", "is_pitcher": False, "HITS": 1.2, "TB": 2.1, "HR": 0.4}]},
+              "2026-06-26", db_path=db)
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        cal = {r["sport"]: (r["calibration_method"], r["calibration_version"])
+               for r in conn.execute("SELECT DISTINCT sport, calibration_method, "
+                                      "calibration_version FROM projection")}
+        assert cal["WNBA"] == ("platt", PLATT_FIT_DATE)
+        assert cal["MLB"] == ("none", None)  # Platt skipped for MLB
+    finally:
+        conn.close()
+
+
+def test_pre_calibration_column_db_still_ingests(tmp_path):
+    """#3 column-tolerance: a contract DB predating calibration_method still ingests via
+    the base upsert (fail-soft, no crash)."""
+    db = _db_with_contract(tmp_path, cal=False)  # no calibration columns
+    n = si.ingest({"WNBA": [{"name": "A'ja Wilson", "PTS": 22.5, "REB": 9.1, "AST": 2.3, "3PM": 0.4}]},
+                  "2026-06-26", db_path=db)
+    assert n == 4
 
 
 def test_missing_db_is_failsoft(tmp_path):

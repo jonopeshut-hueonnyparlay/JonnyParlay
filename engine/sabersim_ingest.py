@@ -31,6 +31,7 @@ if str(_ENGINE) not in sys.path:
 
 from secrets_config import EDGEMODEL_DB_PATH
 from name_utils import name_key
+from calibrated import PLATT_FIT_DATE
 # Reuse the adapter's column maps so the SaberSim markets stay in lockstep with the
 # EdgeModel side (same stat codes the contract holds for source='edgemodel').
 from edgemodel_adapter import _BASKETBALL_COLS, _MLB_PITCHER_COLS, _MLB_BATTER_COLS
@@ -41,9 +42,23 @@ _HOOP_MARKETS = list(_BASKETBALL_COLS.values())      # PTS REB AST 3PM
 _PITCHER_MARKETS = list(_MLB_PITCHER_COLS.values())  # K OUTS ER HA BB
 _BATTER_MARKETS = list(_MLB_BATTER_COLS.values())    # HITS TB HR
 
+
+def _sabersim_calibration(sport: str) -> tuple:
+    """The calibration regime GOVERNING this SaberSim source's downstream probabilities
+    (contract governance metadata, #3). NBA/WNBA props are Platt-calibrated; MLB props
+    SKIP Platt (prob_core.py) -> governed by 'none' (raw, then market shrinkage). This is
+    why a single forced method would be wrong: the SaberSim path is already well-calibrated
+    (brief: -0.1pp) and only some markets carry Platt."""
+    if (sport or "").upper() in ("NBA", "WNBA"):
+        return ("platt", PLATT_FIT_DATE)
+    return ("none", None)
+
+
 # Raw SQL (not EdgeModel's upsert_projection_contract) on purpose: importing
 # EdgeModel's projections_db cross-repo collides on the shared `paths` module name.
 # Only the contract's identity (the UNIQUE conflict key) is replicated here.
+# Two variants: the shared DB may predate the calibration_method column (EdgeModel owns
+# that additive migration) -> stay column-tolerant and fall back to the base upsert.
 _UPSERT = (
     "INSERT INTO projection(run_id, game_date, sport, entity_type, entity_id, "
     "market, source, model_version, mean) "
@@ -52,6 +67,24 @@ _UPSERT = (
     "ON CONFLICT(run_id, sport, market, entity_id, source) DO UPDATE SET "
     "mean=excluded.mean, game_date=excluded.game_date, model_version=excluded.model_version"
 )
+_UPSERT_CAL = (
+    "INSERT INTO projection(run_id, game_date, sport, entity_type, entity_id, "
+    "market, source, model_version, mean, calibration_method, calibration_version) "
+    "VALUES(:run_id,:game_date,:sport,'player',:entity_id,:market,'sabersim',"
+    "'sabersim',:mean,:calibration_method,:calibration_version) "
+    "ON CONFLICT(run_id, sport, market, entity_id, source) DO UPDATE SET "
+    "mean=excluded.mean, game_date=excluded.game_date, model_version=excluded.model_version, "
+    "calibration_method=excluded.calibration_method, "
+    "calibration_version=excluded.calibration_version"
+)
+
+
+def _has_cal_col(conn) -> bool:
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(projection)")}
+    except sqlite3.OperationalError:
+        return False
+    return "calibration_method" in cols
 
 # #4 feed split: the SLATE (who is playing / for whom / salary), decoupled from the
 # projection rows but written from the same feed. source='sabersim'.
@@ -80,9 +113,13 @@ def _table_exists(conn, name: str = "projection") -> bool:
     ).fetchone() is not None
 
 
-def ingest_players(conn, players: list, sport: str, game_date: str) -> int:
-    """Upsert one sport's SaberSim players into the contract. Caller commits."""
+def ingest_players(conn, players: list, sport: str, game_date: str, cal_col: bool = True) -> int:
+    """Upsert one sport's SaberSim players into the contract. Caller commits. `cal_col`
+    selects the upsert variant that also stamps calibration governance metadata (#3);
+    pass False when the shared DB predates the calibration_method column."""
     run_id = f"sabersim|{(sport or '').upper()}|{game_date}"
+    cal_method, cal_version = _sabersim_calibration(sport)
+    sql = _UPSERT_CAL if cal_col else _UPSERT
     n = 0
     for p in players or []:
         nk = (p.get("name_key") or name_key(p.get("name", "")) or "").strip()
@@ -96,9 +133,13 @@ def ingest_players(conn, players: list, sport: str, game_date: str) -> int:
                 mean = float(v)
             except (TypeError, ValueError):
                 continue
-            conn.execute(_UPSERT, {
+            params = {
                 "run_id": run_id, "game_date": game_date, "sport": (sport or "").upper(),
-                "entity_id": nk, "market": mkt, "mean": mean})
+                "entity_id": nk, "market": mkt, "mean": mean}
+            if cal_col:
+                params["calibration_method"] = cal_method
+                params["calibration_version"] = cal_version
+            conn.execute(sql, params)
             n += 1
     return n
 
@@ -138,9 +179,10 @@ def ingest(all_players: dict, game_date: str, db_path=None) -> int:
             if not _table_exists(conn, "projection"):
                 return 0  # EdgeModel hasn't created the contract yet -> skip this run
             has_slate = _table_exists(conn, "slate")
+            cal_col = _has_cal_col(conn)
             total = 0
             for sport, players in (all_players or {}).items():
-                total += ingest_players(conn, players, sport, game_date)
+                total += ingest_players(conn, players, sport, game_date, cal_col=cal_col)
                 if has_slate:
                     write_slate(conn, players, sport, game_date)
             conn.commit()
