@@ -1028,6 +1028,17 @@ def main():
 
     all_players, sports, csv_paths_resolved = _stage_load_csvs(args)
 
+    # Multi-source resolver: blend/swap EdgeModel projections into the live pool per
+    # data/coverage_manifest.csv. DORMANT by default (every market 'shadow'/weight=0)
+    # -> byte-identical pass-through; fail-soft. A market is only blended after the
+    # Phase-4 weight-ramp promotes it (post readiness gate + sign-off).
+    try:
+        import resolver as _resolver
+        from datetime import datetime as _rdt
+        all_players = _resolver.resolve_players(all_players, _rdt.now().strftime("%Y-%m-%d"))
+    except Exception:
+        pass
+
     cooldown = _resolve_cooldown(args)
 
     exclude_teams = _parse_exclude_teams(args)
