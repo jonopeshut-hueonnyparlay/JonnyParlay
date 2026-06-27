@@ -69,6 +69,7 @@ ruff==0.15.17
 # game_line_pricing). Lives in the sibling repo C:\Dev\pricing_core and is
 # editable-installed; the in-repo engine/quant + engine/game_line_pricing copies
 # were removed in favour of it (Stage 2 unification, kills lockstep drift).
-# Single box: `pip install -e C:\Dev\pricing_core`. If the env is rebuilt or the
-# path moves, re-run that or imports of quant/game_line_pricing will fail.
--e file:///C:/Dev/pricing_core
+# Installed from git so CI / any fresh env can resolve it — a local editable path
+# only works on the dev box (it broke CI). For active development of pricing_core,
+# `pip install -e C:\Dev\pricing_core` locally overrides this pin. Bump @<commit> on change.
+pricing-core @ git+https://github.com/jonopeshut-hueonnyparlay/pricing_core.git@7261d61e14de37d9c376076847b79c829107fbd2
