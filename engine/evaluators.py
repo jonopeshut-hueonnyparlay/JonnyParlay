@@ -46,15 +46,46 @@ def _gl_today_et() -> str:
         return ""
 
 
+# MLB team-abbr -> nickname, to disambiguate NAME COLLISIONS against the prop's
+# "Away Full Name @ Home Full Name" game string. Audit 2026-07-02: name_key-only matching
+# let same-named players in DIFFERENT games swap odds (Willson/William Contreras fold to
+# the same key and shared 71 slates in 2026; the two Max Muncys 38). Covers common
+# SaberSim abbreviation variants.
+_MLB_NICK = {
+    "ARI": "Diamondbacks", "AZ": "Diamondbacks", "ATL": "Braves", "BAL": "Orioles",
+    "BOS": "Red Sox", "CHC": "Cubs", "CWS": "White Sox", "CHW": "White Sox",
+    "CIN": "Reds", "CLE": "Guardians", "COL": "Rockies", "DET": "Tigers",
+    "HOU": "Astros", "KC": "Royals", "KCR": "Royals", "LAA": "Angels",
+    "LAD": "Dodgers", "MIA": "Marlins", "MIL": "Brewers", "MIN": "Twins",
+    "NYM": "Mets", "NYY": "Yankees", "ATH": "Athletics", "OAK": "Athletics",
+    "PHI": "Phillies", "PIT": "Pirates", "SD": "Padres", "SDP": "Padres",
+    "SEA": "Mariners", "SF": "Giants", "SFG": "Giants", "STL": "Cardinals",
+    "TB": "Rays", "TBR": "Rays", "TEX": "Rangers", "TOR": "Blue Jays",
+    "WSH": "Nationals", "WAS": "Nationals",
+}
+
+
 def match_props_to_projections(props, players):
-    """Match API player props to SaberSim projections."""
-    player_map = {p["name_key"]: p for p in players}
+    """Match API player props to SaberSim projections.
+
+    Name-collision safe (2026-07-02): when two projected players share a name_key, the
+    prop's event (its ``game`` string) selects the one whose team is in that game; if that
+    still cannot separate them (same-event twins, unmapped team), the prop is SKIPPED --
+    a wrong-player match prices live money off another player's projection.
+    """
+    player_map = {}
+    for p in players:
+        player_map.setdefault(p["name_key"], []).append(p)
 
     matched = []
     for prop in props:
-        pk = prop["player_key"]
-        if pk in player_map:
-            proj_player = player_map[pk]
+        cands = player_map.get(prop["player_key"], [])
+        if len(cands) > 1:
+            game = prop.get("game", "") or ""
+            cands = [c for c in cands
+                     if _MLB_NICK.get(str(c.get("team", "")).upper(), "\x00") in game]
+        if len(cands) == 1:
+            proj_player = cands[0]
             proj_val = proj_player.get(prop["stat"], 0)
             if proj_val == 0 and prop["stat"] in COMBO_STATS:
                 proj_val = sum(
