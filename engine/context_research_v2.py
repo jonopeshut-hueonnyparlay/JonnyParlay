@@ -1009,9 +1009,14 @@ def _mlb_team_schedule(team_id: int, start: str, end: str) -> list:
         t = g.get("teams", {})
         home_id = t.get("home", {}).get("team", {}).get("id")
         away_id = t.get("away", {}).get("team", {}).get("id")
+        # officialDate is MLB's local calendar date for the game -- prefer it over
+        # converting the UTC first pitch to machine-local time (a third dating
+        # convention that shifts late games for anyone not in US-Central).
+        od = g.get("officialDate")
         gd = g.get("gameDate", "")
         try:
-            ldate = datetime.fromisoformat(gd.replace("Z", "+00:00")).astimezone(_LOCAL_TZ).date()
+            ldate = (_date.fromisoformat(od) if od else
+                     datetime.fromisoformat(gd.replace("Z", "+00:00")).astimezone(_LOCAL_TZ).date())
         except Exception:
             continue
         games.append({
