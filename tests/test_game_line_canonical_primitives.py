@@ -29,7 +29,7 @@ from quant.derived import mlb_ml_from_nb as q_mlb_ml_from_nb
 
 # Grids span every sigma/mu/line regime used by the live MLB + NBA game-line
 # markets (F5 sigmas 2.10/2.65/2.70, MLB 3.0/4.2/4.6, NBA 11.0/12.5/18.5), the
-# sigma<=0 degenerate guard, and team-run NB dispersions (TB r=1.3, team r=3.548,
+# sigma<=0 degenerate guard, and team-run NB dispersions (TB r=1.6, team r=3.50,
 # WNBA-ast r=11.37) at run-total support k=0..12.
 _NORMAL_CASES = [
     (x, mu, sigma)
@@ -41,7 +41,7 @@ _NB_CASES = [
     (k, mu, r)
     for k in range(0, 13)
     for mu in (0.0, 0.5, 3.7, 4.4, 5.3, 6.4)
-    for r in (1.3, 3.548, 11.37)
+    for r in (1.6, 3.50, 11.37)
 ]
 _ML_CASES = [
     (mu_home, mu_away)

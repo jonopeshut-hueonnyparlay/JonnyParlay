@@ -84,7 +84,7 @@ WNBA_EV_FLOOR = 0.0955
 
 PLATT_SPACE = "raw"  # "raw"=sigmoid(A*p+B); "logit"=sigmoid(A*logit(p)+B). Change SIMULTANEOUSLY with formula+A/B at H3.
 
-F5_SCALAR = 0.540  # F5 ≈ 54% of full-game total; market-calibrated 2022-2025 (was 0.503 — too low by ~4pp)
+F5_SCALAR = 0.558  # F5 share of full-game total. SYNCED 2026-07-02 to EdgeModel's realized-data reconciliation (0.558; n=2560 realized F5/full team-scores = 2.509/4.496). Was 0.540 (2022-25 market calibration; before that 0.503).
 
 # Game line projection blending: anchor SaberSim to the market line.
 # Formula in prose: the blended projection equals the market line plus

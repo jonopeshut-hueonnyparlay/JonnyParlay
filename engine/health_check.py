@@ -155,7 +155,7 @@ EXPECTED_RP = {
 EXPECTED_THRESHOLDS = {
     "KELLY_FRACTION = 6.0": "KELLY_FRACTION = 6.0",
     "BLEND_ALPHA = 0.25": "BLEND_ALPHA = 0.25",
-    "F5_SCALAR = 0.540": "F5_SCALAR = 0.540",
+    "F5_SCALAR = 0.558": "F5_SCALAR = 0.558",
     "LONGSHOT_SIZE = 0.25": "LONGSHOT_SIZE = 0.25",
     "VALUE_PARLAY_SIZE = 0.25": "VALUE_PARLAY_SIZE = 0.25",
     "KILLSHOT_SIZE_BASE = 3.0": "KILLSHOT_SIZE_BASE       = 3.0",
@@ -175,7 +175,7 @@ EXPECTED_CALIBRATED = {
     "NB_R AST=9.66": '"AST": 9.66',
     "NB_R REB=13.16": '"REB": 13.16',
     "NB_R ER=4.75 (Task#1 starts-only)": '"ER":  4.75',
-    "NB_R HA=13.41 (held; starts-only=Poisson)": '"HA":  13.41',
+    "NB_R HA=50.0 (synced to EdgeModel; suspended)": '"HA":  50.0',
     "T1 min_edge 0.07": '"min_edge": 0.07',
     "T2 min_edge 0.05": '"min_edge": 0.05',
     "STAT AST=T1B": '"AST": "T1B"',

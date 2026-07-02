@@ -18,7 +18,7 @@ from game_line_pricing import (
 from quant.distributions import normal_cdf, negbinom_pmf, negbinom_cdf
 from quant.derived import mlb_ml_from_nb
 
-_R = 3.548
+_R = 3.50  # mirrors calibrated.MLB_TEAM_RUN_R (synced 2026-07-02); tests are relational, any r>0 valid
 _ALPHA = 0.25  # evaluators BLEND_ALPHA
 
 

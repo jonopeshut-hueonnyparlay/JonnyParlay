@@ -2,7 +2,7 @@
 Standalone game-line edge analyzer.
 
 Distributions:
-  MLB team totals : Negative Binomial (var/mu~2.26; NB r=3.548)
+  MLB team totals : Negative Binomial (var/mu~2.26; NB r=3.50)
   MLB moneyline   : NB direct probability sum (home wins)
   All other markets: Normal (same GAME_SIGMA values as run_picks.py)
 """
@@ -68,10 +68,10 @@ SIGMA = {
     "NHL":  {"total": 2.311, "spread": 2.614, "team": 1.744, "ml": 2.614},
 }
 F5_SIGMA  = {"total": 2.65, "spread": 2.70, "team": 2.10}
-F5_SCALAR = 0.540
+F5_SCALAR = 0.558  # SYNCED 2026-07-02: EdgeModel realized-data share (was 0.540)
 
-# NB dispersion for MLB team run-scoring (calibrated 2026-06-05, n=8095 regular-season games)
-MLB_TEAM_RUN_R = 3.548
+# NB dispersion for MLB team run-scoring (SYNCED 2026-07-02 to EdgeModel MoM re-fit; was 3.548)
+MLB_TEAM_RUN_R = 3.50
 
 # Team-specific sigma JSONs (mirrored from run_picks.py) â€” loaded at startup
 _TEAM_SIGMAS_AGL: dict = {}
@@ -356,7 +356,7 @@ def _gl_today_et() -> str:
 def analyze_mlb(games_data, team_projs=None, ctx_verdicts=None):
     print("\n" + "="*72)
     print("MLB GAME LINES")
-    print("  Spread/total: Normal  |  Team totals: NB(r=3.548)  |  ML: NB direct sum")
+    print("  Spread/total: Normal  |  Team totals: NB(r=3.50)  |  ML: NB direct sum")
     print("="*72)
 
     sig = SIGMA["MLB"]
@@ -1061,5 +1061,5 @@ if __name__ == "__main__":
             _post_game_lines_discord(selected)
     print()
     print("Legend: STRONG>=8%  |  ***BET>=4%  |  positive edge only  |  stake=f*x10x0.75mult (min 0.25u, max 2.0u)")
-    print("MLB: ML=NB(r=3.548) | TT=NB | spread/total/F5=Normal  sigma: total=4.6/spread=4.2  F5=2.65/2.70  scalar=0.540")
+    print("MLB: ML=NB(r=3.50) | TT=NB | spread/total/F5=Normal  sigma: total=4.6/spread=4.2  F5=2.65/2.70  scalar=0.558")
     print("NBA: all Normal  |  NHL: all Normal (total=2.311, spread=2.614, team=1.744)")

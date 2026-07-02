@@ -25,7 +25,7 @@ SIGMA = {
     "PTS": {"mult": 0.35, "min": 5.0},  # mult confirmed by MAE backtest (σ≈6.74 at proj=20 → CV=0.337); min raised 4.5→5.0 (MAE by role: spot=5.15, rotation=5.98)
     # "3PM" not here — NB_STATS/NB_R (Negative Binomial, r=9.15). Do NOT add.
     # MLB — calibrated 2026-05-26 from 69k pitcher / 169k batter game logs (2023-2026).
-    # "HA" not here — NB_STATS (NB r=13.41; within-player var/mu=1.204, overdispersed).
+    # "HA" not here — NB_STATS (NB r=50.0, near-Poisson; synced to EdgeModel 2026-07-02).
     # "HRR" not here — NB_STATS (Negative Binomial, r=1.5).
     # "TB" not here — G_TB_DISABLED (structural kill A2 2026-05-22).
     # "HITS" not here — POISSON_STATS takes priority.
@@ -46,7 +46,7 @@ SIGMA = {
     "REC_YDS":  {"mult": 0.72, "min": 13.0},
 }
 
-# HA removed from Poisson — overdispersed at typical lines; moved to NB_STATS (within-player var/mu=1.204, r=13.41)
+# HA removed from Poisson -> NB_STATS. NB r=50.0 (near-Poisson) since the 2026-07-02 EdgeModel sync; the old 13.41 fit was relief-contaminated.
 # GOALS, NHLPTS, NHLBLK: NHL skater stats — perfect Poisson (var/mu=0.989, 0.983, 1.081 from 141k skater games)
 # RUNS: MLB batter runs — Poisson (var/mu=0.969 from 169k batter games)
 # GA: NHL goalie goals against — Poisson (within-player var/mu=0.830 from 15k goalie game-logs; sub-Poisson is fine)
@@ -83,10 +83,10 @@ NB_R = {
     "AST": 9.66,   # P1.3 2026-06-16: bias-corrected (Jensen MoM) from EdgeModel producer, var/mu=1.323. Was 12.16 (inflating formula).
     "REB": 13.16,  # P1.3 2026-06-16: bias-corrected (Jensen MoM) from EdgeModel producer, var/mu=1.387. Was 14.7 (inflating formula).
     "HRR": 1.5,    # moment-matched from shadow log: NB(r=1.5, mu=2.0) -> P(X>=2)=47.8% = empirical 48% WR (n=1810). Method differs from var/mu used for NBA stats. Proper refit needs MLB batter game logs (within-player var/mu); zero-inflated NB may be warranted (~37% of games are 0 H/R/RBI).
-    "HA":  13.41,  # HELD 2026-06-16 (Task#1): suspended (G_HA_SUSPENDED) + near-Poisson, so no reprice. FLAG: starts-only fit (n=370/15,297) gives var/mu=0.890 -> Poisson (NOT NB) — relief contamination (raw r~7.3) was the prior NB signal. NB can't represent var/mu<1; reclassify HA->Poisson as part of the G_HA_SUSPENDED investigation, not here. Prior fit: 2026-05-26 relief-inclusive var/mu=1.204.
+    "HA":  50.0,   # SYNCED 2026-07-02 to EdgeModel's 06-30 starts-only recal (NB_R_HA=50.0, near-Poisson) — consistent with the 2026-06-16 starts-only flag here (var/mu=0.890 -> ~Poisson; the old 13.41 was relief-contaminated). Market remains SUSPENDED (G_HA_SUSPENDED) so no live reprice; value kept in lockstep per "constants up to date everywhere".
     "RBI": 0.87,   # calibrated 2026-05-26: 169k batter game-logs (2023-2026), within-player var/mu=1.535. r<1 is valid NB; reflects heavy zero-inflation (~74% of games are 0 RBI).
     "ER":  4.75,   # Task#1 2026-06-16: starts-only re-align (is_starter=1, n=370 pitchers / 15,297 starts), var/mu=1.509. Was 2.62 from the relief-inclusive 69k-log fit (var/mu=1.700), which over-disperses starter ER by ~30% (implied var/mu~1.94 at starter mu=2.466). Higher r = thinner tails for the priced (starter) population.
-    "TB":  1.3,    # calibrated 2026-05-26: 169k batter game-logs, within-player var/mu=2.117. Fallback only — calc_tb_prob() uses component Poisson convolution (1B/2B/3B/HR) when TB_1B available, which is more accurate.
+    "TB":  1.6,    # SYNCED 2026-07-02 to EdgeModel's 06-30 recal (TB_R=1.6, within-player re-derivation; was 1.3 from the 2026-05-26 fit). Fallback only — calc_tb_prob() uses component Poisson convolution (1B/2B/3B/HR) when TB_1B available, which is more accurate.
 }
 
 # WNBA NB dispersion r — single source: pricing_core.WNBA_NB_R (was a local literal;
@@ -244,9 +244,10 @@ MLB_PARK_FACTORS = {
     "SEA": 0.93, "OAK": 0.93, "LAA": 0.93, "SF":  0.92, "SD":  0.91,
 }
 
-# NB dispersion for MLB team run-scoring; calibrated 2026-06-05 from 8095 regular-season games.
-# var/mu=2.261 (pooled); r = mu^2/(var-mu) = 3.548. Used for team-total NB CDF and ML NB sum.
-MLB_TEAM_RUN_R = 3.548
+# NB dispersion for MLB team run-scoring. SYNCED 2026-07-02 to EdgeModel's MoM re-fit
+# (TEAM_RUN_R=3.50 from realized per-team variance; the frozen 3.548 was the 2026-06-05
+# pooled fit). Used for team-total NB CDF and ML NB sum — lockstep with EdgeModel.
+MLB_TEAM_RUN_R = 3.50
 
 # Plan 9 §9F tier restructure (2026-06-06): tiers are stat-routing buckets keyed
 # by empirical calibration quality — NOT conviction levels. T2 = best-calibrated

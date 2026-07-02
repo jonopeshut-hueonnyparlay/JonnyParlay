@@ -184,7 +184,7 @@ def mode_mlb_team_runs(conn: sqlite3.Connection):
     # Recommended: average of home/away r
     r_rec = (r_home + r_away) / 2.0
     print(f"  Recommended MLB_TEAM_RUN_R = {r_rec:.3f}  (avg of home/away)")
-    print(f"  Current MLB_TEAM_RUN_R     = 3.548  (last calibration 2026-06-05)")
+    print(f"  Current MLB_TEAM_RUN_R     = 3.50  (synced 2026-07-02 to EdgeModel MoM re-fit)")
     print()
     print("  Deploy: set MLB_TEAM_RUN_R = <value> in engine/run_picks.py (~line 525)")
     print(f"  Note: r={r_rec:.2f} means team scoring is heavily overdispersed vs Poisson.")
@@ -549,7 +549,7 @@ _NBA_ID_MAP = {
 }
 
 _OUT_DIR = Path(__file__).parent.parent / "data"
-_MLB_FALLBACK_R = 3.548
+_MLB_FALLBACK_R = 3.50
 _MIN_GAMES = 20
 
 
