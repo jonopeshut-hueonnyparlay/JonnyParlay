@@ -54,8 +54,20 @@ def _fetch_from_contract(conn, sport: str, game_date: str) -> dict:
             "AND mean IS NOT NULL",
             [game_date, (sport or "").upper()],
         ).fetchall()
-    except sqlite3.OperationalError:
-        return {}  # contract table not present in this DB -> fall back
+    except sqlite3.OperationalError as exc:
+        # ADR-005 / 1A (revised per architecture review): this already fails soft
+        # (falls back to the per-sport tables below) -- that's correct and
+        # unchanged. What was missing was observability: "no such table"
+        # (EdgeModel hasn't created the contract yet -- expected, benign
+        # pre-first-run) and "no such column" (the contract's actual shape
+        # changed -- worth investigating) were both silently indistinguishable
+        # as a bare `{}`.
+        if "no such table" in str(exc):
+            log.debug("edgemodel_adapter: contract table not yet present (%s)", exc)
+        else:
+            log.warning("edgemodel_adapter: contract query failed, falling back "
+                       "to per-sport tables (%s)", exc)
+        return {}  # fail-soft either way -- caller falls back to per-sport tables
     for r in rows:
         nk = (r["entity_id"] or "").strip()
         stat = r["market"]

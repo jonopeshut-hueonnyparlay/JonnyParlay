@@ -9,6 +9,7 @@ other extracted modules.
 import sys
 import csv
 import json
+import os
 import re
 import time
 import logging
@@ -32,6 +33,47 @@ from quant.odds import is_decimal_leak
 logger = logging.getLogger("jonnyparlay")
 
 OUTPUT_FOLDER = str(_data_path("picks"))
+
+# ADR-005 / 1B (revised per architecture review): required-column contract for
+# parse_csv(). Each stat's alternate set is transcribed EXACTLY from that stat's
+# own clean.get(...) fallback chain below -- not a generic case-insensitive
+# guess, since the chains are inconsistent (MLB fields are exact-case only;
+# NBA/NHL fields tolerate some but not all case variants). If none of a stat's
+# alternates appear in the file's raw header, parse_csv() would silently price
+# every player at 0 for that stat with no fallback -- this is deliberately
+# narrower than "every column the parser reads": dk_std is excluded because its
+# absence already has a documented, intentional fallback (see the dk_std
+# comment below, "falls back to SIGMA['PTS']").
+_REQUIRED_STAT_COLUMNS = {
+    "NBA":  {"PTS": {"PTS", "pts"}, "REB": {"RB", "rb", "REB"},
+             "AST": {"AST", "ast"}, "3PM": {"3PT", "3pt", "3PM"}},
+    "WNBA": {"PTS": {"PTS", "pts"}, "REB": {"RB", "rb", "REB"},
+             "AST": {"AST", "ast"}, "3PM": {"3PT", "3pt", "3PM"}},
+    "MLB":  {"1B": {"1B"}, "2B": {"2B"}, "3B": {"3B"}, "HR": {"HR"}, "R": {"R"},
+             "RBI": {"RBI"}, "H": {"H"}, "K": {"K"}, "BB": {"BB"}, "IP": {"IP"},
+             "ER": {"ER"}, "PA": {"PA"}},
+    "NHL":  {"SOG": {"SOG", "sog"}, "AST": {"A", "a", "AST"}, "G": {"G", "g"},
+             "SV": {"SV", "sv"}, "GA": {"GA", "ga"}},
+}
+
+
+def _check_required_columns(raw_headers: set, sport: str, path: Path) -> None:
+    """Warn (default) or abort (ODDS_IO_STRICT_CSV_VALIDATION=1) when a
+    structurally required stat column is entirely absent from the CSV header."""
+    required = _REQUIRED_STAT_COLUMNS.get(sport)
+    if not required:
+        return
+    missing = [stat for stat, alts in required.items() if not (alts & raw_headers)]
+    if not missing:
+        return
+    msg = (f"  [!] {path.name}: missing required {sport} column(s) {missing} -- "
+           f"affected players will silently price at 0 for these stats.")
+    if os.environ.get("ODDS_IO_STRICT_CSV_VALIDATION", "").lower() in ("1", "true", "yes"):
+        print(msg + " Aborting (ODDS_IO_STRICT_CSV_VALIDATION is set).")
+        sys.exit(1)
+    print(msg)
+    logger.warning("odds_io.parse_csv: missing required %s column(s) %s in %s",
+                   sport, missing, path.name)
 
 
 def parse_csv(filepath):
@@ -84,6 +126,8 @@ def parse_csv(filepath):
         sport = "NHL"
     else:
         sport = "NBA"
+
+    _check_required_columns({h.strip() for h in rows[0].keys()}, sport, path)
 
     players = []
     for row in rows:

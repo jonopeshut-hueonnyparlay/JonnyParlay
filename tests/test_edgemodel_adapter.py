@@ -5,10 +5,31 @@ verifies normalization to JonnyParlay stat codes, the WNBA/NBA sport filter, MLB
 pitcher+batter tables, and fail-soft on missing DB / unknown sport. No network, no
 real DB.
 """
+import logging
 import sqlite3
+
+import pytest
 
 import edgemodel_adapter as ea
 from name_utils import name_key
+
+
+@pytest.fixture
+def jonnyparlay_log(caplog):
+    """The "jonnyparlay" logger sets propagate=False (engine_logger.py) so
+    caplog's default root-logger handler never sees its records -- attach the
+    capture handler directly, same pattern as
+    tests/test_log_picks_zero_row_warning.py's jonnyparlay_warnings fixture."""
+    logger = logging.getLogger("jonnyparlay")
+    handler = caplog.handler
+    logger.addHandler(handler)
+    prev_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield caplog
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prev_level)
 
 
 def _make_db(tmp_path):
@@ -116,3 +137,41 @@ def test_falls_back_to_per_sport_when_contract_empty_for_date(tmp_path):
     _add_contract(db, [("2026-06-20", "WNBA", name_key("A'ja Wilson"), "PTS", "edgemodel", 1.0)])
     res = ea.fetch("WNBA", "2026-06-26", db_path=db)
     assert res[(name_key("A'ja Wilson"), "PTS")] == 22.5   # per-sport value, not the contract's
+
+
+# ADR-005 / 1A (revised per architecture review): the contract query's existing
+# `except sqlite3.OperationalError` is the real safety net here (schema_version
+# comparison was dropped -- nothing bumps it, and the exception path already
+# catches structural drift). These tests confirm it, and that "table absent"
+# vs. "column absent" now log at different levels without changing behavior.
+
+def test_contract_table_absent_is_debug_logged_not_warned(tmp_path, jonnyparlay_log):
+    # _make_db() never creates the `projection` table at all -- every other
+    # test in this file already exercises this path implicitly; this test
+    # makes the log-level distinction explicit and asserts on it directly.
+    db = _make_db(tmp_path)
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res[(name_key("A'ja Wilson"), "PTS")] == 22.5  # per-sport fallback still works
+    assert any("not yet present" in r.message for r in jonnyparlay_log.records)
+    assert not any(r.levelname == "WARNING" and "contract query failed" in r.message
+                   for r in jonnyparlay_log.records)
+
+
+def test_contract_column_missing_falls_back_gracefully(tmp_path, jonnyparlay_log):
+    # A `projection` table that exists but is missing the `mean` column --
+    # structural drift, not simple absence. Must still fail soft (fall back to
+    # the per-sport tables), not crash -- and should warn, not debug-log.
+    db = _make_db(tmp_path)
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE projection (game_date TEXT, sport TEXT, "
+        "entity_id TEXT, market TEXT, source TEXT)")  # no `mean` column
+    conn.execute(
+        "INSERT INTO projection VALUES ('2026-06-26','WNBA',?,'PTS','edgemodel')",
+        (name_key("A'ja Wilson"),))
+    conn.commit()
+    conn.close()
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res[(name_key("A'ja Wilson"), "PTS")] == 22.5  # per-sport fallback still works
+    assert any(r.levelname == "WARNING" and "contract query failed" in r.message
+               for r in jonnyparlay_log.records)

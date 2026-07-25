@@ -36,6 +36,7 @@ ENGINE = Path(__file__).resolve().parent           # this file lives in engine/
 if str(ENGINE) not in sys.path:
     sys.path.insert(0, str(ENGINE))
 from paths import PROJECT_ROOT  # noqa: E402  (engine/ added to sys.path above)
+from secrets_config import EDGEMODEL_DB_PATH  # noqa: E402
 
 JP_ROOT   = PROJECT_ROOT
 _em_env   = os.environ.get("EDGEMODEL_ROOT", "").strip()
@@ -310,6 +311,34 @@ if PROJ_DB.exists():
         check("projections.db readable", False, str(e))
 else:
     check("projections.db exists", False, str(PROJ_DB))
+
+# EDGEMODEL_DB_PATH is what the runtime data-access modules (edgemodel_adapter,
+# sabersim_ingest, bet_lineage_sync) actually resolve at call time -- distinct
+# from PROJ_DB above, which is this script's own EM_ROOT-derived path and can
+# point somewhere different if EDGEMODEL_DB_PATH and EDGEMODEL_ROOT/.env ever
+# disagree. §2 above only checks that EDGEMODEL_DB_PATH is *set*, not that it
+# resolves to a real file -- a stale value there is exactly what fails soft
+# and silently everywhere else, so surface it here instead.
+_em_db_path = Path(EDGEMODEL_DB_PATH)
+if _em_db_path.exists():
+    check("EDGEMODEL_DB_PATH resolves to a real file", True, str(_em_db_path))
+else:
+    warn("EDGEMODEL_DB_PATH resolves to a missing file", str(_em_db_path))
+
+# ADR-005 / 1C (revised per architecture review): pure visibility, not a
+# failure-detection check. pricing_core is a hard dependency of ~28 files
+# including gates.py/prob_core.py/sizing_core.py -- if it's genuinely broken,
+# run_picks.py already crashes on startup, loudly, before this report is ever
+# read. An import-success/fail branch here would add code without adding real
+# detection value. What IS useful: knowing which version is actually active,
+# for debugging "why did behavior change" after an untracked update -- so this
+# prints unconditionally (check()/warn() suppress PASS-level detail text from
+# the report, which would defeat the point of a visibility line).
+try:
+    import pricing_core as _pricing_core
+    print(f"  pricing_core version: {getattr(_pricing_core, '__version__', 'unknown')}")
+except ImportError as _pc_exc:
+    warn("pricing_core not importable in this environment", str(_pc_exc))
 
 # ── 13. pick_log.csv readable ─────────────────────────────────────────────────
 print("Checking pick_log.csv...")
