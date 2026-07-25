@@ -89,10 +89,11 @@ for _p in _CANDIDATES:
 
 ODDS_API_KEY: str = os.getenv("ODDS_API_KEY", "")
 
-# Path to EdgeModel's projections.db — set in .env after repo split.
+# Path to EdgeModel's projections.db — set in .env; this default is a
+# same-machine dev fallback only, not a cross-machine guarantee.
 EDGEMODEL_DB_PATH: str = os.getenv(
     "EDGEMODEL_DB_PATH",
-    r"C:\Users\jono4\Documents\EdgeModel\data\projections.db"
+    r"C:\Dev\EdgeModel\data\projections.db"
 )
 
 # Discord webhooks â€” one per channel. Blank = not configured.

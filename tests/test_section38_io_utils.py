@@ -28,6 +28,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -216,16 +217,25 @@ def test_save_fn_has_no_inline_mkstemp_dance(fname, fn):
 
 def test_discord_guard_save_uses_helper(tmp_path, monkeypatch):
     """Re-point GUARD_FILE at a tmp path and verify the save path uses the
-    helper end-to-end (produces a valid JSON file, no leftover .tmp)."""
+    helper end-to-end (produces a valid JSON file, no leftover .tmp).
+
+    The guard key's embedded date must stay inside discord_guard.GUARD_TTL_DAYS
+    of "today" -- prune_guard() drops anything older, so a hardcoded literal
+    date here would silently age out and fail this assertion months later
+    (same landmine class as the EdgeModel rolling-window date-literal bugs).
+    Compute it at test-run time instead.
+    """
     import discord_guard
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    key = f"post:{today}:test"
     guard_path = tmp_path / "discord_posted.json"
     lock_path = str(guard_path) + ".lock"
     monkeypatch.setattr(discord_guard, "GUARD_FILE", guard_path)
     monkeypatch.setattr(discord_guard, "LOCK_FILE", lock_path)
-    discord_guard.save_guard({"post:2026-04-21:test": "hit"})
+    discord_guard.save_guard({key: "hit"})
     assert guard_path.is_file()
     data = json.loads(guard_path.read_text(encoding="utf-8"))
-    assert data == {"post:2026-04-21:test": "hit"}
+    assert data == {key: "hit"}
     assert not list(tmp_path.glob("*.tmp"))
 
 

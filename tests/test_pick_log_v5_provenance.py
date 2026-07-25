@@ -5,6 +5,7 @@ decision, the primary writer emitting provenance, and the bet_lineage mirror.
 """
 import csv
 import sqlite3
+import time
 
 import pick_log_schema as pls
 
@@ -166,6 +167,176 @@ def test_bet_lineage_sync_idempotent_per_run(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM bet_lineage").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+class _ExecuteSpyConn:
+    """Thin proxy around a real sqlite3.Connection that records .execute() SQL
+    text. sqlite3.Connection is an immutable C type -- can't monkeypatch its
+    methods directly -- so we wrap sqlite3.connect()'s return value instead."""
+
+    def __init__(self, real_conn, calls):
+        object.__setattr__(self, "_real", real_conn)
+        object.__setattr__(self, "_calls", calls)
+
+    def execute(self, sql, *a, **k):
+        self._calls.append(sql)
+        return self._real.execute(sql, *a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._real, name, value)
+
+
+def test_bet_lineage_sync_sets_busy_timeout_pragma(tmp_path, monkeypatch):
+    """H4 hardening: sync_from_pick_log() must set PRAGMA busy_timeout on its
+    own connection, matching EdgeModel's own projections_db.py timeout."""
+    import bet_lineage_sync as bls
+    db = _lineage_db(tmp_path)
+    pl = _pick_log(tmp_path, [
+        {"run_type": "primary", "result": "W", "run_id": "r1", "date": "2026-06-26",
+         "sport": "NBA", "stat": "PTS", "player": "Anthony Edwards", "source": "sabersim"}])
+    calls = []
+    real_connect = sqlite3.connect
+
+    def spy_connect(*a, **k):
+        return _ExecuteSpyConn(real_connect(*a, **k), calls)
+
+    monkeypatch.setattr(sqlite3, "connect", spy_connect)
+    bls.sync_from_pick_log(pl, db_path=db)
+    assert any("busy_timeout" in c.lower() for c in calls), \
+        f"expected a PRAGMA busy_timeout call, got: {calls}"
+
+
+def test_bet_lineage_sync_retries_on_lock_contention_then_succeeds(tmp_path, monkeypatch):
+    """H5 hardening: a transient 'database is locked' error retries instead of
+    giving up on the first attempt. Simulate 2 failures then a real success."""
+    import bet_lineage_sync as bls
+    db = _lineage_db(tmp_path)
+    pl = _pick_log(tmp_path, [
+        {"run_type": "primary", "result": "W", "run_id": "r1", "date": "2026-06-26",
+         "sport": "NBA", "stat": "PTS", "player": "Anthony Edwards", "source": "sabersim"}])
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    real_connect = sqlite3.connect
+    attempts = {"n": 0}
+
+    def flaky_connect(*a, **k):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise sqlite3.OperationalError("database is locked")
+        return real_connect(*a, **k)
+
+    monkeypatch.setattr(sqlite3, "connect", flaky_connect)
+    n = bls.sync_from_pick_log(pl, db_path=db)
+    assert n == 1
+    assert attempts["n"] == 3
+
+
+def test_bet_lineage_sync_gives_up_failsoft_when_always_locked(tmp_path, monkeypatch):
+    """All attempts hit lock contention -> fail-soft 0, never raises."""
+    import bet_lineage_sync as bls
+    db = _lineage_db(tmp_path)
+    pl = _pick_log(tmp_path, [
+        {"run_type": "primary", "result": "W", "run_id": "r1", "date": "2026-06-26",
+         "sport": "NBA", "stat": "PTS", "player": "Anthony Edwards", "source": "sabersim"}])
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    def always_locked(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(sqlite3, "connect", always_locked)
+    assert bls.sync_from_pick_log(pl, db_path=db) == 0
+
+
+def test_bet_lineage_sync_non_lock_exception_fails_soft_without_retrying(tmp_path, monkeypatch):
+    """A non-lock error must fail soft immediately -- only OperationalError
+    gets the retry treatment."""
+    import bet_lineage_sync as bls
+    db = _lineage_db(tmp_path)
+    pl = _pick_log(tmp_path, [
+        {"run_type": "primary", "result": "W", "run_id": "r1", "date": "2026-06-26",
+         "sport": "NBA", "stat": "PTS", "player": "Anthony Edwards", "source": "sabersim"}])
+    attempts = {"n": 0}
+
+    def boom(*a, **k):
+        attempts["n"] += 1
+        raise ValueError("not a lock issue")
+
+    monkeypatch.setattr(sqlite3, "connect", boom)
+    assert bls.sync_from_pick_log(pl, db_path=db) == 0
+    assert attempts["n"] == 1
+
+
+class _InsertFailConn:
+    """Proxy that lets DELETE succeed but raises on the INSERT executemany
+    call, to test H6's atomicity guarantee (DELETE must roll back too)."""
+
+    def __init__(self, real_conn):
+        object.__setattr__(self, "_real", real_conn)
+
+    def executemany(self, sql, params):
+        if sql.strip().upper().startswith("INSERT"):
+            raise sqlite3.IntegrityError("simulated failure mid-write")
+        return self._real.executemany(sql, params)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._real, name, value)
+
+    def __enter__(self):
+        return self._real.__enter__()
+
+    def __exit__(self, *a):
+        return self._real.__exit__(*a)
+
+
+def test_bet_lineage_sync_rolls_back_delete_if_insert_fails(tmp_path, monkeypatch):
+    """H6: DELETE and INSERT are one atomic unit under `with conn:` -- if the
+    INSERT fails partway, the DELETE must not have taken effect either (no
+    half-deleted state left behind)."""
+    import bet_lineage_sync as bls
+    from name_utils import name_key
+    db = _lineage_db(tmp_path)
+    aja = name_key("Anthony Edwards")
+    # Pre-seed an existing row for run_id='r1' that a successful sync would replace.
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO bet_lineage(run_id, game_date, sport, market, entity_id, source, "
+        "challenger_source, blend_weight) VALUES('r1','2026-06-25','NBA','PTS',?,'sabersim',NULL,0.0)",
+        (aja,))
+    conn.commit()
+    conn.close()
+
+    pl = _pick_log(tmp_path, [
+        {"run_type": "primary", "result": "W", "run_id": "r1", "date": "2026-06-26",
+         "sport": "NBA", "stat": "PTS", "player": "Anthony Edwards", "source": "sabersim"}])
+
+    real_connect = sqlite3.connect
+
+    def spy_connect(*a, **k):
+        return _InsertFailConn(real_connect(*a, **k))
+
+    monkeypatch.setattr(sqlite3, "connect", spy_connect)
+
+    # IntegrityError isn't OperationalError, so this goes straight to the
+    # generic fail-soft path (H5's retry is scoped to lock contention only).
+    n = bls.sync_from_pick_log(pl, db_path=db)
+    assert n == 0
+
+    # Verify with a clean connection: the pre-existing r1 row must STILL be
+    # there. If the DELETE had committed independently of the failed INSERT
+    # (the pre-H6 behavior would have been ambiguous here), this row would
+    # be gone.
+    conn2 = sqlite3.connect(db)
+    try:
+        row = conn2.execute(
+            "SELECT entity_id FROM bet_lineage WHERE run_id='r1'").fetchone()
+        assert row is not None and row[0] == aja
+    finally:
+        conn2.close()
 
 
 def test_bet_lineage_sync_failsoft_missing_db(tmp_path):

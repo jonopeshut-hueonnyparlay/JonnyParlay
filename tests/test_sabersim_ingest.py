@@ -7,6 +7,7 @@ selection, idempotent re-ingest, coexistence with source='edgemodel' rows, and
 fail-soft on missing DB / absent table.
 """
 import sqlite3
+import time
 
 import sabersim_ingest as si
 from name_utils import name_key
@@ -151,6 +152,94 @@ def test_pre_calibration_column_db_still_ingests(tmp_path):
     n = si.ingest({"WNBA": [{"name": "A'ja Wilson", "PTS": 22.5, "REB": 9.1, "AST": 2.3, "3PM": 0.4}]},
                   "2026-06-26", db_path=db)
     assert n == 4
+
+
+class _ExecuteSpyConn:
+    """Thin proxy around a real sqlite3.Connection that records .execute() SQL
+    text. sqlite3.Connection is an immutable C type -- can't monkeypatch its
+    methods directly -- so we wrap sqlite3.connect()'s return value instead."""
+
+    def __init__(self, real_conn, calls):
+        object.__setattr__(self, "_real", real_conn)
+        object.__setattr__(self, "_calls", calls)
+
+    def execute(self, sql, *a, **k):
+        self._calls.append(sql)
+        return self._real.execute(sql, *a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._real, name, value)
+
+
+def test_sets_busy_timeout_pragma(tmp_path, monkeypatch):
+    """H4 hardening: ingest() must set PRAGMA busy_timeout on its own connection
+    so a write lock held briefly by EdgeModel's own process doesn't fail this
+    write immediately -- matches EdgeModel's own projections_db.py timeout."""
+    db = _db_with_contract(tmp_path)
+    calls = []
+    real_connect = sqlite3.connect
+
+    def spy_connect(*a, **k):
+        return _ExecuteSpyConn(real_connect(*a, **k), calls)
+
+    monkeypatch.setattr(sqlite3, "connect", spy_connect)
+    si.ingest({"WNBA": [{"name": "A'ja Wilson", "PTS": 22.5, "REB": 9.1, "AST": 2.3, "3PM": 0.4}]},
+              "2026-06-26", db_path=db)
+    assert any("busy_timeout" in c.lower() for c in calls), \
+        f"expected a PRAGMA busy_timeout call, got: {calls}"
+
+
+def test_retries_on_lock_contention_then_succeeds(tmp_path, monkeypatch):
+    """H5 hardening: a transient 'database is locked' error retries instead of
+    giving up on the first attempt. Simulate 2 failures then a real success."""
+    db = _db_with_contract(tmp_path)
+    monkeypatch.setattr(time, "sleep", lambda s: None)  # don't actually wait in tests
+    real_connect = sqlite3.connect
+    attempts = {"n": 0}
+
+    def flaky_connect(*a, **k):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise sqlite3.OperationalError("database is locked")
+        return real_connect(*a, **k)
+
+    monkeypatch.setattr(sqlite3, "connect", flaky_connect)
+    n = si.ingest({"WNBA": [{"name": "A'ja Wilson", "PTS": 22.5, "REB": 9.1, "AST": 2.3, "3PM": 0.4}]},
+                  "2026-06-26", db_path=db)
+    assert n == 4
+    assert attempts["n"] == 3  # 2 failed attempts + 1 success, within _MAX_RETRIES
+
+
+def test_gives_up_failsoft_when_always_locked(tmp_path, monkeypatch):
+    """All attempts hit lock contention -> fail-soft 0, never raises."""
+    db = _db_with_contract(tmp_path)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    def always_locked(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(sqlite3, "connect", always_locked)
+    n = si.ingest({"WNBA": [{"name": "X", "PTS": 1.0}]}, "2026-06-26", db_path=db)
+    assert n == 0
+
+
+def test_non_lock_exception_fails_soft_without_retrying(tmp_path, monkeypatch):
+    """A non-lock error (e.g. a genuine bug) must fail soft immediately --
+    only sqlite3.OperationalError gets the retry treatment."""
+    db = _db_with_contract(tmp_path)
+    attempts = {"n": 0}
+
+    def boom(*a, **k):
+        attempts["n"] += 1
+        raise ValueError("not a lock issue")
+
+    monkeypatch.setattr(sqlite3, "connect", boom)
+    n = si.ingest({"WNBA": [{"name": "X", "PTS": 1.0}]}, "2026-06-26", db_path=db)
+    assert n == 0
+    assert attempts["n"] == 1  # no retry for non-lock errors
 
 
 def test_missing_db_is_failsoft(tmp_path):

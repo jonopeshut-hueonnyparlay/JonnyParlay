@@ -20,7 +20,8 @@ The driver does not modify any persistent state — generate_projections.run()
 is called with persist=False so the projections DB is untouched. The only
 side effects are JSON sidecars under data/diagnostics/.
 
-Pattern matches engine/tools/diag_h6_pool.py / engine/tools/diag_blowout_buckets.py.
+Pattern matches EdgeModel's engine/tools/diag_h6_pool.py / diag_blowout_buckets.py
+(relocated there in H8, 2026-07-25 -- see engine/tools/__init__.py).
 """
 from __future__ import annotations
 

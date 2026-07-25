@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 _ENGINE = Path(__file__).resolve().parent
@@ -37,6 +38,9 @@ from calibrated import PLATT_FIT_DATE
 from edgemodel_adapter import _BASKETBALL_COLS, _MLB_PITCHER_COLS, _MLB_BATTER_COLS
 
 log = logging.getLogger("jonnyparlay")
+
+_MAX_RETRIES = 3       # H5: total attempts on lock contention (busy_timeout already covers waiting within one)
+_RETRY_BACKOFF_S = 2   # base backoff between attempts; multiplied by attempt number
 
 _HOOP_MARKETS = list(_BASKETBALL_COLS.values())      # PTS REB AST 3PM
 _PITCHER_MARKETS = list(_MLB_PITCHER_COLS.values())  # K OUTS ER HA BB
@@ -173,22 +177,37 @@ def ingest(all_players: dict, game_date: str, db_path=None) -> int:
     if not path.exists():
         log.warning("sabersim_ingest: projections.db not found at %s", path)
         return 0
-    try:
-        conn = sqlite3.connect(path)
+    for attempt in range(_MAX_RETRIES):
         try:
-            if not _table_exists(conn, "projection"):
-                return 0  # EdgeModel hasn't created the contract yet -> skip this run
-            has_slate = _table_exists(conn, "slate")
-            cal_col = _has_cal_col(conn)
-            total = 0
-            for sport, players in (all_players or {}).items():
-                total += ingest_players(conn, players, sport, game_date, cal_col=cal_col)
-                if has_slate:
-                    write_slate(conn, players, sport, game_date)
-            conn.commit()
-            return total
-        finally:
-            conn.close()
-    except Exception as exc:
-        log.warning("sabersim_ingest: write failed (%s)", exc)
-        return 0
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA busy_timeout=60000")  # match EdgeModel's own timeout (projections_db.py)
+            try:
+                if not _table_exists(conn, "projection"):
+                    return 0  # EdgeModel hasn't created the contract yet -> skip this run
+                has_slate = _table_exists(conn, "slate")
+                cal_col = _has_cal_col(conn)
+                total = 0
+                for sport, players in (all_players or {}).items():
+                    total += ingest_players(conn, players, sport, game_date, cal_col=cal_col)
+                    if has_slate:
+                        write_slate(conn, players, sport, game_date)
+                # Nothing is committed before this point (see H5 note below) --
+                # a mid-loop OperationalError means retrying from a fresh
+                # connection is safe, no partial-commit double-write risk.
+                conn.commit()
+                return total
+            finally:
+                conn.close()
+        except sqlite3.OperationalError as exc:
+            if attempt == _MAX_RETRIES - 1:
+                log.warning("sabersim_ingest: write failed after %d attempts (%s)", _MAX_RETRIES, exc)
+                return 0
+            log.warning("sabersim_ingest: lock contention, retrying (%d/%d)", attempt + 1, _MAX_RETRIES)
+            time.sleep(_RETRY_BACKOFF_S * (attempt + 1))
+        except Exception as exc:
+            log.warning("sabersim_ingest: write failed (%s)", exc)
+            return 0
+    # Unreachable: every loop iteration returns, either on success, on the
+    # final OperationalError attempt, or on any other exception. Kept only
+    # so the function has an explicit fallthrough return for readability.
+    return 0  # pragma: no cover
