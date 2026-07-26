@@ -71,5 +71,8 @@ ruff==0.15.17
 # were removed in favour of it (Stage 2 unification, kills lockstep drift).
 # Installed from git so CI / any fresh env can resolve it — a local editable path
 # only works on the dev box (it broke CI). For active development of pricing_core,
-# `pip install -e C:\Dev\pricing_core` locally overrides this pin. Bump @<commit> on change.
-pricing-core @ git+https://github.com/jonopeshut-hueonnyparlay/pricing_core.git@7261d61e14de37d9c376076847b79c829107fbd2
+# `pip install -e C:\Dev\pricing_core` locally overrides this pin.
+# Pinned by semver tag (ADR-002) — bump via EdgeModel's
+# `scripts/bump_pricing_core.py <vX.Y.Z>`, not by hand; that script keeps this
+# file and EdgeModel's requirements.txt/requirements.lock.txt in lockstep.
+pricing-core @ git+https://github.com/jonopeshut-hueonnyparlay/pricing_core.git@v0.2.0
