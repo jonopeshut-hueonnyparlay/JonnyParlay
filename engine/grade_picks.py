@@ -192,6 +192,13 @@ from io_utils import atomic_write_json  # noqa: E402
 # the sidecar after a successful write so readers can fail-fast on forward-
 # incompatible schema drift without sniffing the CSV header.
 from pick_log_schema import write_schema_sidecar as _write_schema_sidecar  # noqa: E402
+# Phase 3 P0 (RISK_REGISTER.md R2): canonical schema migration, the piece
+# _read_rows_locked previously bypassed. CANONICAL_HEADER aliased to avoid
+# colliding with this module's own local uses of `HEADER`-shaped names.
+from pick_log_schema import (  # noqa: E402
+    CANONICAL_HEADER as _CANONICAL_HEADER,
+    migrate_row as _migrate_row,
+)
 
 
 def fmt_date(date_str: str) -> str:
@@ -1953,9 +1960,19 @@ def post_game_lines_results(date_str, day_picks, args):
 
 def _read_rows_locked(log_path, lock_timeout=30):
     """Grader-flavoured wrapper: shares the same lock/read semantics as
-    pick_log_io.read_rows_locked but routes the fall-through warning
-    through the grader's file logger. The canonical helper lives in
-    pick_log_io.py (audit H-8 / M-series)."""
+    pick_log_io.read_rows_locked (audit H-8 / M-series) but routes the
+    fall-through warning through the grader's file logger, and keeps its own
+    FileLockTimeout->hard-abort behavior rather than pick_log_io's softer
+    warn-and-continue default (grading is the real-money path; a stale/
+    partial read here is worse than aborting, unlike a diagnostic report).
+
+    Phase 3 P0 (RISK_REGISTER.md R2): rows are migrated to canonical shape
+    via pick_log_schema.migrate_row() -- the exact step this function used
+    to skip, which left legacy-schema logs (pick_log_manual.csv, stuck at
+    schema v3 while the main log is at v6) graded with raw, unmigrated rows
+    forever. The returned fieldnames are CANONICAL_HEADER, not the on-disk
+    header, so a caller that writes back via _atomic_write_rows upgrades the
+    file's header to canonical shape as a side effect of grading."""
     log_path_s = str(log_path)
     lock_path = log_path_s + ".lock"
 
@@ -1968,12 +1985,15 @@ def _read_rows_locked(log_path, lock_timeout=30):
 
     try:
         with FileLock(lock_path, timeout=lock_timeout):
-            return _do_read()
+            rows, fieldnames = _do_read()
     except FileLockTimeout:
         raise RuntimeError(
             f"[grade_picks] Could not acquire read lock on {lock_path} within "
             f"{lock_timeout}s — aborting to avoid stale/partial data"
         )
+
+    migrated = [_migrate_row(r, source_header=fieldnames) for r in rows]
+    return migrated, list(_CANONICAL_HEADER)
 
 
 def _atomic_write_rows(log_path, fieldnames, rows, lock_timeout=30):

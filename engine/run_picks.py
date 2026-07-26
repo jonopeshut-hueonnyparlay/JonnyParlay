@@ -1542,24 +1542,70 @@ def main():
         # Manual picks go to their own log — keeps model-generated pick_log.csv clean.
         log_path = Path(PICK_LOG_MANUAL_PATH)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not log_path.exists() or log_path.stat().st_size == 0
+
+        # Phase 3 P0 (RISK_REGISTER.md R3): full canonical-shaped row, keyed
+        # by column name via DictWriter — replaces the old hardcoded
+        # 29-value positional list, which had silently drifted behind
+        # CANONICAL_HEADER's later v5/v6 bumps (source, model_version,
+        # run_id, clv_corrected never populated for any manual pick).
+        manual_row = {c: "" for c in CANONICAL_HEADER}
+        manual_row.update({
+            "date": today_manual, "run_time": run_time_manual,
+            "run_type": manual_run_type, "sport": sport, "player": player,
+            "team": team, "stat": stat, "line": line, "direction": direction,
+            "odds": odds_norm, "book": book, "tier": tier,
+            # M-10: canonical 2-decimal size for manual rows too.
+            "size": _normalize_size(size), "game": game, "mode": "Default",
+            # M-3: canonical is_home (handles "1"/"true"/etc).
+            "is_home": _normalize_is_home(is_home_val, stat),
+            # source/model_version/run_id/clv_corrected stay blank — there is
+            # no automated source/model/run behind a manually-typed pick,
+            # matching over_p_raw's existing "blank for manual entries"
+            # precedent (pick_log_schema.py v4 history note).
+        })
+
         # Shared FileLock for the manual log too, so the grader/analyzer can't
         # read mid-append and see a partial row (audit H-5 / H-8).
         with _pick_log_lock(log_path):
+            old_header = None
+            existing_rows = []
+            if log_path.exists() and log_path.stat().st_size > 0:
+                with open(log_path, "r", newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    old_header = reader.fieldnames or []
+                    existing_rows = list(reader)
+
+            # If the on-disk header has drifted from CANONICAL_HEADER (e.g.
+            # pick_log_manual.csv stuck at schema v3), rewrite the file under
+            # the canonical header first — mirrors pick_log_writers.log_picks()'s
+            # existing set(HEADER) != set(old_header) upgrade pattern, so a
+            # manual entry heals the file's schema instead of compounding the
+            # drift with a wider row under a narrower header.
+            if old_header and set(CANONICAL_HEADER) != set(old_header):
+                tmp_path = log_path.with_suffix(log_path.suffix + ".tmp")
+                try:
+                    with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+                        writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
+                        writer.writeheader()
+                        for row in existing_rows:
+                            writer.writerow(_migrate_pick_row(row, source_header=old_header))
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp_path, log_path)
+                except Exception:
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
+                print(f"  📋 Updated {log_path.name} header: added {set(CANONICAL_HEADER) - set(old_header)}")
+
+            write_header = not log_path.exists() or log_path.stat().st_size == 0
             with open(log_path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
+                writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
                 if write_header:
-                    writer.writerow(CANONICAL_HEADER)
-                writer.writerow([
-                    today_manual, run_time_manual, manual_run_type, sport, player, team, stat, line,
-                    direction, "", "", "", odds_norm, book,
-                    # M-10: canonical 2-decimal size for manual rows too.
-                    # M-3: canonical is_home (handles "1"/"true"/etc).
-                    tier, "", _normalize_size(size), game, "Default", "", "", "", "",
-                    _normalize_is_home(is_home_val, stat),
-                    "", "", "",  # context_verdict, context_reason, context_score
-                    "", "",     # legs, over_p_raw (col 28-29 — must match 29-col CANONICAL_HEADER)
-                ])
+                    writer.writeheader()
+                writer.writerow(manual_row)
                 # Commit to disk before releasing the outer lock (audit H-5).
                 f.flush()
                 os.fsync(f.fileno())
