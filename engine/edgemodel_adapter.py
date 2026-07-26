@@ -6,10 +6,11 @@ champion/challenger source-comparison shadow (measure EdgeModel vs SaberSim on
 identical markets/outcomes -> per-market readiness to take over).
 
 Read-only (opens the DB ?mode=ro); resolves the path via EDGEMODEL_DB_PATH;
-returns {} on ANY failure (missing DB / date / table / column) so callers never
-break. `fetch(sport, game_date)` -> {(name_key, stat): proj_value} where stat is
-the JonnyParlay stat code (PTS/REB/AST/3PM; K/OUTS/ER/HA/BB; HITS/TB/HR), so it
-compares directly to pick_log / the live CSV.
+returns {} on ANY failure (missing DB / date / table / column / unsupported
+future schema_version -- ADR-005 AD-2) so callers never break. `fetch(sport,
+game_date)` -> {(name_key, stat): proj_value} where stat is the JonnyParlay
+stat code (PTS/REB/AST/3PM; K/OUTS/ER/HA/BB; HITS/TB/HR), so it compares
+directly to pick_log / the live CSV.
 
 This is read-side only: nothing here writes to projections.db (the producer/
 consumer boundary stays intact).
@@ -22,6 +23,15 @@ from secrets_config import EDGEMODEL_DB_PATH
 from name_utils import name_key
 
 log = logging.getLogger("jonnyparlay")
+
+# ADR-005 / AD-2 (Option B, T10): the highest `projection.schema_version` this
+# adapter knows how to interpret. Mirrors EdgeModel's own
+# PROJECTION_SCHEMA_VERSION (projections_db.py) by value, not by import -- a
+# cross-repo Python import here would be exactly the kind of runtime coupling
+# ADR-008 already rejected (R23 in RISK_REGISTER.md is the evidenced cost of
+# that pattern elsewhere). Bump only after confirming this adapter's read
+# logic still matches whatever the new version's contract shape means.
+_SUPPORTED_PROJECTION_SCHEMA_VERSION = 1
 
 # projections.db column -> JonnyParlay stat code, per source table.
 _BASKETBALL_COLS = {"proj_pts": "PTS", "proj_reb": "REB", "proj_ast": "AST", "proj_fg3m": "3PM"}
@@ -49,13 +59,13 @@ def _fetch_from_contract(conn, sport: str, game_date: str) -> dict:
     out: dict = {}
     try:
         rows = conn.execute(
-            "SELECT entity_id, market, mean FROM projection "
+            "SELECT entity_id, market, mean, schema_version FROM projection "
             "WHERE game_date = ? AND upper(sport) = ? AND source = 'edgemodel' "
             "AND mean IS NOT NULL",
             [game_date, (sport or "").upper()],
         ).fetchall()
     except sqlite3.OperationalError as exc:
-        # ADR-005 / 1A (revised per architecture review): this already fails soft
+        # Structural drift (missing table/column). This already fails soft
         # (falls back to the per-sport tables below) -- that's correct and
         # unchanged. What was missing was observability: "no such table"
         # (EdgeModel hasn't created the contract yet -- expected, benign
@@ -69,6 +79,27 @@ def _fetch_from_contract(conn, sport: str, game_date: str) -> dict:
                        "to per-sport tables (%s)", exc)
         return {}  # fail-soft either way -- caller falls back to per-sport tables
     for r in rows:
+        version = r["schema_version"] if r["schema_version"] is not None else 1
+        if version > _SUPPORTED_PROJECTION_SCHEMA_VERSION:
+            # Semantic drift: the row is well-formed but declares a version this
+            # adapter doesn't know how to interpret -- e.g. a renamed/repurposed
+            # column that OperationalError above can't catch (the query still
+            # succeeds). Caught HERE, inside this function's own try/except
+            # scope, and resolved by returning {} -- never by raising -- so the
+            # existing caller-side fallback to per-sport tables fires exactly as
+            # it already does for structural drift. Letting an exception escape
+            # to fetch()'s outer handler would skip that fallback entirely (its
+            # `except Exception` returns {} directly, without ever calling
+            # _fetch_from_per_sport) -- the regression this design explicitly
+            # avoids. One warning per fetch() call, not per row, since every row
+            # written by one EdgeModel run shares the same schema_version.
+            log.warning(
+                "edgemodel_adapter: projection row schema_version=%s exceeds "
+                "supported v%s (game_date=%s, sport=%s) -- falling back to "
+                "per-sport tables for this slate",
+                version, _SUPPORTED_PROJECTION_SCHEMA_VERSION, game_date, sport,
+            )
+            return {}
         nk = (r["entity_id"] or "").strip()
         stat = r["market"]
         if nk and stat:

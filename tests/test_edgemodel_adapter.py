@@ -94,12 +94,17 @@ def test_unknown_sport_is_empty(tmp_path):
 
 def _add_contract(db, rows):
     """Add the minimal `projection` contract table + rows (game_date, sport,
-    entity_id, market, source, mean) to an existing temp DB."""
+    entity_id, market, source, mean) to an existing temp DB. schema_version
+    defaults to 1 (supported) for every row unless a test overrides it via a
+    direct INSERT -- matches EdgeModel's own DEFAULT 1 semantics."""
     conn = sqlite3.connect(db)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projection (game_date TEXT, sport TEXT, "
-        "entity_id TEXT, market TEXT, source TEXT, mean REAL)")
-    conn.executemany("INSERT INTO projection VALUES (?,?,?,?,?,?)", rows)
+        "entity_id TEXT, market TEXT, source TEXT, mean REAL, "
+        "schema_version INTEGER DEFAULT 1)")
+    conn.executemany(
+        "INSERT INTO projection (game_date, sport, entity_id, market, source, mean) "
+        "VALUES (?,?,?,?,?,?)", rows)
     conn.commit()
     conn.close()
 
@@ -139,11 +144,15 @@ def test_falls_back_to_per_sport_when_contract_empty_for_date(tmp_path):
     assert res[(name_key("A'ja Wilson"), "PTS")] == 22.5   # per-sport value, not the contract's
 
 
-# ADR-005 / 1A (revised per architecture review): the contract query's existing
-# `except sqlite3.OperationalError` is the real safety net here (schema_version
-# comparison was dropped -- nothing bumps it, and the exception path already
-# catches structural drift). These tests confirm it, and that "table absent"
-# vs. "column absent" now log at different levels without changing behavior.
+# ADR-005 / AD-2 (Option B, T10): structural drift (a missing table or column)
+# and semantic drift (a present-and-well-typed column whose *meaning* has moved
+# on -- the case schema_version exists to catch) are different failure classes
+# needing different detectors. `except sqlite3.OperationalError` remains the
+# right tool for the structural case -- unchanged below. Semantic drift is now
+# separately guarded by an explicit schema_version check (see the "T10" section
+# further down), which shares this exact fail-soft-to-per-sport shape rather
+# than raising: a version mismatch must never escape past the existing
+# fallback, per the module's own "returns {} on ANY failure" contract.
 
 def test_contract_table_absent_is_debug_logged_not_warned(tmp_path, jonnyparlay_log):
     # _make_db() never creates the `projection` table at all -- every other
@@ -175,3 +184,146 @@ def test_contract_column_missing_falls_back_gracefully(tmp_path, jonnyparlay_log
     assert res[(name_key("A'ja Wilson"), "PTS")] == 22.5  # per-sport fallback still works
     assert any(r.levelname == "WARNING" and "contract query failed" in r.message
                for r in jonnyparlay_log.records)
+
+
+# --- T10: runtime schema-version validation (ADR-005 AD-2, Option B) -------
+
+def test_supported_schema_version_reads_normally(tmp_path):
+    db = _make_db(tmp_path)
+    aja = name_key("A'ja Wilson")
+    _add_contract(db, [("2026-06-26", "WNBA", aja, "PTS", "edgemodel", 22.5)])
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res[(aja, "PTS")] == 22.5   # the contract value, not a fallback
+
+
+def test_future_schema_version_falls_back_to_per_sport(tmp_path, jonnyparlay_log):
+    db = _make_db(tmp_path)
+    aja = name_key("A'ja Wilson")
+    # Contract has a future-version row with a DIFFERENT value than per-sport --
+    # if this weren't rejected, the assertion below would see the wrong number.
+    _add_contract(db, [("2026-06-26", "WNBA", aja, "PTS", "edgemodel", 999.0)])
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE projection SET schema_version = 2 WHERE market = 'PTS'")
+    conn.commit()
+    conn.close()
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res[(aja, "PTS")] == 22.5   # per-sport value -- NOT {} (the forbidden regression)
+    assert any(r.levelname == "WARNING" for r in jonnyparlay_log.records)
+
+
+def test_future_schema_version_warning_is_informative(tmp_path, jonnyparlay_log):
+    db = _make_db(tmp_path)
+    aja = name_key("A'ja Wilson")
+    _add_contract(db, [("2026-06-26", "WNBA", aja, "PTS", "edgemodel", 22.5)])
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE projection SET schema_version = 2 WHERE market = 'PTS'")
+    conn.commit()
+    conn.close()
+    ea.fetch("WNBA", "2026-06-26", db_path=db)
+    warnings = [r.message for r in jonnyparlay_log.records if r.levelname == "WARNING"]
+    assert any("2" in m and "1" in m and "fall" in m.lower() for m in warnings), warnings
+
+
+def test_future_schema_version_logs_once_not_per_row(tmp_path, monkeypatch):
+    """Uses a direct spy on log.warning rather than the caplog-based
+    jonnyparlay_log fixture: that fixture's propagate=False + manually-attached
+    caplog.handler combination double-counts identical records for reasons
+    unrelated to the code under test (confirmed by direct invocation: the
+    adapter itself calls log.warning exactly once for this scenario). A direct
+    spy measures the real thing this test cares about unambiguously."""
+    db = _make_db(tmp_path)
+    aja, jokic = name_key("A'ja Wilson"), name_key("Nikola Jokic")
+    _add_contract(db, [
+        ("2026-06-26", "WNBA", aja, "PTS", "edgemodel", 22.5),
+        ("2026-06-26", "WNBA", aja, "REB", "edgemodel", 9.1),
+        ("2026-06-26", "WNBA", jokic, "PTS", "edgemodel", 28.0),
+    ])
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE projection SET schema_version = 2")   # every row future-versioned
+    conn.commit()
+    conn.close()
+    calls = []
+    monkeypatch.setattr(ea.log, "warning", lambda *a, **k: calls.append(a))
+    ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert len(calls) == 1, "one fallback event must produce exactly one warning, not one per row"
+
+
+def test_missing_schema_version_defaults_to_supported(tmp_path):
+    """A row with schema_version left NULL (simulating a legacy row from before
+    the column existed) must be treated as version 1 -- ADR-005's own
+    established default-to-1 behavior (migrate_projection_row), not a second,
+    invented versioning rule."""
+    db = _make_db(tmp_path)
+    aja = name_key("A'ja Wilson")
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE projection (game_date TEXT, sport TEXT, entity_id TEXT, "
+        "market TEXT, source TEXT, mean REAL, schema_version INTEGER)")
+    conn.execute(
+        "INSERT INTO projection (game_date, sport, entity_id, market, source, mean, schema_version) "
+        "VALUES ('2026-06-26','WNBA',?,'PTS','edgemodel',22.5,NULL)", (aja,))
+    conn.commit()
+    conn.close()
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res[(aja, "PTS")] == 22.5   # treated as v1, read normally -- not a fallback
+
+
+def test_operational_error_paths_unchanged_by_schema_version_check(tmp_path, jonnyparlay_log):
+    """Regression guard: adding the schema_version check must not alter the
+    existing, already-tested structural-drift behavior (missing table / missing
+    column) in any way."""
+    db = _make_db(tmp_path)  # no `projection` table at all
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res[(name_key("A'ja Wilson"), "PTS")] == 22.5
+    assert any("not yet present" in r.message for r in jonnyparlay_log.records)
+
+
+# --- T11: contract-shape golden fixture (ADR-005 AD-2, Option D) -----------
+#
+# Test-time only -- no connection to EdgeModel's repo or a live EdgeModel DB.
+# This is JonnyParlay's own explicit record of what it assumes the `projection`
+# contract looks like; a future edit to _fetch_from_contract's column set or to
+# the supported schema version must consciously update this fixture too, or
+# these tests fail -- turning implicit, buried-in-a-SQL-string knowledge into
+# something a diff actually shows.
+
+_EXPECTED_PROJECTION_CONTRACT_COLUMNS = {
+    "game_date", "sport", "entity_id", "market", "source", "mean", "schema_version",
+}
+_EXPECTED_SUPPORTED_SCHEMA_VERSION = 1
+
+
+def test_contract_fixture_matches_adapter_query_columns():
+    import inspect
+    src = inspect.getsource(ea._fetch_from_contract)
+    missing = [c for c in _EXPECTED_PROJECTION_CONTRACT_COLUMNS if c not in src]
+    assert not missing, f"adapter no longer references expected contract column(s): {missing}"
+
+
+def test_contract_fixture_matches_supported_schema_version():
+    assert ea._SUPPORTED_PROJECTION_SCHEMA_VERSION == _EXPECTED_SUPPORTED_SCHEMA_VERSION
+
+
+def test_contract_shape_check_passes_on_real_schema(tmp_path):
+    """The contract-shape check, run against a `projection` table matching the
+    real expected shape, finds no drift."""
+    db = _make_db(tmp_path)
+    _add_contract(db, [])
+    conn = sqlite3.connect(db)
+    actual_cols = {r[1] for r in conn.execute("PRAGMA table_info(projection)")}
+    conn.close()
+    assert _EXPECTED_PROJECTION_CONTRACT_COLUMNS <= actual_cols
+
+
+def test_contract_shape_check_fails_when_schema_changes(tmp_path):
+    """The same check, run against a deliberately drifted `projection` table
+    (missing columns), must detect the drift -- proving the mechanism actually
+    catches something, not just a tautology."""
+    db = tmp_path / "drifted.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE projection (game_date TEXT, sport TEXT)")
+    conn.commit()
+    actual_cols = {r[1] for r in conn.execute("PRAGMA table_info(projection)")}
+    conn.close()
+    missing = _EXPECTED_PROJECTION_CONTRACT_COLUMNS - actual_cols
+    assert missing == {"entity_id", "market", "source", "mean", "schema_version"}
