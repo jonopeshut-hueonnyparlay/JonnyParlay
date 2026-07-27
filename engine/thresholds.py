@@ -133,6 +133,65 @@ _TUNABLE = frozenset({
 })
 
 
+# R9: bounds validation for well-typed-but-semantically-invalid overrides.
+# Runs after _coerce_override succeeds and before the value is applied.
+# Explicit, declarative table matching _TUNABLE's own idiom -- deliberately
+# not a generic framework, and only covers constants whose semantic meaning
+# is already clear. Absence from this table means type-check-only behavior
+# is unchanged (not every tunable constant has an obvious range rule).
+def _is_probability(v) -> bool:
+    return 0.0 <= v <= 1.0
+
+
+def _is_score(v) -> bool:
+    return 0 <= v <= 100
+
+
+def _is_nonnegative(v) -> bool:
+    return v >= 0
+
+
+def _is_valid_american_odds(v) -> bool:
+    # Real sportsbook odds are never in the (-100, 100) dead zone and never 0.
+    # Ordering between KILLSHOT_ODDS_MIN/MAX is a separate semantic rule,
+    # deliberately not validated here.
+    return v != 0 and abs(v) >= 100
+
+
+_TUNABLE_RANGES: dict[str, tuple] = {
+    "MIN_BONUS_WIN_PROB":      (_is_probability, "[0.0, 1.0]"),
+    "MIN_DAILY_LAY_PROB":      (_is_probability, "[0.0, 1.0]"),
+    "MIN_LEG_COVER_PROB_DAILY": (_is_probability, "[0.0, 1.0]"),
+    "KILLSHOT_BUMP_WIN_PROB":  (_is_probability, "[0.0, 1.0]"),
+    "MIN_WIN_PROB":            (_is_probability, "[0.0, 1.0]"),
+
+    "MIN_BONUS_SCORE":     (_is_score, "[0, 100]"),
+    "KILLSHOT_SCORE_FLOOR": (_is_score, "[0, 100]"),
+    "KILLSHOT_MANUAL_FLOOR": (_is_score, "[0, 100]"),
+    "MIN_PICK_SCORE":      (_is_score, "[0, 100]"),
+    "MIN_OVER_SCORE":      (_is_score, "[0, 100]"),
+
+    "BONUS_DAILY_CAP":        (_is_nonnegative, ">= 0"),
+    "LONGSHOT_MAX_PER_GAME":  (_is_nonnegative, ">= 0"),
+    "KILLSHOT_WEEKLY_CAP":    (_is_nonnegative, ">= 0"),
+    "WNBA_OPENING_GATE_DAYS": (_is_nonnegative, ">= 0"),
+    "WNBA_OPENING_GATE_GAMES": (_is_nonnegative, ">= 0"),
+    "MAX_PREMIUM_PICKS":      (_is_nonnegative, ">= 0"),
+    "MIN_DAILY_LAY_MARGIN":   (_is_nonnegative, ">= 0.0"),
+    "MIN_LEG_EDGE_DAILY":     (_is_nonnegative, ">= 0.0"),
+    "LONGSHOT_SIZE":          (_is_nonnegative, ">= 0.0"),
+    "VALUE_PARLAY_SIZE":      (_is_nonnegative, ">= 0.0"),
+    "SGP_LOG_SIZE":           (_is_nonnegative, ">= 0.0"),
+    "KILLSHOT_WP_MARGIN":     (_is_nonnegative, ">= 0.0"),
+    "KILLSHOT_SIZE_BASE":     (_is_nonnegative, ">= 0.0"),
+    "KILLSHOT_SIZE_BUMP":     (_is_nonnegative, ">= 0.0"),
+    "KILLSHOT_BUMP_EDGE":     (_is_nonnegative, ">= 0.0"),
+
+    "KILLSHOT_ODDS_MIN": (_is_valid_american_odds, "nonzero integer, |value| >= 100"),
+    "KILLSHOT_ODDS_MAX": (_is_valid_american_odds, "nonzero integer, |value| >= 100"),
+}
+
+
 def _coerce_override(current, new):
     """Coerce `new` to the type of `current` (scalar only). Returns None if incompatible.
 
@@ -156,11 +215,14 @@ def _coerce_override(current, new):
     return None
 
 
-def _apply_overrides(ns: dict, overrides: dict, tunable=_TUNABLE) -> dict:
+def _apply_overrides(ns: dict, overrides: dict, tunable=_TUNABLE, ranges=_TUNABLE_RANGES) -> dict:
     """Override whitelisted scalar names in namespace `ns` from `overrides`.
 
-    Only names in `tunable` that already exist in `ns` and coerce to the existing
-    type are applied. Returns the {name: value} actually applied.
+    Only names in `tunable` that already exist in `ns`, coerce to the existing
+    type, AND (if a range rule exists for that name) pass it are applied.
+    A rejected override keeps the existing default -- fail-soft per-override,
+    matching this module's existing philosophy for the whole config file.
+    Returns the {name: value} actually applied.
     """
     applied = {}
     for name, val in overrides.items():
@@ -169,6 +231,15 @@ def _apply_overrides(ns: dict, overrides: dict, tunable=_TUNABLE) -> dict:
         coerced = _coerce_override(ns[name], val)
         if coerced is None:
             continue
+        range_rule = ranges.get(name)
+        if range_rule is not None:
+            check_fn, range_desc = range_rule
+            if not check_fn(coerced):
+                import sys
+                print(f"[thresholds] WARNING: rejected threshold override "
+                      f"{name}={coerced!r}: value outside allowed range "
+                      f"{range_desc}; using default.", file=sys.stderr)
+                continue
         ns[name] = coerced
         applied[name] = coerced
     return applied

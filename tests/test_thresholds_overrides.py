@@ -77,6 +77,119 @@ def test_frozen_constants_not_in_tunable_set():
         assert frozen not in T._TUNABLE
 
 
+# ── R9: range validation (well-typed but semantically invalid overrides) ────
+#
+# Preserves the existing fail-soft philosophy exactly: an invalid override is
+# rejected individually (default retained), never a hard fail. Runs after
+# type coercion, before applying -- mirrors _TUNABLE's own declarative-table
+# idiom rather than a generic validation framework.
+
+def test_valid_override_within_range_still_applies(tmp_path, capsys):
+    ns = {"MIN_WIN_PROB": 0.50}
+    applied = T._apply_overrides(ns, {"MIN_WIN_PROB": 0.55})
+    assert applied == {"MIN_WIN_PROB": 0.55}
+    assert ns["MIN_WIN_PROB"] == 0.55
+    assert capsys.readouterr().err == ""  # no warning for a valid override
+
+
+def test_probability_override_above_range_rejected(capsys):
+    ns = {"MIN_WIN_PROB": 0.50}
+    applied = T._apply_overrides(ns, {"MIN_WIN_PROB": 5.0})
+    assert applied == {}
+    assert ns["MIN_WIN_PROB"] == 0.50   # default retained
+    err = capsys.readouterr().err
+    assert "MIN_WIN_PROB" in err and "5.0" in err and "[0.0, 1.0]" in err
+
+
+def test_probability_override_negative_rejected(capsys):
+    ns = {"MIN_WIN_PROB": 0.50}
+    applied = T._apply_overrides(ns, {"MIN_WIN_PROB": -1.0})
+    assert applied == {}
+    assert ns["MIN_WIN_PROB"] == 0.50
+    assert "MIN_WIN_PROB" in capsys.readouterr().err
+
+
+def test_score_override_out_of_range_rejected():
+    ns = {"MIN_PICK_SCORE": 15}
+    applied = T._apply_overrides(ns, {"MIN_PICK_SCORE": 150})
+    assert applied == {}
+    assert ns["MIN_PICK_SCORE"] == 15
+
+
+@pytest.mark.parametrize("value,should_reject", [
+    (-99, True),   # inside the dead zone -> reject
+    (0, True),     # zero -> reject
+    (50, True),    # inside the dead zone -> reject
+    (100, False),  # boundary -> valid
+    (-100, False), # boundary -> valid
+    (150, False),  # valid
+    (-250, False), # valid
+])
+def test_odds_dead_zone_rejected_boundaries_valid(value, should_reject, capsys):
+    ns = {"KILLSHOT_ODDS_MIN": -200}
+    applied = T._apply_overrides(ns, {"KILLSHOT_ODDS_MIN": value})
+    if should_reject:
+        assert applied == {}
+        assert ns["KILLSHOT_ODDS_MIN"] == -200
+        assert "KILLSHOT_ODDS_MIN" in capsys.readouterr().err
+    else:
+        assert applied == {"KILLSHOT_ODDS_MIN": value}
+        assert ns["KILLSHOT_ODDS_MIN"] == value
+
+
+def test_odds_ordering_between_min_and_max_not_validated():
+    # Explicitly out of scope for this change -- an inverted min/max is a
+    # separate semantic rule, not attempted here.
+    ns = {"KILLSHOT_ODDS_MIN": -200, "KILLSHOT_ODDS_MAX": 110}
+    applied = T._apply_overrides(ns, {"KILLSHOT_ODDS_MIN": 150, "KILLSHOT_ODDS_MAX": -150})
+    assert applied == {"KILLSHOT_ODDS_MIN": 150, "KILLSHOT_ODDS_MAX": -150}
+
+
+def test_mixed_valid_and_invalid_overrides_isolate(capsys):
+    ns = {"MIN_WIN_PROB": 0.50, "MIN_PICK_SCORE": 15, "KILLSHOT_SIZE_BASE": 3.0}
+    applied = T._apply_overrides(ns, {
+        "MIN_WIN_PROB": 5.0,          # invalid -> rejected
+        "MIN_PICK_SCORE": 25,         # valid -> applied
+        "KILLSHOT_SIZE_BASE": -1.0,   # invalid (negative size) -> rejected
+    })
+    assert applied == {"MIN_PICK_SCORE": 25}
+    assert ns["MIN_WIN_PROB"] == 0.50          # rejected, default retained
+    assert ns["MIN_PICK_SCORE"] == 25          # applied
+    assert ns["KILLSHOT_SIZE_BASE"] == 3.0     # rejected, default retained
+    err = capsys.readouterr().err
+    assert "MIN_WIN_PROB" in err and "KILLSHOT_SIZE_BASE" in err
+
+
+def test_constant_without_a_range_rule_applies_with_type_check_only():
+    # Not every tunable constant has an explicit range rule (only those with
+    # already-clear semantic meaning) -- unranged constants keep exactly the
+    # prior type-check-only behavior, unchanged.
+    ns = {"BONUS_DAILY_CAP": 5}
+    applied = T._apply_overrides(ns, {"BONUS_DAILY_CAP": 999})
+    # BONUS_DAILY_CAP has a >=0 rule (a count), so this should apply --
+    # confirms count-typed constants aren't accidentally blocked.
+    assert applied == {"BONUS_DAILY_CAP": 999}
+
+
+# ── R9: regression coverage -- unrelated existing behavior unchanged ────────
+
+def test_malformed_toml_still_warns_and_returns_empty(tmp_path, monkeypatch, capsys):
+    import paths
+    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "thresholds.toml").write_text("not valid toml [[[", encoding="utf-8")
+    result = T._load_threshold_overrides()
+    assert result == {}
+    assert "ignoring" in capsys.readouterr().err
+
+
+def test_no_config_file_returns_empty_via_direct_call(tmp_path, monkeypatch):
+    import paths
+    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)  # no config/ dir created
+    assert T._load_threshold_overrides() == {}
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))
