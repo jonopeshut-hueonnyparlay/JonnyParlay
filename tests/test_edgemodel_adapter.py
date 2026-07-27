@@ -278,6 +278,66 @@ def test_operational_error_paths_unchanged_by_schema_version_check(tmp_path, jon
     assert any("not yet present" in r.message for r in jonnyparlay_log.records)
 
 
+# --- R7: _fetch_from_per_sport() logging parity with _fetch_from_contract() -
+#
+# Mirrors that function's own already-reviewed benign-absence vs real-drift
+# distinction exactly -- no new logging convention. Fallback behavior,
+# return values, and control flow are all unchanged; only visibility changes.
+
+def test_valid_per_sport_tables_produce_no_warning(tmp_path, jonnyparlay_log):
+    res = ea.fetch("WNBA", "2026-06-26", db_path=_make_db(tmp_path))
+    assert res[(name_key("A'ja Wilson"), "PTS")] == 22.5  # unchanged existing behavior
+    assert not any(r.levelname == "WARNING" for r in jonnyparlay_log.records)
+
+
+def test_per_sport_table_missing_is_debug_logged_not_warned(tmp_path, jonnyparlay_log):
+    db = tmp_path / "proj.db"
+    conn = sqlite3.connect(db)
+    conn.commit()  # no `projections` table at all, and no `projection` contract either
+    conn.close()
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res == {}  # nothing to return, but must not crash -- unchanged
+    assert any(r.levelname == "DEBUG" and "projections" in r.message
+               for r in jonnyparlay_log.records)
+    assert not any(r.levelname == "WARNING" for r in jonnyparlay_log.records)
+
+
+def test_per_sport_table_column_drift_warns_with_table_context(tmp_path, jonnyparlay_log):
+    db = tmp_path / "proj.db"
+    conn = sqlite3.connect(db)
+    # `projections` exists but is missing every proj_* column -- structural
+    # drift, not simple absence.
+    conn.execute("CREATE TABLE projections (run_date TEXT, sport TEXT, player_name TEXT)")
+    conn.execute("INSERT INTO projections VALUES ('2026-06-26','WNBA','A Player')")
+    conn.commit()
+    conn.close()
+    res = ea.fetch("WNBA", "2026-06-26", db_path=db)
+    assert res == {}  # fails soft, unchanged
+    warnings = [r for r in jonnyparlay_log.records if r.levelname == "WARNING"]
+    assert any("projections" in r.message for r in warnings), warnings
+    assert any("no such column" in r.message.lower() for r in warnings), warnings
+
+
+def test_multi_table_sport_isolation_one_bad_table_does_not_block_other(tmp_path, jonnyparlay_log):
+    db = tmp_path / "proj.db"
+    conn = sqlite3.connect(db)
+    # mlb_pitcher_projections drifted (missing every proj_* column) --
+    conn.execute("CREATE TABLE mlb_pitcher_projections (run_date TEXT, pitcher_name TEXT)")
+    conn.execute("INSERT INTO mlb_pitcher_projections VALUES ('2026-06-26','Bad Pitcher')")
+    # mlb_batter_projections is healthy.
+    conn.execute(
+        "CREATE TABLE mlb_batter_projections (run_date TEXT, batter_name TEXT, "
+        "proj_hits REAL, proj_tb REAL, proj_hr REAL)")
+    conn.execute("INSERT INTO mlb_batter_projections VALUES ('2026-06-26','Aaron Judge',1.2,2.1,0.4)")
+    conn.commit()
+    conn.close()
+    res = ea.fetch("MLB", "2026-06-26", db_path=db)
+    assert res[(name_key("Aaron Judge"), "HITS")] == 1.2  # healthy table's data still returned
+    assert (name_key("Bad Pitcher"), "K") not in res
+    warnings = [r for r in jonnyparlay_log.records if r.levelname == "WARNING"]
+    assert any("mlb_pitcher_projections" in r.message for r in warnings), warnings
+
+
 # --- T11: contract-shape golden fixture (ADR-005 AD-2, Option D) -----------
 #
 # Test-time only -- no connection to EdgeModel's repo or a live EdgeModel DB.

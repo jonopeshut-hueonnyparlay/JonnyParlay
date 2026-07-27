@@ -120,7 +120,15 @@ def _fetch_from_per_sport(conn, specs, game_date: str) -> dict:
             rows = conn.execute(
                 f"SELECT {select_cols} FROM {table} WHERE {where}", params
             ).fetchall()
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            # R7: mirrors _fetch_from_contract()'s exact benign-absence vs
+            # real-drift distinction -- same fail-soft `continue` either way,
+            # only visibility changes (was previously silent in both cases).
+            if "no such table" in str(exc):
+                log.debug("edgemodel_adapter: per-sport table %s not present (%s)", table, exc)
+            else:
+                log.warning("edgemodel_adapter: per-sport table %s query failed, "
+                           "skipping this table (%s)", table, exc)
             continue  # table/column absent in this DB -> skip, fail-soft
         for r in rows:
             nk = name_key(r[name_col])
