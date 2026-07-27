@@ -9,9 +9,12 @@ Imports only {stdlib, paths, secrets_config} — never run_picks or the other co
 modules. _load_team_sigmas() runs at import and populates _TEAM_SIGMAS / _TEAM_SIGMAS_MEANSQ;
 run_picks re-imports those populated dicts (the get_game_sigma* accessors stay in run_picks).
 """
+import logging
 from pathlib import Path
 
 from pricing_core import WNBA_NB_R as _PC_WNBA_NB_R  # WNBA NB-r: shared single source of truth
+
+log = logging.getLogger("jonnyparlay")
 
 SIGMA = {
     # NBA / NHL — Normal distribution sigma: σ = max(proj * mult, min)
@@ -208,16 +211,28 @@ def _load_team_sigmas():
     for sport, fname in [("NHL", "team_sigmas_nhl.json"), ("MLB", "team_sigmas_mlb.json"),
                          ("NBA", "team_sigmas_nba.json"), ("WNBA", "team_sigmas_wnba.json")]:
         p = _data_dir / fname
-        if p.exists():
+        if not p.exists():
+            continue
+        # R1: one malformed artifact must not crash calibrated.py's import (which
+        # would cascade into every one of its importers). Skip this sport only --
+        # team_resolve.py's get_game_sigma()/get_mlb_team_run_r() already fall back
+        # to the league-average GAME_SIGMA/MLB_TEAM_RUN_R via `.get(sport, {})`
+        # whenever a sport's key is absent from _TEAM_SIGMAS, so leaving it absent
+        # here (rather than inventing a new fallback) reuses that existing path.
+        try:
             data = _json.loads(p.read_text())
             # P0.2: WNBA JSON is keyed by numeric team_id; re-key to abbrev so
             # get_game_sigma (abbrev-keyed) hits instead of falling back to league σ.
             if sport == "WNBA":
                 data = wnba_sigmas_by_abbrev(data)
-            _TEAM_SIGMAS[sport] = data
             sq = [t["score_sigma"] ** 2 for t in data.values()
                   if isinstance(t, dict) and t.get("score_sigma") and t.get("n_games", 0) >= 20]
+            _TEAM_SIGMAS[sport] = data
             _TEAM_SIGMAS_MEANSQ[sport] = (sum(sq) / len(sq)) if sq else 0.0
+        except Exception as exc:
+            log.error("calibrated: failed to load team sigmas for %s from %s (%s) -- "
+                      "falling back to league-average GAME_SIGMA for this sport",
+                      sport, p, exc)
 
 _load_team_sigmas()
 

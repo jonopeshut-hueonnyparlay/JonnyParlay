@@ -44,6 +44,12 @@ OUTPUT_FOLDER = str(_data_path("picks"))
 # narrower than "every column the parser reads": dk_std is excluded because its
 # absence already has a documented, intentional fallback (see the dk_std
 # comment below, "falls back to SIGMA['PTS']").
+# R16: fraction of rows failing to parse above which the aggregate drop-rate
+# check fires. High enough to tolerate normal per-file noise (a player or two
+# with a bad value), low enough to catch a systemic problem before it silently
+# halves a slate.
+_ROW_DROP_WARN_THRESHOLD = 0.20
+
 _REQUIRED_STAT_COLUMNS = {
     "NBA":  {"PTS": {"PTS", "pts"}, "REB": {"RB", "rb", "REB"},
              "AST": {"AST", "ast"}, "3PM": {"3PT", "3pt", "3PM"}},
@@ -55,6 +61,31 @@ _REQUIRED_STAT_COLUMNS = {
     "NHL":  {"SOG": {"SOG", "sog"}, "AST": {"A", "a", "AST"}, "G": {"G", "g"},
              "SV": {"SV", "sv"}, "GA": {"GA", "ga"}},
 }
+
+
+def _confirm_sport_detection(raw_headers: set, sport: str, path: Path) -> None:
+    """R16: sport misdetection is not a degraded input -- it's potentially the
+    wrong semantic interpretation of every column in the file (e.g. NHL goals
+    parsed as NBA points). Unlike a single missing stat column, there is no
+    defensible partial-continuation value, so this fails loudly unconditionally
+    -- never gated by ODDS_IO_STRICT_CSV_VALIDATION. If none of the detected
+    sport's own identifying stat columns are present at all, detection cannot
+    be trusted and this file must not be priced under a guessed sport."""
+    required = _REQUIRED_STAT_COLUMNS.get(sport)
+    if not required:
+        return
+    expected = set().union(*required.values())
+    if expected & raw_headers:
+        return  # at least one identifying column present -- detection confirmed
+    logger.error(
+        "odds_io.parse_csv: sport detection failure -- detected sport=%s for %s, "
+        "but none of the expected identifying columns %s are present in the "
+        "header %s. Refusing to price this file under a possibly-wrong sport.",
+        sport, path, sorted(expected), sorted(raw_headers))
+    print(f"  [!] {path.name}: detected sport={sport} but no identifying column "
+          f"found (expected one of {sorted(expected)} in header {sorted(raw_headers)}) "
+          f"-- aborting. This file may be misclassified.")
+    sys.exit(1)
 
 
 def _check_required_columns(raw_headers: set, sport: str, path: Path) -> None:
@@ -127,7 +158,9 @@ def parse_csv(filepath):
     else:
         sport = "NBA"
 
-    _check_required_columns({h.strip() for h in rows[0].keys()}, sport, path)
+    raw_headers = {h.strip() for h in rows[0].keys()}
+    _confirm_sport_detection(raw_headers, sport, path)
+    _check_required_columns(raw_headers, sport, path)
 
     players = []
     for row in rows:
@@ -220,8 +253,27 @@ def parse_csv(filepath):
             p["name_key"] = name_key(p["name"])
             players.append(p)
         except (ValueError, KeyError) as e:
-            logger.debug(f"Skipped malformed row: {e}")
+            # R16: raised from debug to warning -- a per-row skip is tolerated
+            # (unchanged), but was previously invisible under default logging.
+            logger.warning(f"Skipped malformed row: {e}")
             continue
+
+    # R16: aggregate drop-rate check. A single bad row is normal, tolerated
+    # noise (unchanged above); a large fraction failing indicates a systemic
+    # problem (e.g. a subtly drifted export) that per-row tolerance alone
+    # would hide. Gated the same way as _check_required_columns -- warn by
+    # default, abort under ODDS_IO_STRICT_CSV_VALIDATION.
+    _rows_attempted = len(rows)
+    _dropped = _rows_attempted - len(players)
+    if _rows_attempted and (_dropped / _rows_attempted) > _ROW_DROP_WARN_THRESHOLD:
+        _msg = (f"  [!] {path.name}: {_dropped}/{_rows_attempted} rows failed to parse "
+                f"({_dropped / _rows_attempted:.0%}) -- possible malformed or drifted export.")
+        if os.environ.get("ODDS_IO_STRICT_CSV_VALIDATION", "").lower() in ("1", "true", "yes"):
+            print(_msg + " Aborting (ODDS_IO_STRICT_CSV_VALIDATION is set).")
+            sys.exit(1)
+        print(_msg)
+        logger.warning("odds_io.parse_csv: high row-drop-rate %.0f%% (%d/%d) in %s",
+                       _dropped / _rows_attempted * 100, _dropped, _rows_attempted, path.name)
 
     # Deduplicate by name_key (handles Showdown CSVs where each player appears twice)
     seen = {}

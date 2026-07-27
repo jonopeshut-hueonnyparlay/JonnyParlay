@@ -6,6 +6,7 @@ Existence / type / range / locked-value checks only. Tier-routing structure
 duplicated here. F5_SCALAR and BLEND_ALPHA live in thresholds.py, not
 calibrated.py — they are tested in tests/test_thresholds.py.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "engine"))
 
 import pytest
 
+import calibrated
 from calibrated import (
     PLATT_A, PLATT_B,
     SIGMA, SIGMA_WNBA,
@@ -143,6 +145,99 @@ def test_bm_weight_t2_locked():
 def test_team_sigmas_non_empty_dicts():
     assert isinstance(_TEAM_SIGMAS, dict) and _TEAM_SIGMAS
     assert isinstance(_TEAM_SIGMAS_MEANSQ, dict) and _TEAM_SIGMAS_MEANSQ
+
+
+# ---------------------------------------------------------------------------
+# R1: _load_team_sigmas() must never crash calibrated.py's import on a
+# malformed per-sport artifact. Reuses the module-__file__-monkeypatch
+# pattern already established in tests/test_check_pricing_core_lock.py.
+# ---------------------------------------------------------------------------
+
+_VALID_SPORT_DATA = {
+    "NYY": {"score_sigma": 4.2, "n_games": 45},
+    "BOS": {"score_sigma": 4.5, "n_games": 50},
+}
+
+
+def _write_data_dir(tmp_path, files: dict):
+    """files: {filename: raw text to write}. Fakes calibrated.py's own
+    __file__ so `Path(__file__).parent.parent / "data"` resolves under
+    tmp_path instead of the real repo."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    for fname, text in files.items():
+        (data_dir / fname).write_text(text, encoding="utf-8")
+    return tmp_path / "engine" / "calibrated.py"
+
+
+def test_valid_artifacts_still_load_exactly_as_before(tmp_path, monkeypatch):
+    fake_file = _write_data_dir(tmp_path, {
+        "team_sigmas_mlb.json": json.dumps(_VALID_SPORT_DATA),
+    })
+    monkeypatch.setattr(calibrated, "__file__", str(fake_file))
+    monkeypatch.setattr(calibrated, "_TEAM_SIGMAS", {})
+    monkeypatch.setattr(calibrated, "_TEAM_SIGMAS_MEANSQ", {})
+
+    calibrated._load_team_sigmas()
+
+    assert calibrated._TEAM_SIGMAS["MLB"] == _VALID_SPORT_DATA
+    assert calibrated._TEAM_SIGMAS_MEANSQ["MLB"] == pytest.approx(
+        (4.2 ** 2 + 4.5 ** 2) / 2)
+
+
+def test_malformed_json_does_not_crash_load(tmp_path, monkeypatch):
+    fake_file = _write_data_dir(tmp_path, {
+        "team_sigmas_mlb.json": "{not valid json",
+    })
+    monkeypatch.setattr(calibrated, "__file__", str(fake_file))
+    monkeypatch.setattr(calibrated, "_TEAM_SIGMAS", {})
+    monkeypatch.setattr(calibrated, "_TEAM_SIGMAS_MEANSQ", {})
+
+    calibrated._load_team_sigmas()  # must not raise
+
+
+def test_malformed_sport_logs_error(tmp_path, monkeypatch):
+    fake_file = _write_data_dir(tmp_path, {
+        "team_sigmas_mlb.json": "{not valid json",
+    })
+    monkeypatch.setattr(calibrated, "__file__", str(fake_file))
+    monkeypatch.setattr(calibrated, "_TEAM_SIGMAS", {})
+    monkeypatch.setattr(calibrated, "_TEAM_SIGMAS_MEANSQ", {})
+
+    logged = []
+    monkeypatch.setattr(calibrated.log, "error",
+                         lambda *a, **k: logged.append((a, k)))
+
+    calibrated._load_team_sigmas()
+
+    assert logged, "a malformed artifact must log, never silently continue"
+    assert any("MLB" in str(a) for a, _k in logged)
+
+
+def test_other_valid_sports_still_load_when_one_is_malformed(tmp_path, monkeypatch):
+    fake_file = _write_data_dir(tmp_path, {
+        "team_sigmas_mlb.json": "{not valid json",
+        "team_sigmas_nhl.json": json.dumps(_VALID_SPORT_DATA),
+    })
+    monkeypatch.setattr(calibrated, "__file__", str(fake_file))
+    monkeypatch.setattr(calibrated, "_TEAM_SIGMAS", {})
+    monkeypatch.setattr(calibrated, "_TEAM_SIGMAS_MEANSQ", {})
+
+    calibrated._load_team_sigmas()
+
+    assert "MLB" not in calibrated._TEAM_SIGMAS, (
+        "a malformed sport must not appear in _TEAM_SIGMAS at all -- "
+        "get_game_sigma()'s existing .get(sport, {}) fallback depends on "
+        "the key being absent, not present-but-empty")
+    assert calibrated._TEAM_SIGMAS["NHL"] == _VALID_SPORT_DATA
+
+
+def test_downstream_importers_remain_functional():
+    """Smoke check: calibrated.py's real importers must still import cleanly.
+    Guards against a future regression reintroducing an import-time crash."""
+    import prob_core  # noqa: F401
+    import health_check  # noqa: F401
+    import team_resolve  # noqa: F401
 
 
 if __name__ == "__main__":

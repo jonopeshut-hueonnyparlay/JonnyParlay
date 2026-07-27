@@ -23,6 +23,7 @@ import sys
 import ast
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -602,6 +603,30 @@ try:
               f"fit {PLATT_FIT_DATE} ({_age_days}d ago)")
 except Exception as e:
     warn("Platt calibration freshness", f"{type(e).__name__}: {e}")
+
+# ── 22. SaberSim NBA CSV availability (R16) ───────────────────────────────────
+# Sole live NBA pricing input (odds_io.py::parse_csv()) had no pre-flight
+# coverage anywhere in this file despite being critical. Mirrors parse_csv()'s
+# own Downloads search (12h window). Advisory only (warn, never block): NBA
+# pricing may legitimately not run every day.
+print("Checking SaberSim NBA CSV availability...")
+_sabersim_dirs = [Path.home() / "Downloads" / "projections", Path.home() / "Downloads"]
+_sabersim_now = time.time()
+_sabersim_found = False
+for _sabersim_dir in _sabersim_dirs:
+    if not _sabersim_dir.exists():
+        continue
+    for _sabersim_file in _sabersim_dir.glob("*.csv"):
+        if "nba" in _sabersim_file.name.lower() and (_sabersim_now - _sabersim_file.stat().st_mtime) < 43200:
+            _sabersim_found = True
+            break
+    if _sabersim_found:
+        break
+if _sabersim_found:
+    check("SaberSim NBA CSV available (<12h)", True)
+else:
+    warn("SaberSim NBA CSV availability",
+         "no recent NBA export found in Downloads — expected if no NBA pricing today")
 
 # ── Report ────────────────────────────────────────────────────────────────────
 print("\n" + "="*70)

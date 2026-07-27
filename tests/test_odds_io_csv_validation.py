@@ -134,3 +134,118 @@ def test_bad_row_value_still_skips_silently_not_a_validation_warning(tmp_path, j
     players, sport, _ = odds_io.parse_csv(p)
     assert players == []  # existing behavior: bad row silently skipped
     assert not any("missing required" in r.message for r in jonnyparlay_log.records)
+
+
+# ---------------------------------------------------------------------------
+# R16: sport-misdetection is a distinct, unconditional failure -- not a
+# degraded input. Unlike a missing stat column, there is no defensible
+# partial-continuation value when every column may be read under the wrong
+# semantics, so this is NEVER gated by ODDS_IO_STRICT_CSV_VALIDATION.
+# ---------------------------------------------------------------------------
+
+_GARBAGE_HEADER = ["Name", "Team", "Salary"]
+_GARBAGE_ROW = {"Name": "Nobody", "Team": "XXX", "Salary": "5000"}
+
+
+def test_no_identifying_columns_fails_loudly_unconditionally(tmp_path):
+    # No ODDS_IO_STRICT_CSV_VALIDATION set -- must still abort. This is the
+    # one check that is never opt-in.
+    p = _write_csv(tmp_path / "slate_unknown.csv", _GARBAGE_HEADER, [_GARBAGE_ROW])
+    with pytest.raises(SystemExit) as exc_info:
+        odds_io.parse_csv(p)
+    assert exc_info.value.code == 1
+
+
+def test_no_identifying_columns_logs_error_with_context(tmp_path, jonnyparlay_log):
+    p = _write_csv(tmp_path / "slate_unknown.csv", _GARBAGE_HEADER, [_GARBAGE_ROW])
+    with pytest.raises(SystemExit):
+        odds_io.parse_csv(p)
+    error_records = [r for r in jonnyparlay_log.records if r.levelno == logging.ERROR]
+    assert error_records, "sport misdetection must log at ERROR"
+    msg = error_records[0].message
+    assert "sport detection failure" in msg
+    assert "NBA" in msg  # detected sport (falls through to the default)
+    assert "PTS" in msg or "pts" in msg  # an expected identifying column named
+    assert "Salary" in msg  # the file's actual header, for diagnosis
+
+
+def test_correct_sport_detection_no_false_positive(tmp_path, jonnyparlay_log):
+    # Regression guard: valid CSVs must never trip the new check.
+    p = _write_csv(tmp_path / "slate_nba.csv", _NBA_HEADER_COMPLETE, [_NBA_ROW])
+    odds_io.parse_csv(p)  # must not raise
+    assert not any("sport detection failure" in r.message for r in jonnyparlay_log.records)
+
+
+def test_no_identifying_columns_ignores_strict_env_var(tmp_path, monkeypatch):
+    # Explicitly NOT gated by the same env var as the other checks -- setting
+    # it (or not) must not change this check's behavior.
+    monkeypatch.setenv("ODDS_IO_STRICT_CSV_VALIDATION", "0")
+    p = _write_csv(tmp_path / "slate_unknown.csv", _GARBAGE_HEADER, [_GARBAGE_ROW])
+    with pytest.raises(SystemExit):
+        odds_io.parse_csv(p)
+
+
+# ---------------------------------------------------------------------------
+# R16: per-row skip visibility (DEBUG -> WARNING) and aggregate drop-rate
+# detection. Both preserve the existing skip-and-continue behavior exactly --
+# only visibility changes, gated the same way as the existing required-column
+# check (warn by default, abort under ODDS_IO_STRICT_CSV_VALIDATION).
+# ---------------------------------------------------------------------------
+
+def test_bad_row_value_skip_logs_at_warning_not_debug(tmp_path, jonnyparlay_log):
+    row = dict(_NBA_ROW)
+    row["PTS"] = "not-a-number"
+    p = _write_csv(tmp_path / "slate_nba.csv", _NBA_HEADER_COMPLETE, [row])
+    players, sport, _ = odds_io.parse_csv(p)
+    assert players == []
+    skip_records = [r for r in jonnyparlay_log.records if "Skipped malformed row" in r.message]
+    assert skip_records, "expected a skip log record"
+    assert skip_records[0].levelno == logging.WARNING
+
+
+# Distinct last names, not just a trailing digit -- parse_csv()'s dedup keys
+# on name_key() ("lastname_firstN"), which strips digits, so e.g. "Player 0"
+# and "Player 1" collapse to the same key. Real distinct surnames avoid that.
+_DISTINCT_SURNAMES = ["Adams", "Baker", "Clark", "Dixon", "Evans", "Foster",
+                      "Garcia", "Harris", "Irwin", "Jones", "King", "Lopez",
+                      "Moore", "Nash", "Ortiz", "Park", "Quinn", "Reed",
+                      "Smith", "Turner"]
+
+
+def _many_nba_rows(n_good, n_bad):
+    rows = []
+    for i in range(n_good):
+        r = dict(_NBA_ROW)
+        r["Name"] = f"Good {_DISTINCT_SURNAMES[i]}"
+        rows.append(r)
+    for i in range(n_bad):
+        r = dict(_NBA_ROW)
+        r["Name"] = f"Bad {_DISTINCT_SURNAMES[n_good + i]}"
+        r["PTS"] = "not-a-number"
+        rows.append(r)
+    return rows
+
+
+def test_high_row_drop_rate_warns(tmp_path, jonnyparlay_log):
+    rows = _many_nba_rows(n_good=6, n_bad=4)  # 40% drop, over threshold
+    p = _write_csv(tmp_path / "slate_nba.csv", _NBA_HEADER_COMPLETE, rows)
+    players, sport, _ = odds_io.parse_csv(p)
+    assert len(players) == 6
+    assert any("high row-drop-rate" in r.getMessage() for r in jonnyparlay_log.records)
+
+
+def test_low_row_drop_rate_does_not_warn(tmp_path, jonnyparlay_log):
+    rows = _many_nba_rows(n_good=9, n_bad=1)  # 10% drop, under threshold
+    p = _write_csv(tmp_path / "slate_nba.csv", _NBA_HEADER_COMPLETE, rows)
+    players, sport, _ = odds_io.parse_csv(p)
+    assert len(players) == 9
+    assert not any("high row-drop-rate" in r.getMessage() for r in jonnyparlay_log.records)
+
+
+def test_high_row_drop_rate_aborts_when_strict(tmp_path, monkeypatch):
+    monkeypatch.setenv("ODDS_IO_STRICT_CSV_VALIDATION", "1")
+    rows = _many_nba_rows(n_good=6, n_bad=4)
+    p = _write_csv(tmp_path / "slate_nba.csv", _NBA_HEADER_COMPLETE, rows)
+    with pytest.raises(SystemExit) as exc_info:
+        odds_io.parse_csv(p)
+    assert exc_info.value.code == 1
