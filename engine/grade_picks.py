@@ -2091,6 +2091,27 @@ try:
 except ImportError:
     _HAS_SHARED_GUARD = False
 
+# R12: mirrors discord_guard._GUARD_KEY_RE / _rebuild_from_raw_bytes exactly.
+# Duplicated rather than imported -- this fallback only runs when the import
+# above already failed, so discord_guard's own recovery logic isn't reachable.
+# Without this, a corrupted guard file would silently return {} here (unlike
+# the shared module), resetting every guard key and re-posting to Discord.
+_GUARD_KEY_RE = re.compile(rb'"((?:[^"\\]|\\.)+?)"\s*:\s*true', re.IGNORECASE)
+
+
+def _rebuild_guard_from_raw_bytes(raw: bytes) -> dict:
+    """Emergency key-recovery from a corrupted guard file (fallback-path twin
+    of discord_guard._rebuild_from_raw_bytes -- see that function's docstring
+    for the recovery rationale)."""
+    recovered = {}
+    for m in _GUARD_KEY_RE.finditer(raw):
+        try:
+            key = m.group(1).decode("utf-8", errors="replace")
+            recovered[key] = True
+        except Exception:
+            continue
+    return recovered
+
 
 def _prune_guard(guard):
     """Drop guard keys older than _GUARD_TTL_DAYS.
@@ -2127,8 +2148,20 @@ def _load_guard():
     try:
         with open(DISCORD_GUARD_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         return {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # R12: recover what we can instead of discarding every guard key --
+        # returning {} would cause a full re-post to Discord (see discord_guard.py).
+        with open(DISCORD_GUARD_FILE, "rb") as f:
+            raw = f.read()
+        recovered = _rebuild_guard_from_raw_bytes(raw)
+        logger.warning(
+            "[grade_picks] guard file is corrupt and the shared discord_guard "
+            "module is unavailable -- recovered %d key(s) via local regex "
+            "fallback. Keys: %s", len(recovered), list(recovered)[:10],
+        )
+        return recovered
 
 
 def _save_guard(guard):
