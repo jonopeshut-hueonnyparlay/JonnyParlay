@@ -135,6 +135,26 @@ function Get-BackupFileList {
     return $files
 }
 
+function Get-Sha256Hash {
+    <#
+    Equivalent to (Get-FileHash -Path $Path -Algorithm SHA256).Hash, computed via
+    the .NET crypto API directly rather than the cmdlet -- Get-FileHash depends on
+    Microsoft.PowerShell.Utility auto-loading, which some CI runners don't have
+    ("Get-FileHash is not recognized as the name of a cmdlet"). Same uppercase-hex,
+    no-dashes output format, so manifest.json contents and drill comparisons are
+    unaffected.
+    #>
+    param([string]$Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        $hashBytes = $sha256.ComputeHash($bytes)
+        return [System.BitConverter]::ToString($hashBytes) -replace '-', ''
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
 function Invoke-RestoreDrill {
     Write-Log "=== Restore drill started ==="
     Write-Log "Destination directory: $DestRoot"
@@ -172,7 +192,7 @@ function Invoke-RestoreDrill {
             $failed += "$($prop.Name) (missing)"
             continue
         }
-        $actualHash = (Get-FileHash -Path $filePath -Algorithm SHA256).Hash
+        $actualHash = Get-Sha256Hash -Path $filePath
         if ($actualHash -ne $prop.Value) {
             $failed += "$($prop.Name) (hash mismatch)"
         }
@@ -213,8 +233,8 @@ function Invoke-Backup {
     foreach ($f in $files) {
         $destFile = Join-Path $destDate $f.Name
         Copy-Item $f.FullName $destFile -Force
-        $srcHash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash
-        $dstHash = (Get-FileHash -Path $destFile -Algorithm SHA256).Hash
+        $srcHash = Get-Sha256Hash -Path $f.FullName
+        $dstHash = Get-Sha256Hash -Path $destFile
         if ($srcHash -eq $dstHash) {
             $manifest[$f.Name] = $dstHash
         } else {
