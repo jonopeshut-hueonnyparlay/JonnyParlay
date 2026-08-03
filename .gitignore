@@ -6,6 +6,7 @@ data/*.txt
 data/picks/
 data/projections/
 data/clv_exports/
+data/run_markers/
 
 # Operator-local threshold overrides (S4f-X) — the .example.toml is committed
 config/thresholds.toml
