@@ -51,6 +51,12 @@ _EM_ENGINE = _EM_ROOT / "engine"
 if str(_EM_ENGINE) not in sys.path:
     sys.path.insert(0, str(_EM_ENGINE))
 
+# R23: no stability contract exists between this file and EdgeModel's
+# internals -- these are direct in-process imports of another repo's code,
+# not the projections.db file boundary everything else goes through. Full
+# symbol list + rationale: EdgeModel/docs/CROSS_REPO_INTERFACES.md #5.
+# No test on either side catches a rename/removal; re-grep this file if one
+# of these ever moves in EdgeModel.
 from projections_db import DB_PATH, get_projection_vs_actual
 from nba_projector import REGULAR_SEASON_STAT_SCALAR, REGULAR_SEASON_MINUTES_SCALAR
 
