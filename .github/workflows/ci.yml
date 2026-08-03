@@ -42,3 +42,40 @@ jobs:
         env:
           ODDS_API_KEY: ci-dummy-key-not-used-tests-mock-http
         run: python -m pytest -m "not network" --basetemp=.pytest_tmp
+
+      # 2026-08-03: main sat RED for 7 days (2026-07-27 -> 2026-08-03, a Get-FileHash
+      # autoload failure + a health_check.py import-time side effect) with nobody aware,
+      # because GitHub's failure emails are easy to let pile up unread. Nothing detected
+      # it until an unrelated branch push happened to surface a mail.
+      #
+      # This is the SECOND occurrence of that exact failure mode across these two repos:
+      # EdgeModel went blind for 6 days in 2026-07 (a missing flask dep aborted collection
+      # before any test ran) and gained this same notify step in response -- JonnyParlay
+      # never got the sibling fix, so the identical blind spot stayed open here. Mirrors
+      # EdgeModel/.github/workflows/ci.yml step-for-step rather than inventing a second
+      # convention.
+      #
+      # Posts to the same Discord channel JonnyParlay's own DISCORD_FALLBACK_WEBHOOK
+      # targets; the secret is a separate store because GitHub Actions cannot read the
+      # repo's local .env. Silently no-ops when the secret is absent, so this is safe to
+      # merge before the secret is configured (it is NOT configured on this repo yet --
+      # `gh secret set DISCORD_CI_WEBHOOK` is required for it to actually post).
+      - name: Notify Discord on failure
+        if: failure()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_CI_WEBHOOK }}
+        run: |
+          if (-not $env:DISCORD_WEBHOOK) {
+            Write-Host "DISCORD_CI_WEBHOOK secret not configured -- skipping notify."
+            exit 0
+          }
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
+          $runUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $msg = ":rotating_light: **JonnyParlay CI failed** -- ${{ github.repository }}@${{ github.ref_name }} ($shortSha)`n$runUrl"
+          $bodyJson = @{ content = $msg } | ConvertTo-Json
+          # Discord's Cloudflare 403s a default/empty user agent (the same gotcha
+          # tripwires.py::_alert and EdgeModel's CI step both already document).
+          Invoke-RestMethod -Uri $env:DISCORD_WEBHOOK -Method Post -ContentType 'application/json' `
+            -Body $bodyJson -Headers @{ "User-Agent" = "JonnyParlay-CI/1.0" } | Out-Null
