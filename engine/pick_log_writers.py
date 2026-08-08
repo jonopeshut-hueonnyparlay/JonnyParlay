@@ -164,6 +164,15 @@ def log_picks(qualified, mode, log_path_override=None, premium_picks=None, run_t
     # the resolver's coverage_manifest decision (LIVE_SOURCE while every market is
     # dormant/'shadow'; 'edgemodel'/'blend:<w>' once a market is promoted). Fail-soft.
     run_id = f"{run_date}T{run_time}"
+    # Which CODE produced this run? pick_log.csv's model_version is a SOURCE tag (blank = the
+    # live source, 'edgemodel' when a pick came from EdgeModel), so it cannot also carry a code
+    # version without corrupting the one provenance field that already works. Recorded
+    # alongside instead. Fail-soft: provenance must never take down a live pick run.
+    try:
+        from run_provenance import record_run
+        record_run(run_id, run_type)
+    except Exception as _prov_exc:  # noqa: BLE001
+        logger.warning("could not record run provenance: %s", _prov_exc)
     try:
         import resolver as _resolver
         _src_map = _resolver.source_map()

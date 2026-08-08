@@ -630,6 +630,27 @@ if __name__ == "__main__":
         warn("SaberSim NBA CSV availability",
              "no recent NBA export found in Downloads — expected if no NBA pricing today")
 
+    # ── Run provenance ────────────────────────────────────────────────────────────
+    # Which code produced the last pick run, and has it changed since? pick_log.csv's
+    # model_version is EMPTY on all 390 graded picks and all 26,985 calibration rows, and
+    # run_id is populated on 1 of 390 — the only real-money record in this system carried no
+    # code provenance at all. This is the detector for that.
+    #
+    # WARN, not FAIL, on drift: code changing between runs is normal during development. It
+    # matters when attributing a change in results to a change in code, which is an operator
+    # judgement — a FAIL here would fire on every commit and be tuned out.
+    # A missing record also WARNs rather than passing: "cannot tell" is not "fine", and
+    # defaulting an unread field to success is precisely how model_version stayed empty.
+    try:
+        from run_provenance import drift_status
+        _prov_lvl, _prov_msg = drift_status()
+        if _prov_lvl == "OK":
+            check("Run provenance current", True, _prov_msg)
+        else:
+            warn("Run provenance", _prov_msg)
+    except Exception as e:
+        warn("Run provenance check", f"{type(e).__name__}: {e}")
+
     # ── Report ────────────────────────────────────────────────────────────────────
     print("\n" + "="*70)
     print("HEALTH CHECK REPORT")
