@@ -133,10 +133,21 @@ _assert_killshot_invariants()   # fail fast at module load (Plan 6 §13, 8b)
 
 
 def _killshots_this_week(today_str):
-    """Count KILLSHOT picks logged in the rolling 7 days (including today)."""
+    """Count KILLSHOT picks logged in the rolling 7 days (including today).
+
+    Fail SAFE, not just in the except block: an absent pick_log is exactly
+    the "can't reliably determine" case the except block below already
+    refuses to treat as 0 (R-FS23-03) -- returning 0 here would allow the
+    engine to post the full weekly KILLSHOT cap on top of already-posted
+    shots the log can't currently prove don't exist.
+    """
     log_path = Path(PICK_LOG_PATH)
     if not log_path.exists():
-        return 0
+        logger.warning(
+            "[KILLSHOT] _killshots_this_week: pick_log not found at %s — "
+            "assuming cap full to prevent over-posting", log_path
+        )
+        return KILLSHOT_WEEKLY_CAP
     cutoff = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=6)).strftime("%Y-%m-%d")
     try:
         # Shared lock — don't race a mid-flush CLV/grader write (audit H-8).

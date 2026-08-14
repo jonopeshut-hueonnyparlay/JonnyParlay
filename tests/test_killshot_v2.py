@@ -342,6 +342,34 @@ def test_select_sorts_by_score_desc():
     assert [p["player"] for p in ks] == ["High", "Mid"]
 
 
+# ─── R-FS23-03: _killshots_this_week fail-safe on absent pick_log ──────────────
+
+def test_killshots_this_week_fails_safe_when_pick_log_absent(tmp_path):
+    """The file-absent guard used to `return 0`, the one value the function's
+    own except-block (12 lines below) explicitly refuses to return on any
+    other read failure, with a comment stating why: returning 0 lets the
+    engine post the full weekly cap on top of already-posted shots. An
+    absent log can't prove those shots don't exist, so it must fail the
+    same way the except block does."""
+    missing = tmp_path / "no_such_pick_log.csv"
+    with patch.object(killshot, "PICK_LOG_PATH", str(missing)):
+        assert not missing.exists()
+        assert killshot._killshots_this_week("2026-04-21") == killshot.KILLSHOT_WEEKLY_CAP
+
+
+def test_killshots_this_week_true_zero_when_log_present_but_empty_of_killshots(tmp_path):
+    """Guard against over-correcting: a real, readable pick_log with zero
+    KILLSHOT rows this week must still report a true 0, not the cap."""
+    import csv
+    log_path = tmp_path / "pick_log.csv"
+    with open(log_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["date", "tier"])
+        w.writeheader()
+        w.writerow({"date": "2026-04-21", "tier": "T1"})
+    with patch.object(killshot, "PICK_LOG_PATH", str(log_path)):
+        assert killshot._killshots_this_week("2026-04-21") == 0
+
+
 # ─── 8d: near-miss logging ──────────────────────────────────────────────────────
 
 def test_near_miss_logged_to_blocked_csv(tmp_path):
