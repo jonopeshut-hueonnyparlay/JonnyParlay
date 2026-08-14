@@ -247,6 +247,19 @@ def test_resolve_pick_is_home_modern_row_ignores_ambiguity():
     assert _resolve_pick_is_home(pick, "Los Angeles Lakers") is False
 
 
+def test_resolve_pick_is_home_no_away_team_returns_none_not_true():
+    """R-FS23-02: missing away_team on a legacy row with no is_home field
+    used to silently `return True` ("assume home"), contradicting this
+    function's own docstring ("None -- can't reliably determine... Caller
+    should treat the pick as ungraded rather than best-guess"). Every call
+    site in grade_picks.py already branches on None -> ungraded, so this
+    must return None, not a best-guessed side."""
+    from grade_picks import _resolve_pick_is_home
+    pick = {"team": "BOS", "player": "Tatum Jayson", "is_home": ""}
+    assert _resolve_pick_is_home(pick, "") is None
+    assert _resolve_pick_is_home(pick, None) is None
+
+
 def test_grade_daily_lay_ambiguous_leg_returns_none():
     from grade_picks import grade_daily_lay
     row = {

@@ -968,7 +968,17 @@ def _resolve_pick_is_home(pick, away_team):
     player_field = pick.get("player", "").strip()
     away_lower = (away_team or "").lower()
     if not away_lower:
-        return True  # no away team info; assume home (caller's usual default)
+        # R-FS23-02: no away-team info means side can't be determined at all
+        # -- the docstring already says so ("None -- can't reliably
+        # determine... Caller should treat the pick as ungraded rather than
+        # best-guess"). Every call site already branches on None -> ungraded,
+        # so this stops silently grading half the field against a guessed side.
+        logger.warning(
+            "[_resolve_pick_is_home] no away_team info (game=%r, player=%r) — "
+            "refusing to best-guess. Pick stays ungraded.",
+            pick.get("game", "?"), player_field,
+        )
+        return None
 
     # H-4 guard: ambiguous 2-letter team codes can't be resolved by substring
     # match. Bail out loudly instead of silently grading against the wrong
