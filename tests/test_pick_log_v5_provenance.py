@@ -140,8 +140,9 @@ def test_bet_lineage_sync_mirrors_graded_props(tmp_path):
         {"run_type": "primary", "result": "", "run_id": "r1", "date": "2026-06-26",
          "sport": "NBA", "stat": "REB", "player": "X", "source": "sabersim"},  # ungraded -> skipped
     ])
-    n = bls.sync_from_pick_log(pl, db_path=db)
+    n, status = bls.sync_from_pick_log(pl, db_path=db)
     assert n == 2
+    assert status == "ok"
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     try:
@@ -228,8 +229,9 @@ def test_bet_lineage_sync_retries_on_lock_contention_then_succeeds(tmp_path, mon
         return real_connect(*a, **k)
 
     monkeypatch.setattr(sqlite3, "connect", flaky_connect)
-    n = bls.sync_from_pick_log(pl, db_path=db)
+    n, status = bls.sync_from_pick_log(pl, db_path=db)
     assert n == 1
+    assert status == "ok"
     assert attempts["n"] == 3
 
 
@@ -246,7 +248,9 @@ def test_bet_lineage_sync_gives_up_failsoft_when_always_locked(tmp_path, monkeyp
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(sqlite3, "connect", always_locked)
-    assert bls.sync_from_pick_log(pl, db_path=db) == 0
+    n, status = bls.sync_from_pick_log(pl, db_path=db)
+    assert n == 0
+    assert status == "lock_timeout"
 
 
 def test_bet_lineage_sync_non_lock_exception_fails_soft_without_retrying(tmp_path, monkeypatch):
@@ -264,7 +268,9 @@ def test_bet_lineage_sync_non_lock_exception_fails_soft_without_retrying(tmp_pat
         raise ValueError("not a lock issue")
 
     monkeypatch.setattr(sqlite3, "connect", boom)
-    assert bls.sync_from_pick_log(pl, db_path=db) == 0
+    n, status = bls.sync_from_pick_log(pl, db_path=db)
+    assert n == 0
+    assert status == "error"
     assert attempts["n"] == 1
 
 
@@ -323,8 +329,9 @@ def test_bet_lineage_sync_rolls_back_delete_if_insert_fails(tmp_path, monkeypatc
 
     # IntegrityError isn't OperationalError, so this goes straight to the
     # generic fail-soft path (H5's retry is scoped to lock contention only).
-    n = bls.sync_from_pick_log(pl, db_path=db)
+    n, status = bls.sync_from_pick_log(pl, db_path=db)
     assert n == 0
+    assert status == "error"
 
     # Verify with a clean connection: the pre-existing r1 row must STILL be
     # there. If the DELETE had committed independently of the failed INSERT
@@ -344,4 +351,41 @@ def test_bet_lineage_sync_failsoft_missing_db(tmp_path):
     pl = _pick_log(tmp_path, [
         {"run_type": "primary", "result": "W", "run_id": "r1", "date": "2026-06-26",
          "sport": "NBA", "stat": "PTS", "player": "Anthony Edwards", "source": "sabersim"}])
-    assert bls.sync_from_pick_log(pl, db_path=tmp_path / "nope.db") == 0
+    n, status = bls.sync_from_pick_log(pl, db_path=tmp_path / "nope.db")
+    assert n == 0
+    assert status == "db_missing"
+
+
+# ── R-FS23-01: status must distinguish "nothing to do" from "the write failed" ─
+
+def test_bet_lineage_sync_no_graded_rows_reports_no_rows_not_error(tmp_path, monkeypatch):
+    """True zero (nothing graded yet) must be distinguishable from every
+    failure branch -- this is the defect the blind-success scan found: all
+    five branches returned the bare int 0 and a caller reading one int could
+    not tell 'ordinary' from 'broken'."""
+    import bet_lineage_sync as bls
+    db = _lineage_db(tmp_path)
+    pl = _pick_log(tmp_path, [
+        {"run_type": "primary", "result": "", "run_id": "r1", "date": "2026-06-26",
+         "sport": "NBA", "stat": "PTS", "player": "Anthony Edwards", "source": "sabersim"},
+    ])  # ungraded -> _lineage_rows() returns [] before any DB touch
+    n, status = bls.sync_from_pick_log(pl, db_path=db)
+    assert n == 0
+    assert status == "no_rows"
+
+
+def test_bet_lineage_sync_table_missing_reports_table_missing(tmp_path):
+    """EdgeModel hasn't created bet_lineage yet -- was a bare `return 0` with
+    no log line at all (the only unlogged branch of the five)."""
+    import bet_lineage_sync as bls
+    db = tmp_path / "proj_no_table.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE unrelated (id INTEGER)")
+    conn.commit()
+    conn.close()
+    pl = _pick_log(tmp_path, [
+        {"run_type": "primary", "result": "W", "run_id": "r1", "date": "2026-06-26",
+         "sport": "NBA", "stat": "PTS", "player": "Anthony Edwards", "source": "sabersim"}])
+    n, status = bls.sync_from_pick_log(pl, db_path=db)
+    assert n == 0
+    assert status == "table_missing"

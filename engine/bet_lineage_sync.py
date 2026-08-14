@@ -86,16 +86,30 @@ def _lineage_rows(pick_log_path: Path) -> list[dict]:
     return out
 
 
-def sync_from_pick_log(pick_log_path, db_path=None) -> int:
-    """Mirror graded prop provenance into bet_lineage. Returns rows written (0 on any
-    failure -- fail-soft). Idempotent per run_id."""
+def sync_from_pick_log(pick_log_path, db_path=None) -> tuple[int, str]:
+    """Mirror graded prop provenance into bet_lineage. Idempotent per run_id.
+
+    Returns (rows_written, status). status is one of:
+      "ok"            -- wrote rows_written (>=1) lineage rows
+      "no_rows"       -- true zero: no graded prop rows to sync this run (ordinary)
+      "db_missing"    -- EDGEMODEL_DB_PATH does not exist
+      "table_missing" -- EdgeModel hasn't created the bet_lineage table yet
+      "lock_timeout"  -- retries exhausted on lock contention
+      "error"         -- unexpected exception mid-write
+
+    rows_written is always 0 except on "ok" -- callers that only care about
+    "did anything change" can still check truthiness of the count, but a
+    caller that needs to tell "nothing to do" apart from "the write failed"
+    (R-FS23-01: both were `return 0`) must branch on status. Never raises --
+    lineage sync must never affect grading (fail-soft by design, not by
+    accident of dropping the failure on the floor)."""
     rows = _lineage_rows(Path(pick_log_path))
     if not rows:
-        return 0
+        return 0, "no_rows"
     path = Path(db_path or EDGEMODEL_DB_PATH)
     if not path.exists():
         log.warning("bet_lineage_sync: projections.db not found at %s", path)
-        return 0
+        return 0, "db_missing"
     for attempt in range(_MAX_RETRIES):
         try:
             conn = sqlite3.connect(path)
@@ -103,7 +117,7 @@ def sync_from_pick_log(pick_log_path, db_path=None) -> int:
             try:
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND "
                                 "name='bet_lineage'").fetchone() is None:
-                    return 0  # EdgeModel hasn't created the table yet -> skip
+                    return 0, "table_missing"  # EdgeModel hasn't created the table yet -> skip
                 run_ids = sorted({r["run_id"] for r in rows})
                 # H6: explicit `with conn:` -- Python's sqlite3 module commits
                 # on clean exit and rolls back on any exception raised inside,
@@ -122,19 +136,19 @@ def sync_from_pick_log(pick_log_path, db_path=None) -> int:
                         "source, challenger_source, blend_weight) "
                         "VALUES(:run_id,:game_date,:sport,:market,:entity_id,:source,"
                         ":challenger_source,:blend_weight)", rows)
-                return len(rows)
+                return len(rows), "ok"
             finally:
                 conn.close()
         except sqlite3.OperationalError as exc:
             if attempt == _MAX_RETRIES - 1:
                 log.warning("bet_lineage_sync: write failed after %d attempts (%s)", _MAX_RETRIES, exc)
-                return 0
+                return 0, "lock_timeout"
             log.warning("bet_lineage_sync: lock contention, retrying (%d/%d)", attempt + 1, _MAX_RETRIES)
             time.sleep(_RETRY_BACKOFF_S * (attempt + 1))
         except Exception as exc:
             log.warning("bet_lineage_sync: write failed (%s)", exc)
-            return 0
+            return 0, "error"
     # Unreachable: every loop iteration returns, either on success, on the
     # final OperationalError attempt, or on any other exception. Kept only
     # so the function has an explicit fallthrough return for readability.
-    return 0  # pragma: no cover
+    return 0, "error"  # pragma: no cover

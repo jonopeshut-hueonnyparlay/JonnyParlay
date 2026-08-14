@@ -2744,9 +2744,17 @@ Examples:
         # Mirror graded pick provenance (pick_log v5 source/run_id) into bet_lineage.
         try:
             import bet_lineage_sync
-            n_lin = bet_lineage_sync.sync_from_pick_log(main_log_path)
-            if n_lin:
+            n_lin, lin_status = bet_lineage_sync.sync_from_pick_log(main_log_path)
+            if lin_status == "ok":
                 logger.info("bet_lineage: synced %d graded prop lineage row(s)", n_lin)
+            elif lin_status == "no_rows":
+                pass  # ordinary: nothing graded to sync this run
+            else:
+                # R-FS23-01: distinguishable from "no_rows" so a real failure
+                # on the CLV-attribution write path is never silent as a 0.
+                logger.warning(
+                    "bet_lineage: sync did not complete (status=%s) -- "
+                    "CLV attribution may be incomplete for this run", lin_status)
         except Exception as exc:  # pragma: no cover - never block grading
             logger.warning("bet_lineage sync failed (non-fatal): %s", exc)
 
